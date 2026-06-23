@@ -1,6 +1,6 @@
 # Living Waters
 
-Living Waters is a persistent aquarium simulation for Windows. The aquarium keeps living while the PC is on, even when the visible Godot aquarium window is closed.
+Living Waters is a persistent aquarium simulation for Windows. The aquarium keeps living while the PC is on, even when the visible 2D Godot aquarium window is closed.
 
 This is a vertical slice, not a screensaver. The background process simulates water chemistry, a nitrogen cycle, filtration, feeding, oxygen, plants, fish stress, health, mortality explanations, and Windows notifications.
 
@@ -50,7 +50,7 @@ py -3 .\background\living_waters_daemon.py --self-test
 
 - Startup uses the current user's Windows Run key.
 - Offline progression is capped at 12 hours.
-- The background process avoids 3D rendering.
+- The background process has no visual rendering, so the ecosystem can keep running quietly.
 - Notifications are sent only for important warning or critical events.
 - Major interventions are commands, never automatic hidden fixes.
 

@@ -4,6 +4,7 @@ dist/
 __pycache__/
 *.pyc
 *.spec
+*.zip
 Living Waters.exe
 LivingWatersBackground.exe
 .godot/
