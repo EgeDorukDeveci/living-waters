@@ -186,6 +186,109 @@ def make_loach() -> Image.Image:
     return image
 
 
+def make_ember() -> Image.Image:
+    image, draw = canvas((256, 128))
+    fish_base(draw, rgba("#f0773e"), rgba("#ffd28f"))
+    line(draw, [(78, 51), (174, 49)], rgba("#ffbb73"), 4)
+    line(draw, [(72, 70), (153, 76)], rgba("#e45538"), 4)
+    return image
+
+
+def make_otocinclus() -> Image.Image:
+    image, draw = canvas((256, 128))
+    body = rgba("#b8b39a")
+    accent = rgba("#343932")
+    ellipse(draw, (42, 50, 205, 88), body, outline=darken(body, 0.24), width=2)
+    polygon(draw, [(54, 70), (24, 53), (27, 91)], accent)
+    line(draw, [(60, 66), (184, 66)], accent, 5)
+    for x in (84, 111, 139, 166):
+        ellipse(draw, (x - 4, 57, x + 4, 64), darken(body, 0.2))
+    line(draw, [(184, 74), (220, 86)], accent, 2)
+    eye(draw, 180, 59)
+    return image
+
+
+def make_cpd() -> Image.Image:
+    image, draw = canvas((256, 128))
+    body = rgba("#344b77")
+    accent = rgba("#efc760")
+    fish_base(draw, body, rgba("#e77748"))
+    for x, y in [(79, 55), (100, 68), (121, 54), (145, 71), (165, 58)]:
+        ellipse(draw, (x - 4, y - 3, x + 4, y + 3), accent)
+    line(draw, [(68, 78), (158, 83)], rgba("#e36b52"), 4)
+    return image
+
+
+def make_clownfish() -> Image.Image:
+    image, draw = canvas((256, 128))
+    body = rgba("#f47a28")
+    white = rgba("#fbf4e4")
+    black = rgba("#171a1c")
+    fish_base(draw, body, black)
+    for x in (78, 123, 167):
+        polygon(draw, [(x - 8, 43), (x + 10, 42), (x + 5, 88), (x - 12, 87)], white, outline=black)
+    line(draw, [(56, 64), (35, 48), (34, 84), (56, 64)], black, 4)
+    return image
+
+
+def make_gramma() -> Image.Image:
+    image, draw = canvas((256, 128))
+    polygon(draw, [(55, 64), (25, 44), (27, 88)], rgba("#f0cf4a"))
+    ellipse(draw, (43, 42, 204, 89), rgba("#6c47b8"), outline=rgba("#25202e"), width=2)
+    polygon(draw, [(119, 43), (204, 48), (204, 86), (121, 88)], rgba("#f0cf4a"))
+    for x in (129, 142, 155):
+        ellipse(draw, (x - 2, 61, x + 2, 65), rgba("#51348f"))
+    eye(draw, 181, 57)
+    return image
+
+
+def make_cardinalfish() -> Image.Image:
+    image, draw = canvas((256, 128))
+    body = rgba("#d9d5c9")
+    stripe = rgba("#22242a")
+    fish_base(draw, body, stripe)
+    for x in (85, 121, 158):
+        line(draw, [(x, 44), (x + 9, 88)], stripe, 6)
+    polygon(draw, [(128, 43), (111, 17), (147, 42)], body, outline=stripe)
+    polygon(draw, [(119, 84), (105, 111), (150, 87)], body, outline=stripe)
+    return image
+
+
+def make_chromis() -> Image.Image:
+    image, draw = canvas((256, 128))
+    body = rgba("#55c4c8")
+    fish_base(draw, body, rgba("#d8fff7"))
+    ellipse(draw, (71, 48, 193, 82), lighten(body, 0.18), outline=darken(body, 0.15), width=1)
+    line(draw, [(78, 55), (176, 52)], rgba("#bffbf4"), 3)
+    return image
+
+
+def make_watchman_goby() -> Image.Image:
+    image, draw = canvas((256, 128))
+    body = rgba("#e0c34a")
+    accent = rgba("#5a4b2b")
+    ellipse(draw, (44, 50, 206, 92), body, outline=darken(body, 0.24), width=2)
+    polygon(draw, [(56, 72), (25, 57), (26, 96)], accent)
+    for x, y in [(88, 62), (112, 75), (139, 60), (165, 73)]:
+        ellipse(draw, (x - 4, y - 4, x + 4, y + 4), lighten(accent, 0.08))
+    line(draw, [(98, 92), (159, 109)], accent, 4)
+    eye(draw, 181, 59)
+    return image
+
+
+def make_firefish() -> Image.Image:
+    image, draw = canvas((256, 128))
+    body = rgba("#f3eedf")
+    accent = rgba("#e55b50")
+    polygon(draw, [(58, 64), (23, 42), (24, 91)], accent)
+    ellipse(draw, (43, 44, 198, 87), body, outline=rgba("#d2cab8"), width=2)
+    polygon(draw, [(128, 44), (181, 23), (161, 48)], accent)
+    polygon(draw, [(119, 83), (181, 106), (152, 84)], accent)
+    line(draw, [(78, 68), (176, 70)], rgba("#ef8a79"), 3)
+    eye(draw, 178, 56)
+    return image
+
+
 def make_rock(kind: str, color: str) -> Image.Image:
     image, draw = canvas((256, 256))
     base = rgba(color)
@@ -212,6 +315,58 @@ def make_driftwood(root: bool = False) -> Image.Image:
         line(draw, branch, darken(color, 0.25), 15)
         line(draw, branch, color, 9)
         line(draw, branch, lighten(color, 0.16), 2)
+    return image
+
+
+def make_reef_arch() -> Image.Image:
+    image, draw = canvas((256, 256))
+    base = rgba("#7c6c5c")
+    for box in [(40, 118, 102, 224), (154, 107, 218, 224), (75, 75, 191, 137)]:
+        ellipse(draw, box, base, outline=darken(base, 0.24), width=2)
+    ellipse(draw, (91, 115, 168, 213), (0, 0, 0, 0), outline=(0, 0, 0, 0))
+    polygon(draw, [(93, 125), (165, 120), (157, 211), (102, 214)], (0, 0, 0, 0))
+    for x, y in [(67, 139), (181, 132), (115, 91), (151, 102)]:
+        ellipse(draw, (x - 11, y - 8, x + 11, y + 8), rgba("#7aa06d", 190))
+    return image
+
+
+def make_macroalgae() -> Image.Image:
+    image, draw = canvas((256, 256))
+    stem = rgba("#5f9c65")
+    leaf = rgba("#84c47b")
+    line(draw, [(128, 218), (128, 92)], stem, 5)
+    for i in range(18):
+        y = 202 - i * 6
+        side = -1 if i % 2 else 1
+        x = 128 + side * (15 + (i % 4) * 5)
+        line(draw, [(128, y), (x, y - 10)], stem, 3)
+        ellipse(draw, (x - 9, y - 18, x + 9, y), leaf, outline=darken(leaf, 0.18))
+    return image
+
+
+def make_coral(kind: str) -> Image.Image:
+    image, draw = canvas((256, 256))
+    if kind == "torch":
+        base = rgba("#e3c978")
+        line(draw, [(128, 222), (128, 158)], darken(base, 0.18), 9)
+        for i in range(13):
+            angle = -math.pi * 0.92 + i * math.pi / 12
+            end = (128 + math.cos(angle) * (30 + i % 3 * 8), 158 + math.sin(angle) * 46)
+            line(draw, [(128, 158), end], base, 6)
+            ellipse(draw, (end[0] - 7, end[1] - 7, end[0] + 7, end[1] + 7), lighten(base, 0.16))
+    else:
+        palette = {
+            "zoanthids": rgba("#d887d8"),
+            "mushroom": rgba("#a95ea0"),
+            "gsp": rgba("#64cb76"),
+        }
+        base = palette[kind]
+        for i in range(22):
+            x = 76 + (i * 29) % 107
+            y = 132 + (i * 17) % 59
+            r = 10 + (i % 4)
+            ellipse(draw, (x - r, y - r * 0.65, x + r, y + r * 0.65), darken(base, 0.05 if i % 2 else 0.0), outline=darken(base, 0.2))
+            ellipse(draw, (x - 3, y - 3, x + 3, y + 3), lighten(base, 0.28))
     return image
 
 
@@ -256,6 +411,15 @@ def main() -> int:
         "fancy_guppy": make_guppy,
         "honey_gourami": make_gourami,
         "kuhli_loach": make_loach,
+        "ember_tetra": make_ember,
+        "otocinclus": make_otocinclus,
+        "celestial_pearl_danio": make_cpd,
+        "ocellaris_clownfish": make_clownfish,
+        "royal_gramma": make_gramma,
+        "banggai_cardinalfish": make_cardinalfish,
+        "blue_green_chromis": make_chromis,
+        "yellow_watchman_goby": make_watchman_goby,
+        "firefish_goby": make_firefish,
     }
     for name, maker in fish.items():
         save(maker().filter(ImageFilter.UnsharpMask(radius=0.8, percent=80, threshold=2)), FISH_DIR / f"{name}.png")
@@ -263,6 +427,8 @@ def main() -> int:
     save(make_rock("river", "#52625c"), SCAPE_DIR / "river_stone.png")
     save(make_rock("moss", "#566a56"), SCAPE_DIR / "moss_stone.png")
     save(make_rock("dragon", "#786d58"), SCAPE_DIR / "dragon_stone.png")
+    save(make_rock("live", "#766b5f"), SCAPE_DIR / "live_rock.png")
+    save(make_reef_arch(), SCAPE_DIR / "reef_arch.png")
     save(make_driftwood(False), SCAPE_DIR / "branch_driftwood.png")
     save(make_driftwood(True), SCAPE_DIR / "root_driftwood.png")
     save(make_plant("hairgrass"), SCAPE_DIR / "dwarf_hairgrass.png")
@@ -270,6 +436,12 @@ def main() -> int:
     save(make_plant("anubias"), SCAPE_DIR / "anubias.png")
     save(make_plant("vallisneria"), SCAPE_DIR / "vallisneria.png")
     save(make_plant("floaters"), SCAPE_DIR / "red_root_floaters.png")
+    save(make_macroalgae(), SCAPE_DIR / "halimeda_macroalgae.png")
+    save(make_plant("vallisneria"), SCAPE_DIR / "turtle_grass.png")
+    save(make_coral("zoanthids"), SCAPE_DIR / "zoanthids.png")
+    save(make_coral("mushroom"), SCAPE_DIR / "mushroom_coral.png")
+    save(make_coral("gsp"), SCAPE_DIR / "green_star_polyps.png")
+    save(make_coral("torch"), SCAPE_DIR / "torch_coral.png")
     print(f"Wrote sprites to {FISH_DIR} and {SCAPE_DIR}")
     return 0
 

@@ -2,7 +2,7 @@
 
 Living Waters is a persistent aquarium simulation for Windows. The aquarium keeps living while the PC is on, even when the visible 2D Godot aquarium window is closed.
 
-This is a vertical slice, not a screensaver. The background process simulates water chemistry, a nitrogen cycle, filtration, feeding, oxygen, aquascape plants, fish stress, health, mortality explanations, and Windows notifications.
+This is a vertical slice, not a screensaver. The background process simulates freshwater and saltwater systems, water chemistry, a nitrogen cycle, filtration, feeding, oxygen, aquascape plants, corals, fish stress, acclimation shock, health, mortality explanations, and Windows notifications.
 
 ## Run
 
@@ -56,6 +56,8 @@ py -3 .\background\living_waters_daemon.py --self-test
 
 ## V1 Species
 
+Freshwater:
+
 - Neon tetra
 - Siamese fighting fish
 - Zebra danio
@@ -65,6 +67,18 @@ py -3 .\background\living_waters_daemon.py --self-test
 - Fancy guppy
 - Honey gourami
 - Kuhli loach
+- Ember tetra
+- Otocinclus catfish
+- Celestial pearl danio
+
+Saltwater:
+
+- Ocellaris clownfish
+- Royal gramma
+- Banggai cardinalfish
+- Blue green chromis
+- Yellow watchman goby
+- Firefish
 
 The shipped starter tank uses neon tetras, peppered corydoras, and cherry shrimp because their water parameters overlap better than the full catalogue. The other species are present to demonstrate compatibility constraints and future scenarios.
 
@@ -72,7 +86,11 @@ The shipped starter tank uses neon tetras, peppered corydoras, and cherry shrimp
 
 The client uses a 2D planted-aquarium style. The default aquascape is `greenscape`: carpet plants, taller stems, stone clusters, driftwood, bubbles, calm layered water, and species-specific fish silhouettes.
 
-The Scape Studio controls can add river stones, moss stones, branch driftwood, root driftwood, hairgrass, vallisneria, java fern, and floating plants. Plant choices affect nitrate uptake, daytime oxygen, nighttime oxygen use, hiding cover, algae control, and maintenance load.
+The Scape Studio controls can add river stones, moss stones, live rock, reef arches, branch driftwood, root driftwood, hairgrass, vallisneria, java fern, floating plants, macroalgae, and starter corals. Click a scape item, then click a valid place in the aquarium. Floaters must stay near the surface, rooted plants must touch substrate, and hardscape/corals need a surface. Select an existing placed object and click a new valid spot to relocate it.
+
+Plant, rock, macroalgae, and coral choices affect nitrate uptake, daytime oxygen, nighttime oxygen use, hiding cover, algae control, maintenance load, and reef stability. Water color shifts with freshwater/saltwater style and worsens visibly as turbidity, ammonia, or nitrate rise.
+
+Animals can be added from the side panel. The safe path is **Acclimate**. **Skip acclimation** is intentionally dangerous: sensitive animals can die from shock, and dead animals add organic waste and ammonia until removed or decomposed.
 
 Fish, plants, stones, and driftwood are rendered from transparent 2D sprites in `assets/sprites`. Run `py -3 .\art\generate_sprites.py` to regenerate the current sprite set.
 

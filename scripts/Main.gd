@@ -22,10 +22,16 @@ var panel: VBoxContainer
 var water_labels: Dictionary = {}
 var event_list: ItemList
 var animal_list: ItemList
+var species_select: OptionButton
 var status_label: Label
 var summary_label: Label
 var scape_label: Label
+var tool_label: Label
 var title_label: Label
+var animal_ids: Array = []
+var selected_animal_id := ""
+var selected_scape_tool: Dictionary = {}
+var selected_scape_object_id := ""
 
 func _ready() -> void:
 	root_dir = _project_root()
@@ -50,10 +56,58 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		_layout_ui()
 
+func _gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		var mouse: Vector2 = event.position
+		var inner := _tank_inner()
+		if not inner.has_point(mouse):
+			return
+		var normalized := Vector2(
+			clamp((mouse.x - inner.position.x) / inner.size.x, 0.0, 1.0),
+			clamp((mouse.y - inner.position.y) / inner.size.y, 0.0, 1.0)
+		)
+		var hit := _hit_scape_object(mouse)
+		if selected_scape_tool.is_empty() and hit != "":
+			selected_scape_object_id = hit
+			if tool_label:
+				tool_label.text = "Selected scape object. Click another valid spot to move it, or remove it."
+			return
+		if selected_scape_object_id != "":
+			if _client_position_valid("", "", normalized):
+				_write_command({"action": "move_scape_item", "object_id": selected_scape_object_id, "x": normalized.x, "y": normalized.y})
+			return
+		if selected_scape_tool.is_empty():
+			return
+		var category := str(selected_scape_tool.get("category", ""))
+		var item_type := str(selected_scape_tool.get("type", ""))
+		if not _client_position_valid(category, item_type, normalized):
+			return
+		_write_command({"action": "place_scape_item", "category": category, "type": item_type, "x": normalized.x, "y": normalized.y, "scale": 1.0})
+
+func _client_position_valid(category: String, item_type: String, normalized: Vector2) -> bool:
+	if category == "":
+		return true
+	if category == "plants" and item_type == "red_root_floaters":
+		if normalized.y > 0.22:
+			if tool_label:
+				tool_label.text = "Floaters need the surface, not the substrate."
+			return false
+		return true
+	if category == "plants" and normalized.y < 0.70:
+		if tool_label:
+			tool_label.text = "Rooted plants cannot be placed in open water."
+		return false
+	if category in ["rocks", "wood", "corals"] and normalized.y < 0.52:
+		if tool_label:
+			tool_label.text = "That item needs a surface, not open water."
+		return false
+	return true
+
 func _draw() -> void:
 	_draw_room()
 	_draw_aquarium()
 	_draw_hardscape()
+	_draw_corals()
 	_draw_plants()
 	_draw_bubbles()
 	_draw_animals()
@@ -81,30 +135,36 @@ func _load_species(path: String) -> Dictionary:
 	return result
 
 func _load_sprite_assets() -> void:
-	for id in [
-		"neon_tetra", "betta_splendens", "zebra_danio", "peppered_cory", "cherry_shrimp",
-		"harlequin_rasbora", "fancy_guppy", "honey_gourami", "kuhli_loach"
-	]:
+	var fish_ids := species.keys()
+	if fish_ids.is_empty():
+		fish_ids = [
+			"neon_tetra", "betta_splendens", "zebra_danio", "peppered_cory", "cherry_shrimp",
+			"harlequin_rasbora", "fancy_guppy", "honey_gourami", "kuhli_loach"
+		]
+	for id in fish_ids:
 		var texture := _load_png_texture("res://assets/sprites/fish/%s.png" % id)
 		if texture:
 			fish_textures[id] = texture
 	for id in [
 		"river_stone", "moss_stone", "dragon_stone", "branch_driftwood", "root_driftwood",
-		"dwarf_hairgrass", "java_fern", "anubias", "vallisneria", "red_root_floaters"
+		"dwarf_hairgrass", "java_fern", "anubias", "vallisneria", "red_root_floaters",
+		"live_rock", "reef_arch", "halimeda_macroalgae", "turtle_grass",
+		"zoanthids", "mushroom_coral", "green_star_polyps", "torch_coral"
 	]:
 		var texture := _load_png_texture("res://assets/sprites/scape/%s.png" % id)
 		if texture:
 			scape_textures[id] = texture
 
 func _load_png_texture(path: String) -> Texture2D:
-	var imported := ResourceLoader.load(path)
-	if imported is Texture2D:
-		return imported
+	if FileAccess.file_exists(path + ".import"):
+		var imported := ResourceLoader.load(path)
+		if imported is Texture2D:
+			return imported
 	var image := Image.new()
 	var error := image.load(path)
-	if error != OK:
-		return null
-	return ImageTexture.create_from_image(image)
+	if error == OK:
+		return ImageTexture.create_from_image(image)
+	return null
 
 func _load_state() -> void:
 	var payload = _load_json(state_path)
@@ -115,6 +175,7 @@ func _load_state() -> void:
 	state = payload
 	_sync_animals()
 	_refresh_ui()
+	_refresh_species_options()
 
 func _build_ui() -> void:
 	title_label = Label.new()
@@ -141,13 +202,23 @@ func _build_ui() -> void:
 	side_panel.add_theme_stylebox_override("panel", side_style)
 	add_child(side_panel)
 
+	var scroll := ScrollContainer.new()
+	scroll.name = "SideScroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.offset_left = 0
+	scroll.offset_top = 0
+	scroll.offset_right = 0
+	scroll.offset_bottom = 0
+	side_panel.add_child(scroll)
+
 	panel = VBoxContainer.new()
 	panel.add_theme_constant_override("separation", 10)
 	panel.offset_left = 18
 	panel.offset_top = 18
 	panel.offset_right = -18
 	panel.offset_bottom = -18
-	side_panel.add_child(panel)
+	scroll.add_child(panel)
 
 	var panel_title := Label.new()
 	panel_title.text = "Tank Care"
@@ -183,6 +254,45 @@ func _build_ui() -> void:
 		panel.add_child(label)
 		water_labels[key] = label
 
+	var system_row := HBoxContainer.new()
+	system_row.add_theme_constant_override("separation", 8)
+	panel.add_child(system_row)
+	var fresh := Button.new()
+	fresh.text = "Freshwater"
+	fresh.custom_minimum_size = Vector2(142, 32)
+	fresh.pressed.connect(func(): _write_command({"action": "switch_system", "system": "freshwater"}))
+	system_row.add_child(fresh)
+	var reef := Button.new()
+	reef.text = "Saltwater"
+	reef.custom_minimum_size = Vector2(142, 32)
+	reef.pressed.connect(func(): _write_command({"action": "switch_system", "system": "saltwater"}))
+	system_row.add_child(reef)
+
+	var animal_title_controls := Label.new()
+	animal_title_controls.text = "Add Animals"
+	animal_title_controls.add_theme_font_size_override("font_size", 18)
+	animal_title_controls.add_theme_color_override("font_color", Color("#f5efe3"))
+	panel.add_child(animal_title_controls)
+
+	species_select = OptionButton.new()
+	species_select.custom_minimum_size = Vector2(300, 32)
+	panel.add_child(species_select)
+	_refresh_species_options()
+
+	var add_row := HBoxContainer.new()
+	add_row.add_theme_constant_override("separation", 8)
+	panel.add_child(add_row)
+	var add_good := Button.new()
+	add_good.text = "Acclimate"
+	add_good.custom_minimum_size = Vector2(142, 32)
+	add_good.pressed.connect(func(): _add_selected_animal(true))
+	add_row.add_child(add_good)
+	var add_bad := Button.new()
+	add_bad.text = "Skip acclimation"
+	add_bad.custom_minimum_size = Vector2(142, 32)
+	add_bad.pressed.connect(func(): _add_selected_animal(false))
+	add_row.add_child(add_bad)
+
 	var scape_title := Label.new()
 	scape_title.text = "Scape Studio"
 	scape_title.add_theme_font_size_override("font_size", 18)
@@ -195,6 +305,13 @@ func _build_ui() -> void:
 	scape_label.add_theme_color_override("font_color", Color("#a8c8bd"))
 	panel.add_child(scape_label)
 
+	tool_label = Label.new()
+	tool_label.text = "Choose a scape item, then click inside the tank."
+	tool_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tool_label.add_theme_font_size_override("font_size", 12)
+	tool_label.add_theme_color_override("font_color", Color("#e7d08a"))
+	panel.add_child(tool_label)
+
 	var scape_grid := GridContainer.new()
 	scape_grid.columns = 2
 	scape_grid.add_theme_constant_override("h_separation", 8)
@@ -202,12 +319,18 @@ func _build_ui() -> void:
 	panel.add_child(scape_grid)
 	_add_scape_button(scape_grid, "River stone", "rocks", "river_stone")
 	_add_scape_button(scape_grid, "Moss stone", "rocks", "moss_stone")
+	_add_scape_button(scape_grid, "Live rock", "rocks", "live_rock")
+	_add_scape_button(scape_grid, "Reef arch", "rocks", "reef_arch")
 	_add_scape_button(scape_grid, "Branch log", "wood", "branch_driftwood")
 	_add_scape_button(scape_grid, "Root wood", "wood", "root_driftwood")
-	_add_scape_button(scape_grid, "Hairgrass", "plants", "dwarf_hairgrass", 3)
-	_add_scape_button(scape_grid, "Vallisneria", "plants", "vallisneria", 2)
+	_add_scape_button(scape_grid, "Hairgrass", "plants", "dwarf_hairgrass")
+	_add_scape_button(scape_grid, "Vallisneria", "plants", "vallisneria")
 	_add_scape_button(scape_grid, "Java fern", "plants", "java_fern")
-	_add_scape_button(scape_grid, "Floaters", "plants", "red_root_floaters", 2)
+	_add_scape_button(scape_grid, "Floaters", "plants", "red_root_floaters")
+	_add_scape_button(scape_grid, "Halimeda", "plants", "halimeda_macroalgae")
+	_add_scape_button(scape_grid, "Zoanthids", "corals", "zoanthids")
+	_add_scape_button(scape_grid, "Mushroom coral", "corals", "mushroom_coral")
+	_add_scape_button(scape_grid, "Torch coral", "corals", "torch_coral")
 
 	var reset_scape := Button.new()
 	reset_scape.text = "Reset greenscape"
@@ -223,7 +346,20 @@ func _build_ui() -> void:
 
 	animal_list = ItemList.new()
 	animal_list.custom_minimum_size = Vector2(300, 112)
+	animal_list.item_selected.connect(func(index): _select_animal(index))
 	panel.add_child(animal_list)
+
+	var remove_animal := Button.new()
+	remove_animal.text = "Remove selected animal"
+	remove_animal.custom_minimum_size = Vector2(300, 32)
+	remove_animal.pressed.connect(func(): _remove_selected_animal())
+	panel.add_child(remove_animal)
+
+	var remove_scape := Button.new()
+	remove_scape.text = "Remove selected scape"
+	remove_scape.custom_minimum_size = Vector2(300, 32)
+	remove_scape.pressed.connect(func(): _remove_selected_scape())
+	panel.add_child(remove_scape)
 
 	var event_title := Label.new()
 	event_title.text = "Timeline"
@@ -240,12 +376,7 @@ func _add_scape_button(parent: Container, text: String, category: String, item_t
 	var button := Button.new()
 	button.text = text
 	button.custom_minimum_size = Vector2(142, 30)
-	button.pressed.connect(func(): _write_command({
-		"action": "add_scape_item",
-		"category": category,
-		"type": item_type,
-		"quantity": quantity
-	}))
+	button.pressed.connect(func(): _choose_scape_tool(category, item_type, text))
 	parent.add_child(button)
 
 func _layout_ui() -> void:
@@ -253,6 +384,51 @@ func _layout_ui() -> void:
 	if side_panel:
 		side_panel.position = Vector2(size.x - PANEL_WIDTH - EDGE, TOP_BAR)
 		side_panel.size = Vector2(PANEL_WIDTH, max(560.0, size.y - TOP_BAR - EDGE))
+		var scroll := side_panel.get_node_or_null("SideScroll") as ScrollContainer
+		if scroll:
+			scroll.size = side_panel.size
+
+func _refresh_species_options() -> void:
+	if not species_select:
+		return
+	var current_system := str(state.get("water", {}).get("system", "freshwater"))
+	species_select.clear()
+	for id in species.keys():
+		var spec: Dictionary = species[id]
+		if str(spec.get("water_type", "freshwater")) != current_system:
+			continue
+		species_select.add_item("%s (%s)" % [spec.get("common_name", id), spec.get("swim_zone", "middle")])
+		species_select.set_item_metadata(species_select.item_count - 1, id)
+
+func _add_selected_animal(acclimated: bool) -> void:
+	if species_select.item_count <= 0:
+		return
+	var id := str(species_select.get_item_metadata(species_select.selected))
+	var spec: Dictionary = species.get(id, {})
+	var minutes := int(spec.get("acclimation_minutes", 30)) if acclimated else 0
+	_write_command({"action": "add_animal", "species_id": id, "acclimation_minutes": minutes})
+
+func _select_animal(index: int) -> void:
+	if index >= 0 and index < animal_ids.size():
+		selected_animal_id = str(animal_ids[index])
+
+func _remove_selected_animal() -> void:
+	if selected_animal_id == "":
+		return
+	_write_command({"action": "remove_animal", "animal_id": selected_animal_id})
+	selected_animal_id = ""
+
+func _choose_scape_tool(category: String, item_type: String, label: String) -> void:
+	selected_scape_tool = {"category": category, "type": item_type, "label": label}
+	selected_scape_object_id = ""
+	if tool_label:
+		tool_label.text = "Placing %s. Click inside the tank." % label
+
+func _remove_selected_scape() -> void:
+	if selected_scape_object_id == "":
+		return
+	_write_command({"action": "remove_scape_item", "object_id": selected_scape_object_id})
+	selected_scape_object_id = ""
 
 func _write_command(command: Dictionary) -> void:
 	command["timestamp"] = Time.get_datetime_string_from_system()
@@ -364,15 +540,22 @@ func _draw_aquarium() -> void:
 	for i in range(10):
 		var ratio := float(i) / 10.0
 		var band := Rect2(inner.position.x, inner.position.y + inner.size.y * ratio, inner.size.x, inner.size.y / 10.0 + 1.0)
-		var top_color := Color("#1f665e") if style == "greenscape" else Color("#1b5963")
-		var bottom_color := Color("#102c33") if style == "greenscape" else Color("#12313a")
+		var system := str(state.get("water", {}).get("system", "freshwater"))
+		var top_color := Color("#1f665e") if style == "greenscape" else Color("#1e6f8c")
+		var bottom_color := Color("#102c33") if system == "freshwater" else Color("#0c344c")
 		var color := bottom_color.lerp(top_color, 1.0 - ratio)
 		color.a = 0.96
 		draw_rect(band, color, true)
 	var water = state.get("water", {})
 	var turbidity: float = clamp(float(water.get("turbidity", 0.0)), 0.0, 1.0)
+	var ammonia: float = clamp(float(water.get("ammonia_mg_l", 0.0)) * 2.0, 0.0, 1.0)
+	var nitrate: float = clamp(max(0.0, float(water.get("nitrate_mg_l", 0.0)) - 20.0) / 40.0, 0.0, 1.0)
 	if turbidity > 0.02:
 		draw_rect(inner, Color(0.46, 0.36, 0.18, turbidity * 0.18), true)
+	if ammonia > 0.02:
+		draw_rect(inner, Color(0.78, 0.70, 0.30, ammonia * 0.16), true)
+	if nitrate > 0.02:
+		draw_rect(inner, Color(0.22, 0.56, 0.22, nitrate * 0.14), true)
 	for i in range(3):
 		var y := inner.position.y + 24.0 + i * 18.0 + sin(Time.get_ticks_msec() / 900.0 + i) * 3.0
 		_draw_wave(Vector2(inner.position.x + 18.0, y), inner.size.x - 36.0, Color(0.74, 0.94, 0.98, 0.16), 2.0 + i)
@@ -390,8 +573,16 @@ func _aquascape_style() -> String:
 
 func _scape_items(category: String) -> Array:
 	var scape = state.get("aquarium", {}).get("scape", {})
+	var result := []
 	if typeof(scape) == TYPE_DICTIONARY and scape.has(category):
-		return scape.get(category, [])
+		for item in scape.get(category, []):
+			result.append(item)
+		for obj in scape.get("objects", []):
+			if str(obj.get("category", "")) == category:
+				var copy: Dictionary = obj.duplicate()
+				copy["quantity"] = 1
+				result.append(copy)
+		return result
 	if category == "rocks":
 		return [{"type": "river_stone", "quantity": 5}, {"type": "moss_stone", "quantity": 2}]
 	if category == "wood":
@@ -405,6 +596,23 @@ func _scape_items(category: String) -> Array:
 			{"type": "red_root_floaters", "quantity": 6}
 		]
 	return []
+
+func _object_pos(item: Dictionary, fallback: Vector2) -> Vector2:
+	if item.has("x") and item.has("y"):
+		var inner := _tank_inner()
+		return inner.position + Vector2(float(item["x"]) * inner.size.x, float(item["y"]) * inner.size.y)
+	return fallback
+
+func _hit_scape_object(mouse: Vector2) -> String:
+	var scape = state.get("aquarium", {}).get("scape", {})
+	if typeof(scape) != TYPE_DICTIONARY:
+		return ""
+	for obj in scape.get("objects", []):
+		var pos := _object_pos(obj, Vector2.ZERO)
+		var radius := 42.0 * float(obj.get("scale", 1.0))
+		if pos.distance_to(mouse) <= radius:
+			return str(obj.get("id", ""))
+	return ""
 
 func _rock_color(kind: String) -> Color:
 	match kind:
@@ -436,9 +644,10 @@ func _draw_hardscape() -> void:
 			var radius := 18.0 + float((i * 11) % 34) * float(item.get("scale", 1.0))
 			var x := center + float(i - quantity) * 31.0 + sin(i * 2.1) * 18.0
 			var y := sand_top + 18.0 + float(i % 3) * 13.0
+			var pos := _object_pos(item, Vector2(x, y))
 			var stone_color := _rock_color(kind)
-			if not _draw_scape_sprite(kind, Vector2(x, y), Vector2(radius * 2.45, radius * 2.15), i % 2 == 0):
-				_draw_rock(Vector2(x, y), radius, stone_color, i)
+			if not _draw_scape_sprite(kind, pos, Vector2(radius * 2.45, radius * 2.15), i % 2 == 0):
+				_draw_rock(pos, radius, stone_color, i)
 		rock_index += quantity
 	var wood_index := 0
 	for item in _scape_items("wood"):
@@ -447,9 +656,51 @@ func _draw_hardscape() -> void:
 		for n in range(quantity):
 			var branch_count := 3 if kind == "branch_driftwood" else 5
 			var root := Vector2(inner.position.x + inner.size.x * (0.44 + fposmod(float(wood_index) * 0.13, 0.22)), sand_top + 24.0)
+			root = _object_pos(item, root)
 			if not _draw_scape_sprite(kind, root + Vector2(0, -52), Vector2(190, 150), wood_index % 2 == 1):
 				_draw_driftwood(root, branch_count, wood_index)
 			wood_index += 1
+
+func _draw_corals() -> void:
+	var inner := _tank_inner()
+	var sand_top := inner.end.y - SAND_HEIGHT
+	var coral_index := 0
+	for item in _scape_items("corals"):
+		var quantity := int(item.get("quantity", 0))
+		var kind := str(item.get("type", "zoanthids"))
+		var health: float = clamp(float(item.get("health", 0.82)), 0.0, 1.0)
+		for n in range(quantity):
+			var seed := coral_index + n + kind.length() * 3
+			var pos := Vector2(
+				inner.position.x + inner.size.x * (0.36 + fposmod(float(seed) * 0.117, 0.36)),
+				sand_top - 8.0 + fposmod(float(seed) * 13.0, 28.0)
+			)
+			pos = _object_pos(item, pos)
+			var draw_size := Vector2(74, 58) if kind != "torch_coral" else Vector2(88, 92)
+			var tint := Color.WHITE.lerp(Color("#b79b82"), 1.0 - health)
+			if not _draw_scape_sprite(kind, pos, draw_size, seed % 2 == 0, tint):
+				_draw_coral_fallback(kind, pos, seed, health)
+		coral_index += quantity
+
+func _draw_coral_fallback(kind: String, pos: Vector2, seed: int, health: float) -> void:
+	var base := Color("#69cf80") if kind == "green_star_polyps" else Color("#d58adc")
+	if kind == "mushroom_coral":
+		base = Color("#b86aa8")
+	elif kind == "torch_coral":
+		base = Color("#e5c978")
+	base = base.lerp(Color("#a07862"), 1.0 - health)
+	if kind == "torch_coral":
+		for arm in range(7):
+			var angle := -PI * 0.86 + float(arm) * PI * 0.26
+			var sway := sin(Time.get_ticks_msec() / 850.0 + seed + arm) * 5.0
+			var tip := pos + Vector2(cos(angle) * 24.0 + sway, -28.0 + sin(angle) * 22.0)
+			draw_line(pos, tip, base, 4.0, true)
+			draw_circle(tip, 5.0, base.lightened(0.14))
+	else:
+		for polyp in range(9):
+			var offset := Vector2(cos(polyp * TAU / 9.0) * (10.0 + polyp % 3 * 4.0), sin(polyp * TAU / 9.0) * 8.0)
+			draw_circle(pos + offset, 7.0, base.darkened(float(polyp % 2) * 0.05))
+			draw_circle(pos + offset, 2.0, base.lightened(0.25))
 
 func _draw_scape_sprite(item_type: String, pos: Vector2, draw_size: Vector2, flip: bool = false, modulate: Color = Color.WHITE) -> bool:
 	if not scape_textures.has(item_type):
@@ -497,24 +748,33 @@ func _draw_plants() -> void:
 			match kind:
 				"dwarf_hairgrass":
 					var pos := Vector2(inner.position.x + fposmod(seed * 31.0, inner.size.x), sand_top + 17.0 + fposmod(seed * 17.0, 34.0))
+					pos = _object_pos(item, pos)
 					if not _draw_scape_sprite(kind, pos, Vector2(86, 86), seed % 2 == 0):
 						_draw_carpet_patch(seed, inner, sand_top)
 				"vallisneria":
 					var pos := Vector2(inner.position.x + 42.0 + fposmod(seed * 73.0, inner.size.x - 84.0), sand_top - 38.0)
+					pos = _object_pos(item, pos)
 					if not _draw_scape_sprite(kind, pos, Vector2(86, 132), seed % 2 == 0):
 						_draw_vallisneria(seed, inner, sand_top)
 				"java_fern":
 					var pos := Vector2(inner.position.x + 48.0 + fposmod(seed * 59.0, inner.size.x - 96.0), sand_top - 18.0)
+					pos = _object_pos(item, pos)
 					if not _draw_scape_sprite(kind, pos, Vector2(78, 78), seed % 2 == 0):
 						_draw_rosette(seed, inner, sand_top, Color("#4f9c5c"), 42.0)
 				"anubias":
 					var pos := Vector2(inner.position.x + 48.0 + fposmod(seed * 59.0, inner.size.x - 96.0), sand_top - 12.0)
+					pos = _object_pos(item, pos)
 					if not _draw_scape_sprite(kind, pos, Vector2(66, 66), seed % 2 == 0):
 						_draw_rosette(seed, inner, sand_top, Color("#3f8758"), 30.0)
 				"red_root_floaters":
 					var pos := Vector2(inner.position.x + 44.0 + fposmod(seed * 67.0, inner.size.x - 88.0), inner.position.y + 46.0 + fposmod(seed * 11.0, 25.0))
+					pos = _object_pos(item, pos)
 					if not _draw_scape_sprite(kind, pos, Vector2(70, 70), seed % 2 == 0):
 						_draw_floaters(seed, inner)
+				"halimeda_macroalgae":
+					var pos := _object_pos(item, Vector2(inner.position.x + 48.0 + fposmod(seed * 59.0, inner.size.x - 96.0), sand_top - 16.0))
+					if not _draw_scape_sprite(kind, pos, Vector2(76, 76), seed % 2 == 0):
+						_draw_rosette(seed, inner, sand_top, Color("#78ba70"), 34.0)
 				_:
 					_draw_rosette(seed, inner, sand_top, Color("#5ca86c"), 34.0)
 		fallback_done = true
@@ -642,7 +902,9 @@ func _fish_sprite_size(species_id: String) -> Vector2:
 		"harlequin_rasbora":
 			return Vector2(62, 34)
 		_:
-			return Vector2(58, 32)
+			var spec: Dictionary = species.get(species_id, {})
+			var adult_cm := float(spec.get("adult_cm", 4.0))
+			return Vector2(clamp(adult_cm * 9.0, 48.0, 96.0), clamp(adult_cm * 4.8, 28.0, 52.0))
 
 func _fish_points(pos: Vector2, facing: float, length: float, height: float) -> PackedVector2Array:
 	return PackedVector2Array([
@@ -830,6 +1092,7 @@ func _refresh_ui() -> void:
 	for key in water_labels.keys():
 		water_labels[key].text = _format_water(key, float(water.get(key, 0.0)))
 	animal_list.clear()
+	animal_ids.clear()
 	for animal in state.get("animals", []):
 		var alive: bool = bool(animal.get("alive", true))
 		var line := "%s - %s - stress %.0f%% - health %.0f%%" % [
@@ -841,6 +1104,7 @@ func _refresh_ui() -> void:
 		if not alive:
 			line = "%s - died: %s" % [animal.get("name", "animal"), animal.get("cause_of_death", "unknown")]
 		animal_list.add_item(line)
+		animal_ids.append(str(animal.get("id", "")))
 	event_list.clear()
 	for item in state.get("events", []).slice(0, 8):
 		event_list.add_item("%s  %s" % [item.get("severity", "info").capitalize(), item.get("title", "Event")])

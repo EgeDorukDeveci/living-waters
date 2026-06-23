@@ -80,6 +80,55 @@ def test_scape_items_change_biology() -> None:
     assert state["aquarium"]["scape"]["layout_seed"] == 42
 
 
+def test_acclimation_failure_adds_death_load() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    before_ammonia = state["water"]["ammonia_mg_l"]
+    animal = sim.add_animal("ember_tetra", acclimation_minutes=0)
+    assert animal is not None
+    assert animal["alive"] is False
+    assert "acclimation shock" in animal["cause_of_death"]
+    assert animal["death_load_remaining"] > 0
+    assert state["water"]["ammonia_mg_l"] > before_ammonia
+    sim.advance(3600)
+    assert state["water"]["organic_waste"] > 0.12
+
+
+def test_saltwater_switch_species_and_reefscape_rules() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    sim.switch_system("saltwater")
+    assert state["water"]["system"] == "saltwater"
+    assert state["water"]["salinity_ppt"] >= 34
+    assert any(animal["species_id"] == "ocellaris_clownfish" for animal in state["animals"])
+    before = len(state["animals"])
+    assert sim.add_animal("ember_tetra", acclimation_minutes=30) is None
+    assert len(state["animals"]) == before
+    marine = sim.add_animal("banggai_cardinalfish", acclimation_minutes=50)
+    assert marine is not None
+    assert marine["alive"] is True
+    sim.reset_scape()
+    assert any(coral["type"] == "zoanthids" for coral in state["aquarium"]["scape"]["corals"])
+
+
+def test_scape_placement_rules_and_relocation() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    sim.place_scape_item("plants", "dwarf_hairgrass", 0.5, 0.2)
+    assert not state["aquarium"]["scape"]["objects"]
+    sim.place_scape_item("plants", "red_root_floaters", 0.5, 0.1)
+    assert len(state["aquarium"]["scape"]["objects"]) == 1
+    floater_id = state["aquarium"]["scape"]["objects"][0]["id"]
+    sim.move_scape_item(floater_id, 0.6, 0.85)
+    assert state["aquarium"]["scape"]["objects"][0]["y"] == 0.1
+    sim.switch_system("saltwater")
+    sim.place_scape_item("corals", "torch_coral", 0.55, 0.82)
+    assert any(obj["type"] == "torch_coral" for obj in state["aquarium"]["scape"]["objects"])
+
+
 def main() -> int:
     tests = [
         test_nitrogen_cycle_and_water_change,
@@ -87,6 +136,9 @@ def main() -> int:
         test_oxygen_and_ammonia_explanations,
         test_command_persistence_shape,
         test_scape_items_change_biology,
+        test_acclimation_failure_adds_death_load,
+        test_saltwater_switch_species_and_reefscape_rules,
+        test_scape_placement_rules_and_relocation,
     ]
     for test in tests:
         test()

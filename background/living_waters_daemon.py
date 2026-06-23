@@ -152,6 +152,32 @@ class Daemon:
             )
         elif action == "reset_scape":
             self.sim.reset_scape()
+        elif action == "switch_system":
+            self.sim.switch_system(str(command.get("system", "freshwater")))
+        elif action == "add_animal":
+            self.sim.add_animal(
+                str(command.get("species_id", "")),
+                int(command.get("acclimation_minutes", 30)),
+                str(command.get("name", "")),
+            )
+        elif action == "remove_animal":
+            self.sim.remove_animal(str(command.get("animal_id", "")))
+        elif action == "place_scape_item":
+            self.sim.place_scape_item(
+                str(command.get("category", "")),
+                str(command.get("type", "")),
+                float(command.get("x", 0.5)),
+                float(command.get("y", 0.8)),
+                float(command.get("scale", 1.0)),
+            )
+        elif action == "move_scape_item":
+            self.sim.move_scape_item(
+                str(command.get("object_id", "")),
+                float(command.get("x", 0.5)),
+                float(command.get("y", 0.8)),
+            )
+        elif action == "remove_scape_item":
+            self.sim.remove_scape_item(str(command.get("object_id", "")))
 
     def command(self, action: str) -> None:
         atomic_write(COMMAND_PATH, {"action": action, "timestamp": now_iso()})
