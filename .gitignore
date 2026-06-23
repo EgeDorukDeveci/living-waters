@@ -1,0 +1,10 @@
+runtime/
+build/
+dist/
+__pycache__/
+*.pyc
+*.spec
+Living Waters.exe
+LivingWatersBackground.exe
+.godot/
+tools/

@@ -1,0 +1,4 @@
+Pillow==12.2.0
+pystray==0.19.5
+win11toast==0.36.3
+pyinstaller==6.21.0
