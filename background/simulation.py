@@ -15,6 +15,68 @@ from typing import Any
 SCHEMA_VERSION = 1
 MAX_OFFLINE_SECONDS = 12 * 60 * 60
 
+PLANT_TYPES: dict[str, dict[str, Any]] = {
+    "dwarf_hairgrass": {
+        "name": "Dwarf hairgrass carpet",
+        "zone": "foreground",
+        "nitrate_uptake": 0.16,
+        "oxygen_day": 0.08,
+        "oxygen_night": -0.025,
+        "hiding": 0.08,
+        "algae_control": 0.04,
+        "maintenance": 0.05,
+    },
+    "java_fern": {
+        "name": "Java fern",
+        "zone": "midground",
+        "nitrate_uptake": 0.09,
+        "oxygen_day": 0.04,
+        "oxygen_night": -0.015,
+        "hiding": 0.16,
+        "algae_control": 0.03,
+        "maintenance": 0.015,
+    },
+    "anubias": {
+        "name": "Anubias",
+        "zone": "hardscape",
+        "nitrate_uptake": 0.055,
+        "oxygen_day": 0.025,
+        "oxygen_night": -0.01,
+        "hiding": 0.11,
+        "algae_control": 0.02,
+        "maintenance": 0.01,
+    },
+    "vallisneria": {
+        "name": "Vallisneria background",
+        "zone": "background",
+        "nitrate_uptake": 0.2,
+        "oxygen_day": 0.105,
+        "oxygen_night": -0.035,
+        "hiding": 0.13,
+        "algae_control": 0.06,
+        "maintenance": 0.045,
+    },
+    "red_root_floaters": {
+        "name": "Red root floaters",
+        "zone": "surface",
+        "nitrate_uptake": 0.18,
+        "oxygen_day": 0.05,
+        "oxygen_night": -0.018,
+        "hiding": 0.09,
+        "algae_control": 0.11,
+        "maintenance": 0.035,
+        "surface_shade": 0.18,
+    },
+}
+
+HARDSCAPE_TYPES: dict[str, dict[str, Any]] = {
+    "river_stone": {"name": "River stone", "hiding": 0.04, "flow_break": 0.02},
+    "moss_stone": {"name": "Moss stone", "hiding": 0.07, "algae_control": 0.025},
+    "dragon_stone": {"name": "Dragon stone", "hiding": 0.06, "flow_break": 0.035},
+    "branch_driftwood": {"name": "Branch driftwood", "hiding": 0.11, "soft_water": 0.025},
+    "root_driftwood": {"name": "Root driftwood", "hiding": 0.16, "soft_water": 0.035},
+}
+
 
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
@@ -63,12 +125,7 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "open_swimming": 0.64,
             "surface_agitation": 0.62,
             "aquascape_style": "greenscape",
-            "hardscape": {
-                "stone_cluster": 0.72,
-                "driftwood": 0.58,
-                "stem_plants": 0.78,
-                "carpet_plants": 0.66,
-            },
+            "scape": default_scape(),
         },
         "water": {
             "temperature_c": 23.5,
@@ -137,6 +194,27 @@ def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
     }
 
 
+def default_scape() -> dict[str, Any]:
+    return {
+        "rocks": [
+            {"type": "river_stone", "quantity": 5, "scale": 1.0},
+            {"type": "moss_stone", "quantity": 2, "scale": 0.8},
+        ],
+        "wood": [
+            {"type": "branch_driftwood", "quantity": 2, "scale": 1.0},
+            {"type": "root_driftwood", "quantity": 1, "scale": 0.9},
+        ],
+        "plants": [
+            {"type": "dwarf_hairgrass", "quantity": 18, "health": 0.94},
+            {"type": "java_fern", "quantity": 5, "health": 0.92},
+            {"type": "anubias", "quantity": 4, "health": 0.9},
+            {"type": "vallisneria", "quantity": 8, "health": 0.91},
+            {"type": "red_root_floaters", "quantity": 6, "health": 0.88},
+        ],
+        "layout_seed": 42,
+    }
+
+
 def event(severity: str, title: str, details: str, subject: str = "") -> dict[str, Any]:
     return {
         "id": uuid.uuid4().hex[:10],
@@ -152,7 +230,19 @@ class AquariumSimulation:
     def __init__(self, species: dict[str, dict[str, Any]], state: dict[str, Any]) -> None:
         self.species = species
         self.state = state
+        self._normalize_state()
         self._event_keys: dict[str, float] = {}
+
+    def _normalize_state(self) -> None:
+        aquarium = self.state.setdefault("aquarium", {})
+        aquarium.setdefault("aquascape_style", "greenscape")
+        aquarium.setdefault("scape", default_scape())
+        scape = aquarium["scape"]
+        scape.setdefault("rocks", [])
+        scape.setdefault("wood", [])
+        scape.setdefault("plants", [])
+        scape.setdefault("layout_seed", 42)
+        aquarium.update(self._scape_metrics())
 
     def advance(self, real_seconds: float, offline: bool = False) -> None:
         clock = self.state["clock"]
@@ -185,12 +275,82 @@ class AquariumSimulation:
         water["oxygen_mg_l"] = clamp(water["oxygen_mg_l"] + fraction * 1.2, 0, 10)
         self._record("info", "Partial water change", f"{fraction * 100:.0f}% of the water was replaced gradually.")
 
+    def reset_scape(self) -> None:
+        self.state["aquarium"]["scape"] = default_scape()
+        self.state["aquarium"].update(self._scape_metrics())
+        self._record("info", "Greenscape restored", "The aquascape was reset to the balanced planted starter layout.")
+
+    def add_scape_item(self, category: str, item_type: str, quantity: int = 1) -> None:
+        category = "wood" if category == "log" else category
+        if category not in {"rocks", "wood", "plants"}:
+            return
+        catalogue = PLANT_TYPES if category == "plants" else HARDSCAPE_TYPES
+        if item_type not in catalogue:
+            return
+        quantity = int(clamp(quantity, 1, 8))
+        scape = self.state["aquarium"]["scape"]
+        items = scape.setdefault(category, [])
+        for item in items:
+            if item.get("type") == item_type:
+                item["quantity"] = int(item.get("quantity", 0)) + quantity
+                if category == "plants":
+                    item["health"] = max(float(item.get("health", 0.8)), 0.82)
+                break
+        else:
+            item = {"type": item_type, "quantity": quantity, "scale": 1.0}
+            if category == "plants":
+                item["health"] = 0.86
+            items.append(item)
+        self.state["aquarium"].update(self._scape_metrics())
+        name = catalogue[item_type]["name"]
+        self._record("info", "Aquascape changed", f"Added {quantity} x {name}.")
+
+    def _scape_metrics(self) -> dict[str, float]:
+        scape = self.state.get("aquarium", {}).get("scape", default_scape())
+        nitrate_uptake = 0.0
+        oxygen_day = 0.0
+        oxygen_night = 0.0
+        hiding = 0.0
+        algae_control = 0.0
+        maintenance = 0.0
+        surface_shade = 0.0
+        for plant in scape.get("plants", []):
+            data = PLANT_TYPES.get(plant.get("type", ""), {})
+            quantity = float(plant.get("quantity", 0))
+            health = float(plant.get("health", 0.75))
+            weight = quantity * health
+            nitrate_uptake += data.get("nitrate_uptake", 0.0) * weight
+            oxygen_day += data.get("oxygen_day", 0.0) * weight
+            oxygen_night += data.get("oxygen_night", 0.0) * weight
+            hiding += data.get("hiding", 0.0) * weight
+            algae_control += data.get("algae_control", 0.0) * weight
+            maintenance += data.get("maintenance", 0.0) * quantity * (1.15 - health)
+            surface_shade += data.get("surface_shade", 0.0) * weight
+        for category in ("rocks", "wood"):
+            for item in scape.get(category, []):
+                data = HARDSCAPE_TYPES.get(item.get("type", ""), {})
+                weight = float(item.get("quantity", 0)) * float(item.get("scale", 1.0))
+                hiding += data.get("hiding", 0.0) * weight
+                algae_control += data.get("algae_control", 0.0) * weight
+        return {
+            "plant_cover": clamp(nitrate_uptake / 4.2, 0.05, 0.96),
+            "hiding_cover": clamp(hiding / 3.6, 0.05, 0.96),
+            "nitrate_uptake": clamp(nitrate_uptake / 5.0, 0.02, 1.3),
+            "oxygen_day": clamp(oxygen_day / 5.0, 0.0, 0.9),
+            "oxygen_night": clamp(oxygen_night / 5.0, -0.5, 0.0),
+            "algae_control": clamp(algae_control / 2.8, 0.0, 0.85),
+            "maintenance_load": clamp(maintenance / 2.5, 0.0, 0.55),
+            "surface_shade": clamp(surface_shade / 2.0, 0.0, 0.65),
+        }
+
     def _tick(self, seconds: float) -> None:
         hours = seconds / 3600.0
         water = self.state["water"]
         bio = self.state["biology"]
         equipment = self.state["equipment"]
         food = self.state["food"]
+        self.state["aquarium"].update(self._scape_metrics())
+        scape_metrics = self.state["aquarium"]
         living = [a for a in self.state["animals"] if a["alive"]]
         total_bioload = sum(self.species[a["species_id"]]["bioload"] for a in living)
 
@@ -198,7 +358,7 @@ class AquariumSimulation:
         food["available"] -= consumed
         food["decaying"] += max(0.0, food["available"] - 0.12) * hours * 0.06
         waste_input = (total_bioload * 0.0015 + food["decaying"] * 0.035) * hours
-        water["organic_waste"] = clamp(water["organic_waste"] + waste_input * 0.7, 0, 5)
+        water["organic_waste"] = clamp(water["organic_waste"] + waste_input * 0.7 + scape_metrics["maintenance_load"] * hours * 0.0015, 0, 5)
         water["ammonia_mg_l"] += waste_input
 
         filter_state = equipment["filter"]
@@ -225,7 +385,7 @@ class AquariumSimulation:
         bacterial_food = clamp((water["ammonia_mg_l"] + water["nitrite_mg_l"]) * 2.0, 0, 1)
         bio["ammonia_bacteria"] = clamp(bio["ammonia_bacteria"] + (bacterial_food - 0.2) * hours * 0.002, 0.05, 1)
         bio["nitrite_bacteria"] = clamp(bio["nitrite_bacteria"] + (bacterial_food - 0.2) * hours * 0.0018, 0.05, 1)
-        plant_uptake = bio["plant_health"] * self.state["aquarium"]["plant_cover"] * hours * 0.012
+        plant_uptake = bio["plant_health"] * scape_metrics["nitrate_uptake"] * hours * 0.015
         water["nitrate_mg_l"] = max(0.0, water["nitrate_mg_l"] - plant_uptake)
 
         hour = datetime.now().hour
@@ -233,7 +393,7 @@ class AquariumSimulation:
         oxygen_gain = (
             self.state["aquarium"]["surface_agitation"] * 0.18
             + equipment["air_pump"]["enabled"] * equipment["air_pump"]["output"] * 0.17
-            + bio["plant_health"] * self.state["aquarium"]["plant_cover"] * (0.2 if lights_on else -0.07)
+            + bio["plant_health"] * (scape_metrics["oxygen_day"] if lights_on else scape_metrics["oxygen_night"])
         )
         oxygen_use = total_bioload * 0.008 + water["organic_waste"] * 0.018
         water["oxygen_mg_l"] = clamp(water["oxygen_mg_l"] + (oxygen_gain - oxygen_use) * hours, 0, 10)
@@ -244,7 +404,14 @@ class AquariumSimulation:
         water["temperature_c"] += (target - water["temperature_c"]) * min(1.0, hours * 0.12)
         water["turbidity"] = clamp(water["turbidity"] + water["organic_waste"] * hours * 0.002 - filter_factor * hours * 0.01, 0, 1)
         water["ph"] = clamp(water["ph"] - water["organic_waste"] * hours * 0.00025 + (water["kh_dkh"] - 4) * hours * 0.0001, 4.5, 9)
-        bio["algae"] = clamp(bio["algae"] + (0.005 if lights_on else -0.001) * hours + water["nitrate_mg_l"] * hours * 0.00005, 0, 1)
+        bio["algae"] = clamp(
+            bio["algae"]
+            + (0.005 if lights_on else -0.001) * hours
+            + water["nitrate_mg_l"] * hours * 0.00005
+            - scape_metrics["algae_control"] * hours * 0.002,
+            0,
+            1,
+        )
 
         groups = {}
         for animal in living:

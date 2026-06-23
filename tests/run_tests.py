@@ -65,12 +65,28 @@ def test_command_persistence_shape() -> None:
     assert restored["animals"][0]["id"]
 
 
+def test_scape_items_change_biology() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    before = state["aquarium"]["nitrate_uptake"]
+    sim.add_scape_item("plants", "vallisneria", 6)
+    assert state["aquarium"]["nitrate_uptake"] > before
+    upkeep_before = state["aquarium"]["maintenance_load"]
+    sim.add_scape_item("rocks", "moss_stone", 2)
+    assert state["aquarium"]["hiding_cover"] > 0.1
+    assert state["aquarium"]["maintenance_load"] >= upkeep_before
+    sim.reset_scape()
+    assert state["aquarium"]["scape"]["layout_seed"] == 42
+
+
 def main() -> int:
     tests = [
         test_nitrogen_cycle_and_water_change,
         test_schooling_and_tank_size_stress,
         test_oxygen_and_ammonia_explanations,
         test_command_persistence_shape,
+        test_scape_items_change_biology,
     ]
     for test in tests:
         test()

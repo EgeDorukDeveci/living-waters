@@ -22,6 +22,7 @@ var event_list: ItemList
 var animal_list: ItemList
 var status_label: Label
 var summary_label: Label
+var scape_label: Label
 var title_label: Label
 
 func _ready() -> void:
@@ -153,6 +154,38 @@ func _build_ui() -> void:
 		panel.add_child(label)
 		water_labels[key] = label
 
+	var scape_title := Label.new()
+	scape_title.text = "Scape Studio"
+	scape_title.add_theme_font_size_override("font_size", 18)
+	scape_title.add_theme_color_override("font_color", Color("#f5efe3"))
+	panel.add_child(scape_title)
+
+	scape_label = Label.new()
+	scape_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	scape_label.add_theme_font_size_override("font_size", 12)
+	scape_label.add_theme_color_override("font_color", Color("#a8c8bd"))
+	panel.add_child(scape_label)
+
+	var scape_grid := GridContainer.new()
+	scape_grid.columns = 2
+	scape_grid.add_theme_constant_override("h_separation", 8)
+	scape_grid.add_theme_constant_override("v_separation", 6)
+	panel.add_child(scape_grid)
+	_add_scape_button(scape_grid, "River stone", "rocks", "river_stone")
+	_add_scape_button(scape_grid, "Moss stone", "rocks", "moss_stone")
+	_add_scape_button(scape_grid, "Branch log", "wood", "branch_driftwood")
+	_add_scape_button(scape_grid, "Root wood", "wood", "root_driftwood")
+	_add_scape_button(scape_grid, "Hairgrass", "plants", "dwarf_hairgrass", 3)
+	_add_scape_button(scape_grid, "Vallisneria", "plants", "vallisneria", 2)
+	_add_scape_button(scape_grid, "Java fern", "plants", "java_fern")
+	_add_scape_button(scape_grid, "Floaters", "plants", "red_root_floaters", 2)
+
+	var reset_scape := Button.new()
+	reset_scape.text = "Reset greenscape"
+	reset_scape.custom_minimum_size = Vector2(300, 32)
+	reset_scape.pressed.connect(func(): _write_command({"action": "reset_scape"}))
+	panel.add_child(reset_scape)
+
 	var animal_title := Label.new()
 	animal_title.text = "Animals"
 	animal_title.add_theme_font_size_override("font_size", 18)
@@ -160,7 +193,7 @@ func _build_ui() -> void:
 	panel.add_child(animal_title)
 
 	animal_list = ItemList.new()
-	animal_list.custom_minimum_size = Vector2(300, 160)
+	animal_list.custom_minimum_size = Vector2(300, 112)
 	panel.add_child(animal_list)
 
 	var event_title := Label.new()
@@ -170,9 +203,21 @@ func _build_ui() -> void:
 	panel.add_child(event_title)
 
 	event_list = ItemList.new()
-	event_list.custom_minimum_size = Vector2(300, 168)
+	event_list.custom_minimum_size = Vector2(300, 108)
 	panel.add_child(event_list)
 	_layout_ui()
+
+func _add_scape_button(parent: Container, text: String, category: String, item_type: String, quantity: int = 1) -> void:
+	var button := Button.new()
+	button.text = text
+	button.custom_minimum_size = Vector2(142, 30)
+	button.pressed.connect(func(): _write_command({
+		"action": "add_scape_item",
+		"category": category,
+		"type": item_type,
+		"quantity": quantity
+	}))
+	parent.add_child(button)
 
 func _layout_ui() -> void:
 	var side_panel := get_node_or_null("SidePanel") as PanelContainer
@@ -314,6 +359,33 @@ func _draw_aquarium() -> void:
 func _aquascape_style() -> String:
 	return str(state.get("aquarium", {}).get("aquascape_style", "greenscape"))
 
+func _scape_items(category: String) -> Array:
+	var scape = state.get("aquarium", {}).get("scape", {})
+	if typeof(scape) == TYPE_DICTIONARY and scape.has(category):
+		return scape.get(category, [])
+	if category == "rocks":
+		return [{"type": "river_stone", "quantity": 5}, {"type": "moss_stone", "quantity": 2}]
+	if category == "wood":
+		return [{"type": "branch_driftwood", "quantity": 2}, {"type": "root_driftwood", "quantity": 1}]
+	if category == "plants":
+		return [
+			{"type": "dwarf_hairgrass", "quantity": 18},
+			{"type": "java_fern", "quantity": 5},
+			{"type": "anubias", "quantity": 4},
+			{"type": "vallisneria", "quantity": 8},
+			{"type": "red_root_floaters", "quantity": 6}
+		]
+	return []
+
+func _rock_color(kind: String) -> Color:
+	match kind:
+		"moss_stone":
+			return Color("#4f6752")
+		"dragon_stone":
+			return Color("#776b55")
+		_:
+			return Color("#4d5a50")
+
 func _draw_wave(start: Vector2, width: float, color: Color, phase: float) -> void:
 	var points := PackedVector2Array()
 	for i in range(42):
@@ -326,45 +398,116 @@ func _draw_hardscape() -> void:
 	var inner := _tank_inner()
 	var sand_top := inner.end.y - SAND_HEIGHT
 	var center := inner.position.x + inner.size.x * 0.45
-	var stone_color := Color("#4d5a50")
-	for i in range(8):
-		var radius := 22.0 + float((i * 11) % 34)
-		var x := center + float(i - 3) * 34.0 + sin(i * 2.1) * 18.0
-		var y := sand_top + 20.0 + float(i % 3) * 12.0
-		draw_circle(Vector2(x, y), radius, stone_color.darkened(float(i % 4) * 0.04))
-		draw_circle(Vector2(x - radius * 0.28, y - radius * 0.22), radius * 0.22, Color(1, 1, 1, 0.06))
-	var root := Vector2(inner.position.x + inner.size.x * 0.58, sand_top + 24.0)
-	for branch in range(5):
-		var end := root + Vector2(-160.0 + branch * 54.0, -72.0 - float(branch % 2) * 42.0)
-		var bend := root.lerp(end, 0.46) + Vector2(18.0 * sin(branch), -20.0)
+	var rock_index := 0
+	for item in _scape_items("rocks"):
+		var quantity := int(item.get("quantity", 0))
+		var kind := str(item.get("type", "river_stone"))
+		for n in range(quantity):
+			var i := rock_index + n
+			var radius := 18.0 + float((i * 11) % 34) * float(item.get("scale", 1.0))
+			var x := center + float(i - quantity) * 31.0 + sin(i * 2.1) * 18.0
+			var y := sand_top + 18.0 + float(i % 3) * 13.0
+			var stone_color := _rock_color(kind)
+			_draw_rock(Vector2(x, y), radius, stone_color, i)
+		rock_index += quantity
+	var wood_index := 0
+	for item in _scape_items("wood"):
+		var quantity := int(item.get("quantity", 0))
+		var kind := str(item.get("type", "branch_driftwood"))
+		for n in range(quantity):
+			var branch_count := 3 if kind == "branch_driftwood" else 5
+			var root := Vector2(inner.position.x + inner.size.x * (0.44 + fposmod(float(wood_index) * 0.13, 0.22)), sand_top + 24.0)
+			_draw_driftwood(root, branch_count, wood_index)
+			wood_index += 1
+
+func _draw_rock(pos: Vector2, radius: float, color: Color, seed: int) -> void:
+	var points := PackedVector2Array()
+	for p in range(10):
+		var angle := TAU * float(p) / 10.0
+		var wobble := 0.78 + fposmod(sin(seed * 3.7 + p * 1.9), 1.0) * 0.32
+		points.push_back(pos + Vector2(cos(angle), sin(angle)) * radius * wobble)
+	var colors := PackedColorArray()
+	for p in range(points.size()):
+		colors.push_back(color.darkened(float(p % 3) * 0.025))
+	draw_polygon(points, colors)
+	draw_circle(pos + Vector2(-radius * 0.28, -radius * 0.22), radius * 0.2, Color(1, 1, 1, 0.06))
+
+func _draw_driftwood(root: Vector2, branch_count: int, seed: int) -> void:
+	for branch in range(branch_count):
+		var end := root + Vector2(-150.0 + branch * 54.0 + seed * 12.0, -62.0 - float((branch + seed) % 2) * 42.0)
+		var bend := root.lerp(end, 0.46) + Vector2(18.0 * sin(branch + seed), -20.0)
 		var curve := Curve2D.new()
 		curve.add_point(root)
 		curve.add_point(bend)
 		curve.add_point(end)
 		var baked := curve.get_baked_points()
 		if baked.size() > 1:
-			draw_polyline(baked, Color("#5b3d2b"), 10.0 - branch, true)
+			draw_polyline(baked, Color("#5b3d2b"), max(4.0, 10.0 - branch), true)
 			draw_polyline(baked, Color(0.18, 0.10, 0.06, 0.42), 3.0, true)
 
 func _draw_plants() -> void:
 	var inner := _tank_inner()
 	var sand_top := inner.end.y - SAND_HEIGHT
-	for carpet in range(52):
-		var x := inner.position.x + fposmod(carpet * 31.0, inner.size.x)
-		var y := sand_top + 10.0 + fposmod(carpet * 17.0, 46.0)
-		var leaf := Color("#5fbf73") if carpet % 2 == 0 else Color("#7ad089")
-		_draw_leaf(Vector2(x, y), 12.0, 5.0, leaf)
-	for i in range(24):
-		var base_x := inner.position.x + 34.0 + fposmod(i * 73.0, inner.size.x - 68.0)
-		var height := 38.0 + float((i * 29) % 74)
-		var base := Vector2(base_x, sand_top + 8.0)
-		var sway := sin(Time.get_ticks_msec() / 1200.0 + i) * 8.0
-		var color := Color("#5ca86c") if i % 3 != 0 else Color("#7fc47a")
-		for blade in range(3):
-			var offset := float(blade - 1) * 4.0
-			var tip := base + Vector2(offset + sway * (0.5 + blade * 0.1), -height + blade * 8.0)
-			draw_line(base + Vector2(offset, 0), tip, color, 3.0, true)
-			draw_circle(tip, 3.0, color.darkened(0.05))
+	var fallback_done := false
+	for item in _scape_items("plants"):
+		var kind := str(item.get("type", "java_fern"))
+		var quantity := int(item.get("quantity", 0))
+		for n in range(quantity):
+			var seed := n + quantity * kind.length()
+			match kind:
+				"dwarf_hairgrass":
+					_draw_carpet_patch(seed, inner, sand_top)
+				"vallisneria":
+					_draw_vallisneria(seed, inner, sand_top)
+				"java_fern":
+					_draw_rosette(seed, inner, sand_top, Color("#4f9c5c"), 42.0)
+				"anubias":
+					_draw_rosette(seed, inner, sand_top, Color("#3f8758"), 30.0)
+				"red_root_floaters":
+					_draw_floaters(seed, inner)
+				_:
+					_draw_rosette(seed, inner, sand_top, Color("#5ca86c"), 34.0)
+		fallback_done = true
+	if not fallback_done:
+		for i in range(20):
+			_draw_carpet_patch(i, inner, sand_top)
+
+func _draw_carpet_patch(seed: int, inner: Rect2, sand_top: float) -> void:
+	var x := inner.position.x + fposmod(seed * 31.0, inner.size.x)
+	var y := sand_top + 10.0 + fposmod(seed * 17.0, 46.0)
+	var leaf := Color("#5fbf73") if seed % 2 == 0 else Color("#7ad089")
+	_draw_leaf(Vector2(x, y), 12.0, 5.0, leaf)
+
+func _draw_vallisneria(seed: int, inner: Rect2, sand_top: float) -> void:
+	var base_x := inner.position.x + 34.0 + fposmod(seed * 73.0, inner.size.x - 68.0)
+	var height := 72.0 + float((seed * 29) % 96)
+	var base := Vector2(base_x, sand_top + 8.0)
+	var sway := sin(Time.get_ticks_msec() / 1200.0 + seed) * 10.0
+	for blade in range(4):
+		var offset := float(blade - 1) * 4.0
+		var tip := base + Vector2(offset + sway * (0.45 + blade * 0.08), -height + blade * 13.0)
+		draw_line(base + Vector2(offset, 0), tip, Color("#6cbd72"), 3.0, true)
+
+func _draw_rosette(seed: int, inner: Rect2, sand_top: float, color: Color, height: float) -> void:
+	var base := Vector2(
+		inner.position.x + 48.0 + fposmod(seed * 59.0, inner.size.x - 96.0),
+		sand_top + 8.0 - fposmod(seed * 13.0, 26.0)
+	)
+	for leaf_index in range(7):
+		var angle := -PI * 0.95 + float(leaf_index) * PI * 0.32
+		var tip := base + Vector2(cos(angle) * height * 0.58, sin(angle) * height)
+		draw_line(base, tip, color.darkened(0.08), 3.0, true)
+		_draw_leaf(tip, 16.0, 7.0, color.lightened(float(leaf_index % 2) * 0.05))
+
+func _draw_floaters(seed: int, inner: Rect2) -> void:
+	var base := Vector2(
+		inner.position.x + 28.0 + fposmod(seed * 67.0, inner.size.x - 56.0),
+		inner.position.y + 26.0 + fposmod(seed * 11.0, 28.0)
+	)
+	for leaf_index in range(4):
+		var pos := base + Vector2(cos(leaf_index * TAU / 4.0) * 9.0, sin(leaf_index * TAU / 4.0) * 4.0)
+		_draw_leaf(pos, 12.0, 7.0, Color("#76b86a"))
+		draw_line(pos, pos + Vector2(3.0, 14.0 + leaf_index * 3.0), Color("#c26163"), 1.1, true)
 
 func _draw_bubbles() -> void:
 	var inner := _tank_inner()
@@ -592,6 +735,13 @@ func _refresh_ui() -> void:
 	var stressed := int(summary.get("stressed_animals", 0))
 	status_label.text = "%s - %d animals - %d stressed" % [status, living, stressed]
 	summary_label.text = "The aquarium keeps living in the background. Open this window to feed, change water, and check what the tank is telling you."
+	var aquarium = state.get("aquarium", {})
+	if scape_label:
+		scape_label.text = "Plants affect nitrate, oxygen, algae, cover, and maintenance. Cover %.0f%% - algae control %.0f%% - upkeep %.0f%%" % [
+			float(aquarium.get("plant_cover", 0.0)) * 100.0,
+			float(aquarium.get("algae_control", 0.0)) * 100.0,
+			float(aquarium.get("maintenance_load", 0.0)) * 100.0
+		]
 	for key in water_labels.keys():
 		water_labels[key].text = _format_water(key, float(water.get(key, 0.0)))
 	animal_list.clear()

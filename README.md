@@ -2,7 +2,7 @@
 
 Living Waters is a persistent aquarium simulation for Windows. The aquarium keeps living while the PC is on, even when the visible 2D Godot aquarium window is closed.
 
-This is a vertical slice, not a screensaver. The background process simulates water chemistry, a nitrogen cycle, filtration, feeding, oxygen, plants, fish stress, health, mortality explanations, and Windows notifications.
+This is a vertical slice, not a screensaver. The background process simulates water chemistry, a nitrogen cycle, filtration, feeding, oxygen, aquascape plants, fish stress, health, mortality explanations, and Windows notifications.
 
 ## Run
 
@@ -71,6 +71,8 @@ The shipped starter tank uses neon tetras, peppered corydoras, and cherry shrimp
 ## Visual Direction
 
 The client uses a 2D planted-aquarium style. The default aquascape is `greenscape`: carpet plants, taller stems, stone clusters, driftwood, bubbles, calm layered water, and species-specific fish silhouettes.
+
+The Scape Studio controls can add river stones, moss stones, branch driftwood, root driftwood, hairgrass, vallisneria, java fern, and floating plants. Plant choices affect nitrate uptake, daytime oxygen, nighttime oxygen use, hiding cover, algae control, and maintenance load.
 
 ## Not Veterinary Advice
 

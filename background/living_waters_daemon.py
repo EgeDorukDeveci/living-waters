@@ -144,6 +144,14 @@ class Daemon:
             self.state["clock"]["paused"] = not self.state["clock"]["paused"]
         elif action == "set_speed":
             self.state["clock"]["speed"] = max(0.0, min(10.0, float(command.get("speed", 1))))
+        elif action == "add_scape_item":
+            self.sim.add_scape_item(
+                str(command.get("category", "")),
+                str(command.get("type", "")),
+                int(command.get("quantity", 1)),
+            )
+        elif action == "reset_scape":
+            self.sim.reset_scape()
 
     def command(self, action: str) -> None:
         atomic_write(COMMAND_PATH, {"action": action, "timestamp": now_iso()})
