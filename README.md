@@ -74,6 +74,8 @@ The client uses a 2D planted-aquarium style. The default aquascape is `greenscap
 
 The Scape Studio controls can add river stones, moss stones, branch driftwood, root driftwood, hairgrass, vallisneria, java fern, and floating plants. Plant choices affect nitrate uptake, daytime oxygen, nighttime oxygen use, hiding cover, algae control, and maintenance load.
 
+Fish, plants, stones, and driftwood are rendered from transparent 2D sprites in `assets/sprites`. Run `py -3 .\art\generate_sprites.py` to regenerate the current sprite set.
+
 ## Not Veterinary Advice
 
 This is an educational simulation and game. Do not use it as professional veterinary or aquarium-care advice.

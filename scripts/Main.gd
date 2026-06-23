@@ -14,6 +14,8 @@ var species_path: String
 var state: Dictionary = {}
 var species: Dictionary = {}
 var animal_visuals: Dictionary = {}
+var fish_textures: Dictionary = {}
+var scape_textures: Dictionary = {}
 var time_accum := 0.0
 
 var panel: VBoxContainer
@@ -31,6 +33,7 @@ func _ready() -> void:
 	command_path = root_dir.path_join("runtime").path_join("command.json")
 	species_path = root_dir.path_join("data").path_join("species").path_join("freshwater_v1.json")
 	species = _load_species(species_path)
+	_load_sprite_assets()
 	_build_ui()
 	_load_state()
 	queue_redraw()
@@ -74,8 +77,34 @@ func _load_species(path: String) -> Dictionary:
 	var result := {}
 	if typeof(payload) == TYPE_DICTIONARY:
 		for item in payload.get("species", []):
-			result[item["id"]] = item
+				result[item["id"]] = item
 	return result
+
+func _load_sprite_assets() -> void:
+	for id in [
+		"neon_tetra", "betta_splendens", "zebra_danio", "peppered_cory", "cherry_shrimp",
+		"harlequin_rasbora", "fancy_guppy", "honey_gourami", "kuhli_loach"
+	]:
+		var texture := _load_png_texture("res://assets/sprites/fish/%s.png" % id)
+		if texture:
+			fish_textures[id] = texture
+	for id in [
+		"river_stone", "moss_stone", "dragon_stone", "branch_driftwood", "root_driftwood",
+		"dwarf_hairgrass", "java_fern", "anubias", "vallisneria", "red_root_floaters"
+	]:
+		var texture := _load_png_texture("res://assets/sprites/scape/%s.png" % id)
+		if texture:
+			scape_textures[id] = texture
+
+func _load_png_texture(path: String) -> Texture2D:
+	var imported := ResourceLoader.load(path)
+	if imported is Texture2D:
+		return imported
+	var image := Image.new()
+	var error := image.load(path)
+	if error != OK:
+		return null
+	return ImageTexture.create_from_image(image)
 
 func _load_state() -> void:
 	var payload = _load_json(state_path)
@@ -408,7 +437,8 @@ func _draw_hardscape() -> void:
 			var x := center + float(i - quantity) * 31.0 + sin(i * 2.1) * 18.0
 			var y := sand_top + 18.0 + float(i % 3) * 13.0
 			var stone_color := _rock_color(kind)
-			_draw_rock(Vector2(x, y), radius, stone_color, i)
+			if not _draw_scape_sprite(kind, Vector2(x, y), Vector2(radius * 2.45, radius * 2.15), i % 2 == 0):
+				_draw_rock(Vector2(x, y), radius, stone_color, i)
 		rock_index += quantity
 	var wood_index := 0
 	for item in _scape_items("wood"):
@@ -417,8 +447,18 @@ func _draw_hardscape() -> void:
 		for n in range(quantity):
 			var branch_count := 3 if kind == "branch_driftwood" else 5
 			var root := Vector2(inner.position.x + inner.size.x * (0.44 + fposmod(float(wood_index) * 0.13, 0.22)), sand_top + 24.0)
-			_draw_driftwood(root, branch_count, wood_index)
+			if not _draw_scape_sprite(kind, root + Vector2(0, -52), Vector2(190, 150), wood_index % 2 == 1):
+				_draw_driftwood(root, branch_count, wood_index)
 			wood_index += 1
+
+func _draw_scape_sprite(item_type: String, pos: Vector2, draw_size: Vector2, flip: bool = false, modulate: Color = Color.WHITE) -> bool:
+	if not scape_textures.has(item_type):
+		return false
+	var texture: Texture2D = scape_textures[item_type]
+	draw_set_transform(pos, 0.0, Vector2(-1.0 if flip else 1.0, 1.0))
+	draw_texture_rect(texture, Rect2(-draw_size * 0.5, draw_size), false, modulate)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	return true
 
 func _draw_rock(pos: Vector2, radius: float, color: Color, seed: int) -> void:
 	var points := PackedVector2Array()
@@ -456,15 +496,25 @@ func _draw_plants() -> void:
 			var seed := n + quantity * kind.length()
 			match kind:
 				"dwarf_hairgrass":
-					_draw_carpet_patch(seed, inner, sand_top)
+					var pos := Vector2(inner.position.x + fposmod(seed * 31.0, inner.size.x), sand_top + 17.0 + fposmod(seed * 17.0, 34.0))
+					if not _draw_scape_sprite(kind, pos, Vector2(86, 86), seed % 2 == 0):
+						_draw_carpet_patch(seed, inner, sand_top)
 				"vallisneria":
-					_draw_vallisneria(seed, inner, sand_top)
+					var pos := Vector2(inner.position.x + 42.0 + fposmod(seed * 73.0, inner.size.x - 84.0), sand_top - 38.0)
+					if not _draw_scape_sprite(kind, pos, Vector2(86, 132), seed % 2 == 0):
+						_draw_vallisneria(seed, inner, sand_top)
 				"java_fern":
-					_draw_rosette(seed, inner, sand_top, Color("#4f9c5c"), 42.0)
+					var pos := Vector2(inner.position.x + 48.0 + fposmod(seed * 59.0, inner.size.x - 96.0), sand_top - 18.0)
+					if not _draw_scape_sprite(kind, pos, Vector2(78, 78), seed % 2 == 0):
+						_draw_rosette(seed, inner, sand_top, Color("#4f9c5c"), 42.0)
 				"anubias":
-					_draw_rosette(seed, inner, sand_top, Color("#3f8758"), 30.0)
+					var pos := Vector2(inner.position.x + 48.0 + fposmod(seed * 59.0, inner.size.x - 96.0), sand_top - 12.0)
+					if not _draw_scape_sprite(kind, pos, Vector2(66, 66), seed % 2 == 0):
+						_draw_rosette(seed, inner, sand_top, Color("#3f8758"), 30.0)
 				"red_root_floaters":
-					_draw_floaters(seed, inner)
+					var pos := Vector2(inner.position.x + 44.0 + fposmod(seed * 67.0, inner.size.x - 88.0), inner.position.y + 46.0 + fposmod(seed * 11.0, 25.0))
+					if not _draw_scape_sprite(kind, pos, Vector2(70, 70), seed % 2 == 0):
+						_draw_floaters(seed, inner)
 				_:
 					_draw_rosette(seed, inner, sand_top, Color("#5ca86c"), 34.0)
 		fallback_done = true
@@ -538,6 +588,8 @@ func _draw_animals() -> void:
 		var health := float(animal.get("health", 1.0))
 		var tint := Color(spec.get("color", "#cccccc")).lerp(Color("#d8c8a0"), clamp(stress * 0.35 + (1.0 - health) * 0.4, 0.0, 0.55))
 		var accent := Color(spec.get("accent", "#ffffff"))
+		if _draw_fish_sprite(str(animal.get("species_id", "")), pos, facing, stress, health):
+			continue
 		var visual_family := str(spec.get("visual_family", animal.get("species_id", "")))
 		match visual_family:
 			"cherry_shrimp":
@@ -558,6 +610,39 @@ func _draw_animals() -> void:
 				_draw_loach(pos, facing, tint, accent, visual)
 			_:
 				_draw_tetra(pos, facing, tint, accent, visual)
+
+func _draw_fish_sprite(species_id: String, pos: Vector2, facing: float, stress: float, health: float) -> bool:
+	if not fish_textures.has(species_id):
+		return false
+	var texture: Texture2D = fish_textures[species_id]
+	var draw_size := _fish_sprite_size(species_id)
+	var warmth: float = clamp(stress * 0.18 + (1.0 - health) * 0.22, 0.0, 0.35)
+	var modulate := Color(1.0, 1.0 - warmth * 0.18, 1.0 - warmth * 0.28, 1.0)
+	draw_set_transform(pos, 0.0, Vector2(1.0 if facing >= 0 else -1.0, 1.0))
+	draw_texture_rect(texture, Rect2(-draw_size * 0.5, draw_size), false, modulate)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	return true
+
+func _fish_sprite_size(species_id: String) -> Vector2:
+	match species_id:
+		"cherry_shrimp":
+			return Vector2(52, 30)
+		"kuhli_loach":
+			return Vector2(92, 46)
+		"betta_splendens":
+			return Vector2(74, 42)
+		"peppered_cory":
+			return Vector2(72, 40)
+		"honey_gourami":
+			return Vector2(68, 38)
+		"fancy_guppy":
+			return Vector2(58, 34)
+		"zebra_danio":
+			return Vector2(64, 32)
+		"harlequin_rasbora":
+			return Vector2(62, 34)
+		_:
+			return Vector2(58, 32)
 
 func _fish_points(pos: Vector2, facing: float, length: float, height: float) -> PackedVector2Array:
 	return PackedVector2Array([
