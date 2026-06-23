@@ -62,6 +62,13 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "hiding_cover": 0.42,
             "open_swimming": 0.64,
             "surface_agitation": 0.62,
+            "aquascape_style": "greenscape",
+            "hardscape": {
+                "stone_cluster": 0.72,
+                "driftwood": 0.58,
+                "stem_plants": 0.78,
+                "carpet_plants": 0.66,
+            },
         },
         "water": {
             "temperature_c": 23.5,

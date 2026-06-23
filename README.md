@@ -61,8 +61,16 @@ py -3 .\background\living_waters_daemon.py --self-test
 - Zebra danio
 - Peppered corydoras
 - Cherry shrimp
+- Harlequin rasbora
+- Fancy guppy
+- Honey gourami
+- Kuhli loach
 
 The shipped starter tank uses neon tetras, peppered corydoras, and cherry shrimp because their water parameters overlap better than the full catalogue. The other species are present to demonstrate compatibility constraints and future scenarios.
+
+## Visual Direction
+
+The client uses a 2D planted-aquarium style. The default aquascape is `greenscape`: carpet plants, taller stems, stone clusters, driftwood, bubbles, calm layered water, and species-specific fish silhouettes.
 
 ## Not Veterinary Advice
 

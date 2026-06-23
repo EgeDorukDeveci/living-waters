@@ -12,6 +12,7 @@ Living Waters is a game simulation, not veterinary advice. Species values are co
 ## Current Sources
 
 - FishBase species summaries for `Paracheirodon innesi`, `Betta splendens`, `Danio rerio`, and corydoras relatives.
+- FishBase species summaries for `Trigonostigma heteromorpha`, `Poecilia reticulata`, `Trichogaster chuna`, and `Pangio kuhlii`.
 - Merck Veterinary Manual aquatic-system water-quality disease overview.
 - FAO aquaculture water-quality material.
 - Peer-reviewed aquarium welfare and ornamental-fish care references available through PubMed Central.

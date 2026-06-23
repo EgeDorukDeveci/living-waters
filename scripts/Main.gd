@@ -49,6 +49,7 @@ func _notification(what: int) -> void:
 func _draw() -> void:
 	_draw_room()
 	_draw_aquarium()
+	_draw_hardscape()
 	_draw_plants()
 	_draw_bubbles()
 	_draw_animals()
@@ -284,11 +285,14 @@ func _draw_room() -> void:
 func _draw_aquarium() -> void:
 	var tank := _aquarium_rect()
 	var inner := _tank_inner()
+	var style := _aquascape_style()
 	draw_rect(tank, Color("#15262b"), true)
 	for i in range(10):
 		var ratio := float(i) / 10.0
 		var band := Rect2(inner.position.x, inner.position.y + inner.size.y * ratio, inner.size.x, inner.size.y / 10.0 + 1.0)
-		var color := Color("#12313a").lerp(Color("#1b5963"), 1.0 - ratio)
+		var top_color := Color("#1f665e") if style == "greenscape" else Color("#1b5963")
+		var bottom_color := Color("#102c33") if style == "greenscape" else Color("#12313a")
+		var color := bottom_color.lerp(top_color, 1.0 - ratio)
 		color.a = 0.96
 		draw_rect(band, color, true)
 	var water = state.get("water", {})
@@ -307,6 +311,9 @@ func _draw_aquarium() -> void:
 	draw_rect(tank, Color("#416973"), false, 3.0)
 	draw_rect(inner, Color(1, 1, 1, 0.045), false, 1.0)
 
+func _aquascape_style() -> String:
+	return str(state.get("aquarium", {}).get("aquascape_style", "greenscape"))
+
 func _draw_wave(start: Vector2, width: float, color: Color, phase: float) -> void:
 	var points := PackedVector2Array()
 	for i in range(42):
@@ -315,9 +322,38 @@ func _draw_wave(start: Vector2, width: float, color: Color, phase: float) -> voi
 		points.push_back(Vector2(x, y))
 	draw_polyline(points, color, 2.0, true)
 
+func _draw_hardscape() -> void:
+	var inner := _tank_inner()
+	var sand_top := inner.end.y - SAND_HEIGHT
+	var center := inner.position.x + inner.size.x * 0.45
+	var stone_color := Color("#4d5a50")
+	for i in range(8):
+		var radius := 22.0 + float((i * 11) % 34)
+		var x := center + float(i - 3) * 34.0 + sin(i * 2.1) * 18.0
+		var y := sand_top + 20.0 + float(i % 3) * 12.0
+		draw_circle(Vector2(x, y), radius, stone_color.darkened(float(i % 4) * 0.04))
+		draw_circle(Vector2(x - radius * 0.28, y - radius * 0.22), radius * 0.22, Color(1, 1, 1, 0.06))
+	var root := Vector2(inner.position.x + inner.size.x * 0.58, sand_top + 24.0)
+	for branch in range(5):
+		var end := root + Vector2(-160.0 + branch * 54.0, -72.0 - float(branch % 2) * 42.0)
+		var bend := root.lerp(end, 0.46) + Vector2(18.0 * sin(branch), -20.0)
+		var curve := Curve2D.new()
+		curve.add_point(root)
+		curve.add_point(bend)
+		curve.add_point(end)
+		var baked := curve.get_baked_points()
+		if baked.size() > 1:
+			draw_polyline(baked, Color("#5b3d2b"), 10.0 - branch, true)
+			draw_polyline(baked, Color(0.18, 0.10, 0.06, 0.42), 3.0, true)
+
 func _draw_plants() -> void:
 	var inner := _tank_inner()
 	var sand_top := inner.end.y - SAND_HEIGHT
+	for carpet in range(52):
+		var x := inner.position.x + fposmod(carpet * 31.0, inner.size.x)
+		var y := sand_top + 10.0 + fposmod(carpet * 17.0, 46.0)
+		var leaf := Color("#5fbf73") if carpet % 2 == 0 else Color("#7ad089")
+		_draw_leaf(Vector2(x, y), 12.0, 5.0, leaf)
 	for i in range(24):
 		var base_x := inner.position.x + 34.0 + fposmod(i * 73.0, inner.size.x - 68.0)
 		var height := 38.0 + float((i * 29) % 74)
@@ -359,7 +395,8 @@ func _draw_animals() -> void:
 		var health := float(animal.get("health", 1.0))
 		var tint := Color(spec.get("color", "#cccccc")).lerp(Color("#d8c8a0"), clamp(stress * 0.35 + (1.0 - health) * 0.4, 0.0, 0.55))
 		var accent := Color(spec.get("accent", "#ffffff"))
-		match str(animal.get("species_id", "")):
+		var visual_family := str(spec.get("visual_family", animal.get("species_id", "")))
+		match visual_family:
 			"cherry_shrimp":
 				_draw_shrimp(pos, facing, tint, accent, visual)
 			"betta_splendens":
@@ -368,6 +405,14 @@ func _draw_animals() -> void:
 				_draw_danio(pos, facing, tint, accent, visual)
 			"peppered_cory":
 				_draw_cory(pos, facing, tint, accent, visual)
+			"rasbora":
+				_draw_rasbora(pos, facing, tint, accent, visual)
+			"guppy":
+				_draw_guppy(pos, facing, tint, accent, visual)
+			"gourami":
+				_draw_gourami(pos, facing, tint, accent, visual)
+			"loach":
+				_draw_loach(pos, facing, tint, accent, visual)
 			_:
 				_draw_tetra(pos, facing, tint, accent, visual)
 
@@ -386,6 +431,16 @@ func _draw_eye(pos: Vector2, facing: float, length: float, height: float) -> voi
 	draw_circle(eye, max(1.5, height * 0.095), Color("#f7fbf8"))
 	draw_circle(eye + Vector2(0.8 * facing, 0.3), max(0.8, height * 0.045), Color("#10181b"))
 
+func _draw_leaf(pos: Vector2, width: float, height: float, color: Color) -> void:
+	draw_polygon(PackedVector2Array([
+		pos + Vector2(-width * 0.5, 0),
+		pos + Vector2(-width * 0.22, -height * 0.5),
+		pos + Vector2(width * 0.34, -height * 0.36),
+		pos + Vector2(width * 0.5, 0),
+		pos + Vector2(width * 0.2, height * 0.48),
+		pos + Vector2(-width * 0.3, height * 0.36)
+	]), PackedColorArray([color, color.lightened(0.04), color, color.darkened(0.03), color, color.lightened(0.02)]))
+
 func _draw_tetra(pos: Vector2, facing: float, color: Color, accent: Color, visual: Dictionary) -> void:
 	var length := 46.0
 	var height := 17.0
@@ -397,6 +452,54 @@ func _draw_tetra(pos: Vector2, facing: float, color: Color, accent: Color, visua
 	draw_polygon(_fish_points(pos, facing, length, height), PackedColorArray([color, color.lightened(0.06), color, color.darkened(0.05), color, color.lightened(0.04)]))
 	draw_line(pos + Vector2(-16 * facing, -2), pos + Vector2(16 * facing, -2), Color("#8be8ff"), 3.0, true)
 	draw_line(pos + Vector2(-14 * facing, 4), pos + Vector2(6 * facing, 4), accent, 3.0, true)
+	_draw_eye(pos, facing, length, height)
+
+func _draw_rasbora(pos: Vector2, facing: float, color: Color, accent: Color, visual: Dictionary) -> void:
+	var length := 50.0
+	var height := 18.0
+	draw_polygon(PackedVector2Array([
+		pos + Vector2(-length * 0.47 * facing, 0),
+		pos + Vector2(-length * 0.68 * facing, -height * 0.45),
+		pos + Vector2(-length * 0.66 * facing, height * 0.44)
+	]), PackedColorArray([color.darkened(0.12), color.darkened(0.08), color.darkened(0.12)]))
+	draw_polygon(_fish_points(pos, facing, length, height), PackedColorArray([color.darkened(0.04), color, color.lightened(0.1), color.lightened(0.05), color, color.darkened(0.04)]))
+	draw_polygon(PackedVector2Array([
+		pos + Vector2(-10 * facing, -6),
+		pos + Vector2(16 * facing, -3),
+		pos + Vector2(7 * facing, 8),
+		pos + Vector2(-15 * facing, 4)
+	]), PackedColorArray([accent, accent, accent, accent]))
+	_draw_eye(pos, facing, length, height)
+
+func _draw_guppy(pos: Vector2, facing: float, color: Color, accent: Color, visual: Dictionary) -> void:
+	var phase := float(visual.get("phase", 0.0))
+	var length := 43.0
+	var height := 15.0
+	var tail_fan := 16.0 + sin(phase * 2.3) * 2.0
+	draw_polygon(PackedVector2Array([
+		pos + Vector2(-length * 0.36 * facing, 0),
+		pos + Vector2((-length * 0.36 - tail_fan) * facing, -height * 0.95),
+		pos + Vector2((-length * 0.62 - tail_fan * 0.45) * facing, 0),
+		pos + Vector2((-length * 0.36 - tail_fan) * facing, height * 0.95)
+	]), PackedColorArray([accent, accent.lightened(0.16), color.lightened(0.08), accent]))
+	draw_polygon(_fish_points(pos, facing, length, height), PackedColorArray([color, color.lightened(0.12), color.lightened(0.05), color, color.darkened(0.05), color]))
+	draw_circle(pos + Vector2(-3 * facing, -1), 3.0, accent.lightened(0.1))
+	draw_circle(pos + Vector2(7 * facing, 3), 2.0, accent.darkened(0.06))
+	_draw_eye(pos, facing, length, height)
+
+func _draw_gourami(pos: Vector2, facing: float, color: Color, accent: Color, visual: Dictionary) -> void:
+	var phase := float(visual.get("phase", 0.0))
+	var length := 52.0
+	var height := 25.0
+	draw_polygon(PackedVector2Array([
+		pos + Vector2(-length * 0.45 * facing, 0),
+		pos + Vector2(-length * 0.68 * facing, -height * 0.38),
+		pos + Vector2(-length * 0.68 * facing, height * 0.38)
+	]), PackedColorArray([accent, accent.lightened(0.08), accent]))
+	draw_polygon(_fish_points(pos, facing, length, height), PackedColorArray([color.darkened(0.04), color, color.lightened(0.08), color.lightened(0.05), color, color.darkened(0.06)]))
+	draw_arc(pos + Vector2(-3 * facing, -height * 0.12), 17.0, PI * 1.07, PI * 1.88, 20, accent.lightened(0.04), 2.5, true)
+	draw_line(pos + Vector2(5 * facing, height * 0.48), pos + Vector2(9 * facing + sin(phase) * 6.0, height * 1.35), accent, 1.5, true)
+	draw_line(pos + Vector2(10 * facing, height * 0.44), pos + Vector2(18 * facing + cos(phase) * 5.0, height * 1.18), accent, 1.5, true)
 	_draw_eye(pos, facing, length, height)
 
 func _draw_betta(pos: Vector2, facing: float, color: Color, accent: Color, visual: Dictionary) -> void:
@@ -444,6 +547,31 @@ func _draw_cory(pos: Vector2, facing: float, color: Color, accent: Color, visual
 	draw_line(pos + Vector2(length * 0.38 * facing, 7), pos + Vector2(length * 0.58 * facing, 13), accent, 1.4, true)
 	draw_line(pos + Vector2(length * 0.38 * facing, 8), pos + Vector2(length * 0.58 * facing, 3), accent, 1.4, true)
 	_draw_eye(pos + Vector2(0, 4), facing, length, height)
+
+func _draw_loach(pos: Vector2, facing: float, color: Color, accent: Color, visual: Dictionary) -> void:
+	var phase := float(visual.get("phase", 0.0))
+	var points := PackedVector2Array()
+	var top := PackedVector2Array()
+	var bottom := PackedVector2Array()
+	for i in range(12):
+		var ratio := float(i) / 11.0
+		var x := (-42.0 + ratio * 84.0) * facing
+		var wave := sin(phase * 2.0 + ratio * TAU * 1.4) * 5.5
+		var thickness := 5.5 + sin(ratio * PI) * 5.0
+		top.push_back(pos + Vector2(x, wave - thickness))
+		bottom.push_back(pos + Vector2(x, wave + thickness))
+	points.append_array(top)
+	for i in range(bottom.size() - 1, -1, -1):
+		points.push_back(bottom[i])
+	var colors := PackedColorArray()
+	for i in range(points.size()):
+		colors.push_back(color)
+	draw_polygon(points, colors)
+	for band in range(6):
+		var ratio := float(band) / 5.0
+		var x := (-34.0 + ratio * 68.0) * facing
+		draw_line(pos + Vector2(x, -8), pos + Vector2(x - 4 * facing, 8), accent, 4.0, true)
+	_draw_eye(pos + Vector2(30 * facing, sin(phase) * 2.0), facing, 46.0, 15.0)
 
 func _draw_shrimp(pos: Vector2, facing: float, color: Color, accent: Color, visual: Dictionary) -> void:
 	var phase := float(visual.get("phase", 0.0))
