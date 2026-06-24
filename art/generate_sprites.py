@@ -414,12 +414,24 @@ def main() -> int:
         "ember_tetra": make_ember,
         "otocinclus": make_otocinclus,
         "celestial_pearl_danio": make_cpd,
+        "cardinal_tetra": make_neon_tetra,
+        "rummy_nose_tetra": make_ember,
+        "black_neon_tetra": make_danio,
+        "white_cloud_minnow": make_danio,
+        "platy": make_guppy,
+        "bristlenose_pleco": make_cory,
+        "german_blue_ram": make_gourami,
+        "dwarf_chain_loach": make_loach,
         "ocellaris_clownfish": make_clownfish,
         "royal_gramma": make_gramma,
         "banggai_cardinalfish": make_cardinalfish,
         "blue_green_chromis": make_chromis,
         "yellow_watchman_goby": make_watchman_goby,
         "firefish_goby": make_firefish,
+        "tailspot_blenny": make_watchman_goby,
+        "pajama_cardinalfish": make_cardinalfish,
+        "yellow_clown_goby": make_watchman_goby,
+        "cleaner_shrimp": make_shrimp,
     }
     for name, maker in fish.items():
         save(maker().filter(ImageFilter.UnsharpMask(radius=0.8, percent=80, threshold=2)), FISH_DIR / f"{name}.png")
@@ -427,14 +439,21 @@ def main() -> int:
     save(make_rock("river", "#52625c"), SCAPE_DIR / "river_stone.png")
     save(make_rock("moss", "#566a56"), SCAPE_DIR / "moss_stone.png")
     save(make_rock("dragon", "#786d58"), SCAPE_DIR / "dragon_stone.png")
+    save(make_rock("slate", "#3b454d"), SCAPE_DIR / "slate_stack.png")
+    save(make_rock("lava", "#6b3a34"), SCAPE_DIR / "lava_rock.png")
     save(make_rock("live", "#766b5f"), SCAPE_DIR / "live_rock.png")
     save(make_reef_arch(), SCAPE_DIR / "reef_arch.png")
     save(make_driftwood(False), SCAPE_DIR / "branch_driftwood.png")
     save(make_driftwood(True), SCAPE_DIR / "root_driftwood.png")
+    save(make_driftwood(False), SCAPE_DIR / "manzanita_branch.png")
     save(make_plant("hairgrass"), SCAPE_DIR / "dwarf_hairgrass.png")
     save(make_plant("fern"), SCAPE_DIR / "java_fern.png")
     save(make_plant("anubias"), SCAPE_DIR / "anubias.png")
     save(make_plant("vallisneria"), SCAPE_DIR / "vallisneria.png")
+    save(make_plant("vallisneria"), SCAPE_DIR / "amazon_sword.png")
+    save(make_plant("anubias"), SCAPE_DIR / "cryptocoryne_wendtii.png")
+    save(make_plant("fern"), SCAPE_DIR / "java_moss.png")
+    save(make_plant("vallisneria"), SCAPE_DIR / "hornwort.png")
     save(make_plant("floaters"), SCAPE_DIR / "red_root_floaters.png")
     save(make_macroalgae(), SCAPE_DIR / "halimeda_macroalgae.png")
     save(make_plant("vallisneria"), SCAPE_DIR / "turtle_grass.png")
@@ -442,6 +461,8 @@ def main() -> int:
     save(make_coral("mushroom"), SCAPE_DIR / "mushroom_coral.png")
     save(make_coral("gsp"), SCAPE_DIR / "green_star_polyps.png")
     save(make_coral("torch"), SCAPE_DIR / "torch_coral.png")
+    save(make_coral("gsp"), SCAPE_DIR / "pulsing_xenia.png")
+    save(make_coral("mushroom"), SCAPE_DIR / "kenya_tree_coral.png")
     print(f"Wrote sprites to {FISH_DIR} and {SCAPE_DIR}")
     return 0
 

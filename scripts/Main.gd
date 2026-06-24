@@ -13,10 +13,12 @@ const COMMAND_TEST_WATER := {"action": "test_water"}
 
 var root_dir: String
 var state_path: String
+var index_path: String
 var command_path: String
 var species_path: String
 var state: Dictionary = {}
 var species: Dictionary = {}
+var aquarium_index: Dictionary = {}
 var animal_visuals: Dictionary = {}
 var fish_textures: Dictionary = {}
 var scape_textures: Dictionary = {}
@@ -26,9 +28,14 @@ var panel: VBoxContainer
 var water_labels: Dictionary = {}
 var event_list: ItemList
 var animal_list: ItemList
+var aquarium_select: OptionButton
+var tank_name_edit: LineEdit
+var tank_litres_spin: SpinBox
+var tank_system_select: OptionButton
 var species_select: OptionButton
 var status_label: Label
 var summary_label: Label
+var research_label: Label
 var scape_label: Label
 var filter_label: Label
 var cycle_label: Label
@@ -45,6 +52,7 @@ var selected_scape_object_id := ""
 func _ready() -> void:
 	root_dir = _project_root()
 	state_path = root_dir.path_join("runtime").path_join("aquarium_state.json")
+	index_path = root_dir.path_join("runtime").path_join("aquariums").path_join("index.json")
 	command_path = root_dir.path_join("runtime").path_join("command.json")
 	species_path = root_dir.path_join("data").path_join("species").path_join("freshwater_v1.json")
 	species = _load_species(species_path)
@@ -102,6 +110,12 @@ func _client_position_valid(category: String, item_type: String, normalized: Vec
 				tool_label.text = "Floaters need the surface, not the substrate."
 			return false
 		return true
+	if category == "plants" and item_type == "hornwort":
+		if normalized.y > 0.25 and normalized.y < 0.70:
+			if tool_label:
+				tool_label.text = "Hornwort must float near the surface or be planted into substrate."
+			return false
+		return true
 	if category == "plants" and normalized.y < 0.70:
 		if tool_label:
 			tool_label.text = "Rooted plants cannot be placed in open water."
@@ -156,9 +170,11 @@ func _load_sprite_assets() -> void:
 			fish_textures[id] = texture
 	for id in [
 		"river_stone", "moss_stone", "dragon_stone", "branch_driftwood", "root_driftwood",
+		"slate_stack", "lava_rock", "manzanita_branch",
 		"dwarf_hairgrass", "java_fern", "anubias", "vallisneria", "red_root_floaters",
+		"amazon_sword", "cryptocoryne_wendtii", "java_moss", "hornwort",
 		"live_rock", "reef_arch", "halimeda_macroalgae", "turtle_grass",
-		"zoanthids", "mushroom_coral", "green_star_polyps", "torch_coral"
+		"zoanthids", "mushroom_coral", "green_star_polyps", "torch_coral", "pulsing_xenia", "kenya_tree_coral"
 	]:
 		var texture := _load_png_texture("res://assets/sprites/scape/%s.png" % id)
 		if texture:
@@ -176,15 +192,24 @@ func _load_png_texture(path: String) -> Texture2D:
 	return null
 
 func _load_state() -> void:
+	_load_aquarium_index()
 	var payload = _load_json(state_path)
 	if typeof(payload) != TYPE_DICTIONARY:
 		status_label.text = "Starting ecosystem"
 		summary_label.text = "Waiting for the background caretaker to publish the first aquarium state."
 		return
 	state = payload
+	if state.has("aquarium_tabs") and typeof(state["aquarium_tabs"]) == TYPE_DICTIONARY:
+		aquarium_index = state["aquarium_tabs"]
 	_sync_animals()
 	_refresh_ui()
+	_refresh_aquarium_options()
 	_refresh_species_options()
+
+func _load_aquarium_index() -> void:
+	var payload = _load_json(index_path)
+	if typeof(payload) == TYPE_DICTIONARY:
+		aquarium_index = payload
 
 func _build_ui() -> void:
 	title_label = Label.new()
@@ -239,6 +264,52 @@ func _build_ui() -> void:
 	summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	summary_label.add_theme_color_override("font_color", Color("#b7d5d1"))
 	panel.add_child(summary_label)
+
+	var aquarium_title := Label.new()
+	aquarium_title.text = "Aquariums"
+	aquarium_title.add_theme_font_size_override("font_size", 18)
+	aquarium_title.add_theme_color_override("font_color", Color("#f5efe3"))
+	panel.add_child(aquarium_title)
+
+	aquarium_select = OptionButton.new()
+	aquarium_select.custom_minimum_size = Vector2(300, 32)
+	aquarium_select.item_selected.connect(func(index): _select_aquarium(index))
+	panel.add_child(aquarium_select)
+
+	var tank_form := GridContainer.new()
+	tank_form.columns = 2
+	tank_form.add_theme_constant_override("h_separation", 8)
+	tank_form.add_theme_constant_override("v_separation", 6)
+	panel.add_child(tank_form)
+
+	tank_name_edit = LineEdit.new()
+	tank_name_edit.placeholder_text = "New clear tank"
+	tank_name_edit.text = "Clear 60L"
+	tank_name_edit.custom_minimum_size = Vector2(142, 30)
+	tank_form.add_child(tank_name_edit)
+
+	tank_litres_spin = SpinBox.new()
+	tank_litres_spin.min_value = 12
+	tank_litres_spin.max_value = 900
+	tank_litres_spin.step = 1
+	tank_litres_spin.value = 60
+	tank_litres_spin.suffix = " L"
+	tank_litres_spin.custom_minimum_size = Vector2(142, 30)
+	tank_form.add_child(tank_litres_spin)
+
+	tank_system_select = OptionButton.new()
+	tank_system_select.custom_minimum_size = Vector2(142, 30)
+	tank_system_select.add_item("Freshwater")
+	tank_system_select.set_item_metadata(0, "freshwater")
+	tank_system_select.add_item("Saltwater")
+	tank_system_select.set_item_metadata(1, "saltwater")
+	tank_form.add_child(tank_system_select)
+
+	var create_tank := Button.new()
+	create_tank.text = "Create clear"
+	create_tank.custom_minimum_size = Vector2(142, 30)
+	create_tank.pressed.connect(func(): _create_clear_aquarium())
+	tank_form.add_child(create_tank)
 
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 8)
@@ -348,8 +419,16 @@ func _build_ui() -> void:
 
 	species_select = OptionButton.new()
 	species_select.custom_minimum_size = Vector2(300, 32)
+	species_select.item_selected.connect(func(_index): _refresh_research_card())
 	panel.add_child(species_select)
 	_refresh_species_options()
+
+	research_label = Label.new()
+	research_label.text = "Select an animal to see care research."
+	research_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	research_label.add_theme_font_size_override("font_size", 12)
+	research_label.add_theme_color_override("font_color", Color("#c7dcd8"))
+	panel.add_child(research_label)
 
 	var add_row := HBoxContainer.new()
 	add_row.add_theme_constant_override("separation", 8)
@@ -391,24 +470,39 @@ func _build_ui() -> void:
 	panel.add_child(scape_grid)
 	_add_scape_button(scape_grid, "River stone", "rocks", "river_stone")
 	_add_scape_button(scape_grid, "Moss stone", "rocks", "moss_stone")
+	_add_scape_button(scape_grid, "Slate stack", "rocks", "slate_stack")
+	_add_scape_button(scape_grid, "Lava rock", "rocks", "lava_rock")
 	_add_scape_button(scape_grid, "Live rock", "rocks", "live_rock")
 	_add_scape_button(scape_grid, "Reef arch", "rocks", "reef_arch")
 	_add_scape_button(scape_grid, "Branch log", "wood", "branch_driftwood")
 	_add_scape_button(scape_grid, "Root wood", "wood", "root_driftwood")
+	_add_scape_button(scape_grid, "Manzanita", "wood", "manzanita_branch")
 	_add_scape_button(scape_grid, "Hairgrass", "plants", "dwarf_hairgrass")
 	_add_scape_button(scape_grid, "Vallisneria", "plants", "vallisneria")
 	_add_scape_button(scape_grid, "Java fern", "plants", "java_fern")
+	_add_scape_button(scape_grid, "Amazon sword", "plants", "amazon_sword")
+	_add_scape_button(scape_grid, "Crypt wendtii", "plants", "cryptocoryne_wendtii")
+	_add_scape_button(scape_grid, "Java moss", "plants", "java_moss")
+	_add_scape_button(scape_grid, "Hornwort", "plants", "hornwort")
 	_add_scape_button(scape_grid, "Floaters", "plants", "red_root_floaters")
 	_add_scape_button(scape_grid, "Halimeda", "plants", "halimeda_macroalgae")
 	_add_scape_button(scape_grid, "Zoanthids", "corals", "zoanthids")
 	_add_scape_button(scape_grid, "Mushroom coral", "corals", "mushroom_coral")
 	_add_scape_button(scape_grid, "Torch coral", "corals", "torch_coral")
+	_add_scape_button(scape_grid, "Xenia", "corals", "pulsing_xenia")
+	_add_scape_button(scape_grid, "Kenya tree", "corals", "kenya_tree_coral")
 
 	var reset_scape := Button.new()
 	reset_scape.text = "Reset greenscape"
 	reset_scape.custom_minimum_size = Vector2(300, 32)
 	reset_scape.pressed.connect(func(): _write_command({"action": "reset_scape"}))
 	panel.add_child(reset_scape)
+
+	var clear_scape_button := Button.new()
+	clear_scape_button.text = "Clear scape"
+	clear_scape_button.custom_minimum_size = Vector2(300, 32)
+	clear_scape_button.pressed.connect(func(): _write_command({"action": "clear_scape"}))
+	panel.add_child(clear_scape_button)
 
 	var animal_title := Label.new()
 	animal_title.text = "Animals"
@@ -460,10 +554,56 @@ func _layout_ui() -> void:
 		if scroll:
 			scroll.size = side_panel.size
 
+func _active_aquarium_id() -> String:
+	if aquarium_index.is_empty():
+		return ""
+	return str(aquarium_index.get("active_id", ""))
+
+func _refresh_aquarium_options() -> void:
+	if not aquarium_select:
+		return
+	var active_id := _active_aquarium_id()
+	var selected_id := ""
+	if aquarium_select.item_count > 0 and aquarium_select.selected >= 0:
+		selected_id = str(aquarium_select.get_item_metadata(aquarium_select.selected))
+	aquarium_select.clear()
+	for item in aquarium_index.get("aquariums", []):
+		var id := str(item.get("id", ""))
+		var label := "%s - %.0fL %s" % [
+			str(item.get("name", "Aquarium")),
+			float(item.get("gross_litres", 0.0)),
+			str(item.get("system", "freshwater"))
+		]
+		aquarium_select.add_item(label)
+		aquarium_select.set_item_metadata(aquarium_select.item_count - 1, id)
+		if id == active_id or (active_id == "" and id == selected_id):
+			aquarium_select.select(aquarium_select.item_count - 1)
+
+func _select_aquarium(index: int) -> void:
+	if index < 0 or index >= aquarium_select.item_count:
+		return
+	var id := str(aquarium_select.get_item_metadata(index))
+	_write_command({"action": "select_aquarium", "aquarium_id": id})
+
+func _create_clear_aquarium() -> void:
+	var name := tank_name_edit.text.strip_edges() if tank_name_edit else "Clear Aquarium"
+	if name == "":
+		name = "Clear Aquarium"
+	var system := "freshwater"
+	if tank_system_select and tank_system_select.selected >= 0:
+		system = str(tank_system_select.get_item_metadata(tank_system_select.selected))
+	var litres := 60.0
+	if tank_litres_spin:
+		litres = float(tank_litres_spin.value)
+	_write_command({"action": "create_aquarium", "name": name, "system": system, "gross_litres": litres})
+
 func _refresh_species_options() -> void:
 	if not species_select:
 		return
 	var current_system := str(state.get("water", {}).get("system", "freshwater"))
+	var selected_id := ""
+	if species_select.item_count > 0 and species_select.selected >= 0:
+		selected_id = str(species_select.get_item_metadata(species_select.selected))
 	species_select.clear()
 	for id in species.keys():
 		var spec: Dictionary = species[id]
@@ -471,6 +611,61 @@ func _refresh_species_options() -> void:
 			continue
 		species_select.add_item("%s (%s)" % [spec.get("common_name", id), spec.get("swim_zone", "middle")])
 		species_select.set_item_metadata(species_select.item_count - 1, id)
+		if id == selected_id:
+			species_select.select(species_select.item_count - 1)
+	_refresh_research_card()
+
+func _refresh_research_card() -> void:
+	if not research_label:
+		return
+	if not species_select or species_select.item_count <= 0 or species_select.selected < 0:
+		research_label.text = "No compatible species available for this water system."
+		return
+	var id := str(species_select.get_item_metadata(species_select.selected))
+	var spec: Dictionary = species.get(id, {})
+	if spec.is_empty():
+		research_label.text = "Select an animal to see care research."
+		return
+	var aquarium = state.get("aquarium", {})
+	var water = state.get("water", {})
+	var current_litres := float(aquarium.get("effective_litres", 0.0))
+	var min_litres := float(spec.get("minimum_litres", 0.0))
+	var min_length := float(spec.get("minimum_tank_length_cm", 0.0))
+	var length := float(aquarium.get("length_cm", 0.0))
+	var group := int(spec.get("minimum_group", 1))
+	var preferred := int(spec.get("preferred_group", group))
+	var status := "Suitable tank size" if current_litres >= min_litres and length >= min_length else "Tank is too small"
+	var notes: Array[String] = []
+	notes.append("%s (%s)" % [spec.get("common_name", id), spec.get("scientific_name", "unknown")])
+	notes.append("%s: needs %.0fL usable volume, %.0fcm length, group %d+ (preferred %d)." % [status, min_litres, min_length, group, preferred])
+	notes.append("Water: %.0f-%.0f C ideal, pH %.1f-%.1f ideal, GH %.0f-%.0f dGH ideal." % [
+		float(spec.get("temperature_c", {}).get("ideal", [0, 0])[0]),
+		float(spec.get("temperature_c", {}).get("ideal", [0, 0])[1]),
+		float(spec.get("ph", {}).get("ideal", [0, 0])[0]),
+		float(spec.get("ph", {}).get("ideal", [0, 0])[1]),
+		float(spec.get("gh_dgh", {}).get("ideal", [0, 0])[0]),
+		float(spec.get("gh_dgh", {}).get("ideal", [0, 0])[1])
+	])
+	notes.append("Behavior: %s, %s swimmer, nitrate warning around %.0f mg/L." % [
+		str(spec.get("social", "community")).replace("_", " "),
+		str(spec.get("swim_zone", "middle")),
+		float(spec.get("nitrate_warning_mg_l", 20.0))
+	])
+	if str(water.get("system", "freshwater")) != str(spec.get("water_type", "freshwater")):
+		notes.append("Not compatible with this aquarium's water system.")
+	if spec.has("care_notes"):
+		notes.append(str(spec["care_notes"]))
+	if spec.has("sources"):
+		notes.append("Research sources: %s" % _source_summary(spec.get("sources", [])))
+	research_label.text = "\n".join(notes)
+
+func _source_summary(sources: Array) -> String:
+	var domains: Array[String] = []
+	for source in sources.slice(0, 3):
+		var text := str(source)
+		text = text.replace("https://", "").replace("http://", "")
+		domains.append(text.split("/")[0])
+	return ", ".join(domains)
 
 func _add_selected_animal(acclimated: bool) -> void:
 	if species_select.item_count <= 0:
@@ -692,6 +887,10 @@ func _rock_color(kind: String) -> Color:
 			return Color("#4f6752")
 		"dragon_stone":
 			return Color("#776b55")
+		"slate_stack":
+			return Color("#39434a")
+		"lava_rock":
+			return Color("#6a3b35")
 		_:
 			return Color("#4d5a50")
 
@@ -811,7 +1010,6 @@ func _draw_driftwood(root: Vector2, branch_count: int, seed: int) -> void:
 func _draw_plants() -> void:
 	var inner := _tank_inner()
 	var sand_top := inner.end.y - SAND_HEIGHT
-	var fallback_done := false
 	for item in _scape_items("plants"):
 		var kind := str(item.get("type", "java_fern"))
 		var quantity := int(item.get("quantity", 0))
@@ -828,6 +1026,23 @@ func _draw_plants() -> void:
 					pos = _object_pos(item, pos)
 					if not _draw_scape_sprite(kind, pos, Vector2(86, 132), seed % 2 == 0):
 						_draw_vallisneria(seed, inner, sand_top)
+				"amazon_sword":
+					var pos := _object_pos(item, Vector2(inner.position.x + 48.0 + fposmod(seed * 61.0, inner.size.x - 96.0), sand_top - 24.0))
+					if not _draw_scape_sprite(kind, pos, Vector2(86, 104), seed % 2 == 0):
+						_draw_rosette(seed, inner, sand_top, Color("#4f9f64"), 58.0)
+				"cryptocoryne_wendtii":
+					var pos := _object_pos(item, Vector2(inner.position.x + 48.0 + fposmod(seed * 53.0, inner.size.x - 96.0), sand_top - 10.0))
+					if not _draw_scape_sprite(kind, pos, Vector2(70, 62), seed % 2 == 0):
+						_draw_rosette(seed, inner, sand_top, Color("#668d54"), 32.0)
+				"java_moss":
+					var pos := _object_pos(item, Vector2(inner.position.x + 48.0 + fposmod(seed * 67.0, inner.size.x - 96.0), sand_top - 4.0))
+					if not _draw_scape_sprite(kind, pos, Vector2(72, 54), seed % 2 == 0):
+						for puff in range(5):
+							draw_circle(pos + Vector2(cos(puff * TAU / 5.0) * 12.0, sin(puff * TAU / 5.0) * 7.0), 11.0, Color("#5aaa63"))
+				"hornwort":
+					var pos := _object_pos(item, Vector2(inner.position.x + 42.0 + fposmod(seed * 71.0, inner.size.x - 84.0), sand_top - 34.0))
+					if not _draw_scape_sprite(kind, pos, Vector2(82, 112), seed % 2 == 0):
+						_draw_vallisneria(seed + 17, inner, sand_top)
 				"java_fern":
 					var pos := Vector2(inner.position.x + 48.0 + fposmod(seed * 59.0, inner.size.x - 96.0), sand_top - 18.0)
 					pos = _object_pos(item, pos)
@@ -849,10 +1064,6 @@ func _draw_plants() -> void:
 						_draw_rosette(seed, inner, sand_top, Color("#78ba70"), 34.0)
 				_:
 					_draw_rosette(seed, inner, sand_top, Color("#5ca86c"), 34.0)
-		fallback_done = true
-	if not fallback_done:
-		for i in range(20):
-			_draw_carpet_patch(i, inner, sand_top)
 
 func _draw_carpet_patch(seed: int, inner: Rect2, sand_top: float) -> void:
 	var x := inner.position.x + fposmod(seed * 31.0, inner.size.x)

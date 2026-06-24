@@ -16,7 +16,7 @@ import pystray
 from PIL import Image, ImageDraw
 from win11toast import notify
 
-from simulation import AquariumSimulation, default_state, load_species, make_animal, now_iso
+from simulation import AquariumSimulation, clear_state, default_state, load_species, make_animal, now_iso
 
 
 APP_NAME = "Living Waters"
@@ -26,6 +26,8 @@ ROOT = Path(os.environ.get("LIVING_WATERS_ROOT", Path(sys.executable).resolve().
 RUNTIME = ROOT / "runtime"
 STATE_PATH = RUNTIME / "aquarium_state.json"
 COMMAND_PATH = RUNTIME / "command.json"
+AQUARIUMS_DIR = RUNTIME / "aquariums"
+INDEX_PATH = AQUARIUMS_DIR / "index.json"
 SPECIES_PATH = ROOT / "data" / "species" / "freshwater_v1.json"
 LOG_PATH = RUNTIME / "background.log"
 
@@ -46,6 +48,58 @@ def log(message: str) -> None:
 def load_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
     if not STATE_PATH.exists():
         return default_state(species)
+
+
+def aquarium_state_path(aquarium_id: str) -> Path:
+    safe = "".join(char for char in aquarium_id.lower() if char.isalnum() or char in {"-", "_"})[:40] or "main"
+    return AQUARIUMS_DIR / f"{safe}.json"
+
+
+def new_aquarium_id(name: str) -> str:
+    base = "".join(char if char.isalnum() else "-" for char in name.lower()).strip("-")[:24] or "aquarium"
+    return f"{base}-{int(time.time())}"
+
+
+def load_aquarium_index(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    if INDEX_PATH.exists():
+        try:
+            index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+            if index.get("aquariums"):
+                return index
+        except (OSError, json.JSONDecodeError):
+            backup = INDEX_PATH.with_name(f"corrupt-index-{int(time.time())}.json")
+            INDEX_PATH.replace(backup)
+
+    AQUARIUMS_DIR.mkdir(parents=True, exist_ok=True)
+    if STATE_PATH.exists():
+        state = load_state(species)
+        aquarium_id = "main"
+        atomic_write(aquarium_state_path(aquarium_id), state)
+        index = {
+            "schema_version": 1,
+            "active_id": aquarium_id,
+            "aquariums": [
+                {
+                    "id": aquarium_id,
+                    "name": state.get("aquarium", {}).get("name", "Main Aquarium"),
+                    "system": state.get("water", {}).get("system", "freshwater"),
+                    "gross_litres": state.get("aquarium", {}).get("gross_litres", 60.0),
+                }
+            ],
+        }
+        atomic_write(INDEX_PATH, index)
+        return index
+
+    state = clear_state(species, "First Aquarium", "freshwater", 60.0)
+    aquarium_id = "first-aquarium"
+    atomic_write(aquarium_state_path(aquarium_id), state)
+    index = {
+        "schema_version": 1,
+        "active_id": aquarium_id,
+        "aquariums": [{"id": aquarium_id, "name": "First Aquarium", "system": "freshwater", "gross_litres": 60.0}],
+    }
+    atomic_write(INDEX_PATH, index)
+    return index
     try:
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -79,29 +133,98 @@ class Daemon:
     def __init__(self, diagnostic: bool = False) -> None:
         self.diagnostic = diagnostic
         self.species = load_species(SPECIES_PATH)
-        self.state = load_state(self.species)
-        self.sim = AquariumSimulation(self.species, self.state)
+        self.index = load_aquarium_index(self.species)
+        self.states: dict[str, dict[str, Any]] = {}
+        self.sims: dict[str, AquariumSimulation] = {}
+        self.active_id = str(self.index.get("active_id", "first-aquarium"))
+        self._load_aquariums()
+        self.state = self.states[self.active_id]
+        self.sim = self.sims[self.active_id]
         self.stop_event = threading.Event()
         self.last_notified_event = ""
         self.icon: pystray.Icon | None = None
 
+    def _load_aquariums(self) -> None:
+        for item in self.index.get("aquariums", []):
+            aquarium_id = str(item.get("id", "main"))
+            path = aquarium_state_path(aquarium_id)
+            if path.exists():
+                try:
+                    state = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    state = clear_state(self.species, str(item.get("name", "Recovered Aquarium")), str(item.get("system", "freshwater")), float(item.get("gross_litres", 60.0)))
+            else:
+                state = clear_state(self.species, str(item.get("name", "Clear Aquarium")), str(item.get("system", "freshwater")), float(item.get("gross_litres", 60.0)))
+            self.states[aquarium_id] = state
+            self.sims[aquarium_id] = AquariumSimulation(self.species, state)
+        if self.active_id not in self.states:
+            self.active_id = next(iter(self.states.keys()))
+            self.index["active_id"] = self.active_id
+
+    def _save_index(self) -> None:
+        active = self.states.get(self.active_id, {})
+        for item in self.index.get("aquariums", []):
+            aquarium_id = str(item.get("id", ""))
+            state = self.states.get(aquarium_id)
+            if not state:
+                continue
+            item["name"] = state.get("aquarium", {}).get("name", item.get("name", "Aquarium"))
+            item["system"] = state.get("water", {}).get("system", item.get("system", "freshwater"))
+            item["gross_litres"] = state.get("aquarium", {}).get("gross_litres", item.get("gross_litres", 60.0))
+            item["status"] = state.get("summary", {}).get("status", "stable")
+            item["animals"] = sum(1 for animal in state.get("animals", []) if animal.get("alive", True))
+        self.index["active_id"] = self.active_id
+        atomic_write(INDEX_PATH, self.index)
+        if active:
+            snapshot = dict(active)
+            snapshot["aquarium_tabs"] = self.index
+            atomic_write(STATE_PATH, snapshot)
+
+    def _save_all(self) -> None:
+        for aquarium_id, state in self.states.items():
+            atomic_write(aquarium_state_path(aquarium_id), state)
+        self._save_index()
+
+    def _select_aquarium(self, aquarium_id: str) -> None:
+        if aquarium_id not in self.states:
+            return
+        self.active_id = aquarium_id
+        self.state = self.states[aquarium_id]
+        self.sim = self.sims[aquarium_id]
+        self._save_index()
+
+    def _create_aquarium(self, name: str, system: str, gross_litres: float) -> None:
+        aquarium_id = new_aquarium_id(name)
+        state = clear_state(self.species, name or "Clear Aquarium", system, gross_litres)
+        self.states[aquarium_id] = state
+        self.sims[aquarium_id] = AquariumSimulation(self.species, state)
+        self.index.setdefault("aquariums", []).append({
+            "id": aquarium_id,
+            "name": state["aquarium"]["name"],
+            "system": state["water"]["system"],
+            "gross_litres": state["aquarium"]["gross_litres"],
+        })
+        self._select_aquarium(aquarium_id)
+
     def start(self) -> None:
-        last_real = float(self.state["clock"].get("last_real_timestamp", time.time()))
-        offline = min(max(0, time.time() - last_real), 12 * 60 * 60)
-        if offline > 60:
-            self.sim.advance(offline, offline=True)
-            self.state["events"].insert(
-                0,
-                {
-                    "id": f"offline-{int(time.time())}",
-                    "timestamp": now_iso(),
-                    "severity": "info",
-                    "title": "Background time restored",
-                    "details": f"{offline / 3600:.1f} hours were simulated safely after the process was unavailable.",
-                    "subject": ""
-                },
-            )
-        atomic_write(STATE_PATH, self.state)
+        for aquarium_id, sim in self.sims.items():
+            state = self.states[aquarium_id]
+            last_real = float(state["clock"].get("last_real_timestamp", time.time()))
+            offline = min(max(0, time.time() - last_real), 12 * 60 * 60)
+            if offline > 60:
+                sim.advance(offline, offline=True)
+                state["events"].insert(
+                    0,
+                    {
+                        "id": f"offline-{aquarium_id}-{int(time.time())}",
+                        "timestamp": now_iso(),
+                        "severity": "info",
+                        "title": "Background time restored",
+                        "details": f"{offline / 3600:.1f} hours were simulated safely after the process was unavailable.",
+                        "subject": "",
+                    },
+                )
+        self._save_all()
         threading.Thread(target=self._loop, name="living-waters-simulation", daemon=True).start()
         menu = pystray.Menu(
             pystray.MenuItem("Open aquarium", lambda *_: self.open_game(), default=True),
@@ -122,8 +245,9 @@ class Daemon:
             previous = current
             try:
                 self._handle_command()
-                self.sim.advance(elapsed)
-                atomic_write(STATE_PATH, self.state)
+                for sim in self.sims.values():
+                    sim.advance(elapsed)
+                self._save_all()
                 self._notify_important_event()
             except Exception as exc:
                 log(f"simulation-error {exc}")
@@ -136,42 +260,63 @@ class Daemon:
         finally:
             COMMAND_PATH.unlink(missing_ok=True)
         action = command.get("action")
+        if action == "select_aquarium":
+            self._select_aquarium(str(command.get("aquarium_id", self.active_id)))
+            return
+        if action == "create_aquarium":
+            self._create_aquarium(
+                str(command.get("name", "Clear Aquarium")),
+                str(command.get("system", "freshwater")),
+                float(command.get("gross_litres", 60.0)),
+            )
+            return
+        target_id = str(command.get("aquarium_id", self.active_id))
+        sim = self.sims.get(target_id, self.sim)
+        state = self.states.get(target_id, self.state)
         if action == "feed":
-            self.sim.feed(float(command.get("amount", 0.42)))
+            sim.feed(float(command.get("amount", 0.42)))
         elif action == "water_change":
-            self.sim.water_change(float(command.get("fraction", 0.25)), bool(command.get("conditioner_used", True)))
+            sim.water_change(float(command.get("fraction", 0.25)), bool(command.get("conditioner_used", True)))
         elif action == "weekly_maintenance":
-            self.sim.weekly_maintenance()
+            sim.weekly_maintenance()
         elif action == "service_filter":
-            self.sim.service_filter(bool(command.get("replace_carbon", True)))
+            sim.service_filter(bool(command.get("replace_carbon", True)))
         elif action == "dose_ammonia":
-            self.sim.dose_ammonia(float(command.get("amount", 1.0)))
+            sim.dose_ammonia(float(command.get("amount", 1.0)))
         elif action == "test_water":
-            self.sim.test_water()
+            sim.test_water()
         elif action == "toggle_pause":
-            self.state["clock"]["paused"] = not self.state["clock"]["paused"]
+            state["clock"]["paused"] = not state["clock"]["paused"]
         elif action == "set_speed":
-            self.state["clock"]["speed"] = max(0.0, min(10.0, float(command.get("speed", 1))))
+            state["clock"]["speed"] = max(0.0, min(10.0, float(command.get("speed", 1))))
+        elif action == "setup_clear_aquarium":
+            sim.setup_clear_aquarium(
+                str(command.get("name", state.get("aquarium", {}).get("name", "Clear Aquarium"))),
+                str(command.get("system", state.get("water", {}).get("system", "freshwater"))),
+                float(command.get("gross_litres", state.get("aquarium", {}).get("gross_litres", 60.0))),
+            )
         elif action == "add_scape_item":
-            self.sim.add_scape_item(
+            sim.add_scape_item(
                 str(command.get("category", "")),
                 str(command.get("type", "")),
                 int(command.get("quantity", 1)),
             )
         elif action == "reset_scape":
-            self.sim.reset_scape()
+            sim.reset_scape()
+        elif action == "clear_scape":
+            sim.clear_scape()
         elif action == "switch_system":
-            self.sim.switch_system(str(command.get("system", "freshwater")))
+            sim.switch_system(str(command.get("system", "freshwater")))
         elif action == "add_animal":
-            self.sim.add_animal(
+            sim.add_animal(
                 str(command.get("species_id", "")),
                 int(command.get("acclimation_minutes", 30)),
                 str(command.get("name", "")),
             )
         elif action == "remove_animal":
-            self.sim.remove_animal(str(command.get("animal_id", "")))
+            sim.remove_animal(str(command.get("animal_id", "")))
         elif action == "place_scape_item":
-            self.sim.place_scape_item(
+            sim.place_scape_item(
                 str(command.get("category", "")),
                 str(command.get("type", "")),
                 float(command.get("x", 0.5)),
@@ -179,13 +324,13 @@ class Daemon:
                 float(command.get("scale", 1.0)),
             )
         elif action == "move_scape_item":
-            self.sim.move_scape_item(
+            sim.move_scape_item(
                 str(command.get("object_id", "")),
                 float(command.get("x", 0.5)),
                 float(command.get("y", 0.8)),
             )
         elif action == "remove_scape_item":
-            self.sim.remove_scape_item(str(command.get("object_id", "")))
+            sim.remove_scape_item(str(command.get("object_id", "")))
 
     def command(self, action: str) -> None:
         atomic_write(COMMAND_PATH, {"action": action, "timestamp": now_iso()})
@@ -225,7 +370,7 @@ class Daemon:
 
     def stop(self) -> None:
         self.stop_event.set()
-        atomic_write(STATE_PATH, self.state)
+        self._save_all()
         if self.icon:
             self.icon.stop()
 

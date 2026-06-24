@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "background"))
 
-from simulation import AquariumSimulation, default_state, load_species  # noqa: E402
+from simulation import AquariumSimulation, clear_state, default_state, load_species  # noqa: E402
 
 
 def assert_between(value: float, low: float, high: float, label: str) -> None:
@@ -44,6 +44,23 @@ def test_default_tank_starts_empty() -> None:
     assert state["summary"].get("living_animals", 0) == 0
     sim.switch_system("saltwater")
     assert state["animals"] == []
+
+
+def test_clear_tank_setup_is_empty_uncycled_and_sized() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Desk Tank", "freshwater", 40)
+    sim = AquariumSimulation(species, state)
+    assert state["aquarium"]["name"] == "Desk Tank"
+    assert state["aquarium"]["gross_litres"] == 40
+    assert state["aquarium"]["effective_litres"] < 40
+    assert state["aquarium"]["scape"]["objects"] == []
+    assert state["aquarium"]["scape"]["plants"] == []
+    assert state["cycle"]["ready_for_animals"] is False
+    assert state["biology"]["ammonia_bacteria"] < 0.1
+    sim.setup_clear_aquarium("Reef Test", "saltwater", 120)
+    assert state["aquarium"]["gross_litres"] == 120
+    assert state["water"]["system"] == "saltwater"
+    assert state["water"]["salinity_ppt"] >= 34
 
 
 def test_legacy_preplaced_animals_are_cleared() -> None:
@@ -309,12 +326,16 @@ def test_scape_placement_rules_and_relocation() -> None:
     sim.switch_system("saltwater")
     sim.place_scape_item("corals", "torch_coral", 0.55, 0.82)
     assert any(obj["type"] == "torch_coral" for obj in state["aquarium"]["scape"]["objects"])
+    sim.clear_scape()
+    assert state["aquarium"]["scape"]["objects"] == []
+    assert state["aquarium"]["scape"]["plants"] == []
 
 
 def main() -> int:
     tests = [
         test_nitrogen_cycle_and_water_change,
         test_default_tank_starts_empty,
+        test_clear_tank_setup_is_empty_uncycled_and_sized,
         test_legacy_preplaced_animals_are_cleared,
         test_schooling_and_tank_size_stress,
         test_lone_schooling_fish_declines_from_social_deprivation,

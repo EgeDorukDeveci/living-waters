@@ -56,6 +56,48 @@ PLANT_TYPES: dict[str, dict[str, Any]] = {
         "algae_control": 0.06,
         "maintenance": 0.045,
     },
+    "amazon_sword": {
+        "name": "Amazon sword",
+        "zone": "background",
+        "nitrate_uptake": 0.17,
+        "oxygen_day": 0.085,
+        "oxygen_night": -0.028,
+        "hiding": 0.15,
+        "algae_control": 0.045,
+        "maintenance": 0.05,
+        "root_feeder": True,
+    },
+    "cryptocoryne_wendtii": {
+        "name": "Cryptocoryne wendtii",
+        "zone": "midground",
+        "nitrate_uptake": 0.075,
+        "oxygen_day": 0.035,
+        "oxygen_night": -0.012,
+        "hiding": 0.12,
+        "algae_control": 0.025,
+        "maintenance": 0.018,
+        "root_feeder": True,
+    },
+    "java_moss": {
+        "name": "Java moss",
+        "zone": "hardscape",
+        "nitrate_uptake": 0.08,
+        "oxygen_day": 0.035,
+        "oxygen_night": -0.015,
+        "hiding": 0.18,
+        "algae_control": 0.045,
+        "maintenance": 0.028,
+    },
+    "hornwort": {
+        "name": "Hornwort bunch",
+        "zone": "floating_or_planted",
+        "nitrate_uptake": 0.22,
+        "oxygen_day": 0.09,
+        "oxygen_night": -0.032,
+        "hiding": 0.1,
+        "algae_control": 0.09,
+        "maintenance": 0.055,
+    },
     "red_root_floaters": {
         "name": "Red root floaters",
         "zone": "surface",
@@ -95,8 +137,11 @@ HARDSCAPE_TYPES: dict[str, dict[str, Any]] = {
     "river_stone": {"name": "River stone", "hiding": 0.04, "flow_break": 0.02},
     "moss_stone": {"name": "Moss stone", "hiding": 0.07, "algae_control": 0.025},
     "dragon_stone": {"name": "Dragon stone", "hiding": 0.06, "flow_break": 0.035},
+    "slate_stack": {"name": "Slate stack", "hiding": 0.1, "flow_break": 0.05},
+    "lava_rock": {"name": "Lava rock", "hiding": 0.08, "biofilter": 0.035, "flow_break": 0.025},
     "branch_driftwood": {"name": "Branch driftwood", "hiding": 0.11, "soft_water": 0.025},
     "root_driftwood": {"name": "Root driftwood", "hiding": 0.16, "soft_water": 0.035},
+    "manzanita_branch": {"name": "Manzanita branch", "hiding": 0.12, "soft_water": 0.018},
     "live_rock": {"name": "Live rock", "system": "saltwater", "hiding": 0.18, "biofilter": 0.12, "algae_control": 0.035},
     "reef_arch": {"name": "Reef arch", "system": "saltwater", "hiding": 0.14, "biofilter": 0.08, "flow_break": 0.04},
 }
@@ -106,6 +151,8 @@ CORAL_TYPES: dict[str, dict[str, Any]] = {
     "mushroom_coral": {"name": "Mushroom coral", "nitrate_uptake": 0.025, "hiding": 0.035, "algae_control": 0.015, "maintenance": 0.018, "light_need": 0.42},
     "green_star_polyps": {"name": "Green star polyps", "nitrate_uptake": 0.045, "hiding": 0.045, "algae_control": 0.02, "maintenance": 0.035, "light_need": 0.58},
     "torch_coral": {"name": "Torch coral", "nitrate_uptake": 0.02, "hiding": 0.06, "algae_control": 0.01, "maintenance": 0.06, "light_need": 0.72},
+    "pulsing_xenia": {"name": "Pulsing xenia", "nitrate_uptake": 0.055, "hiding": 0.045, "algae_control": 0.018, "maintenance": 0.05, "light_need": 0.62},
+    "kenya_tree_coral": {"name": "Kenya tree coral", "nitrate_uptake": 0.035, "hiding": 0.055, "algae_control": 0.015, "maintenance": 0.04, "light_need": 0.48},
 }
 
 
@@ -217,6 +264,91 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "summary": {},
         "welfare": {"score": 100, "status": "stable", "issues": [], "animal_risks": {}},
     }
+
+
+def tank_dimensions(gross_litres: float) -> dict[str, float]:
+    litres = clamp(float(gross_litres), 12.0, 900.0)
+    volume_cm3 = litres * 1000.0
+    width = (volume_cm3 / 2.25) ** (1.0 / 3.0)
+    length = width * 2.0
+    height = width * 1.12
+    return {
+        "gross_litres": round(litres, 1),
+        "effective_litres": round(litres * 0.84, 1),
+        "length_cm": round(length, 1),
+        "width_cm": round(width, 1),
+        "height_cm": round(height, 1),
+    }
+
+
+def clear_scape(layout_seed: int = 42) -> dict[str, Any]:
+    return {
+        "rocks": [],
+        "wood": [],
+        "plants": [],
+        "corals": [],
+        "objects": [],
+        "layout_seed": layout_seed,
+    }
+
+
+def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium", system: str = "freshwater", gross_litres: float = 60.0) -> dict[str, Any]:
+    system = "saltwater" if system == "saltwater" else "freshwater"
+    dims = tank_dimensions(gross_litres)
+    state = default_state(species)
+    state["aquarium"].update(dims)
+    state["aquarium"]["name"] = name.strip() or "Clear Aquarium"
+    state["aquarium"]["aquascape_style"] = "reefscape" if system == "saltwater" else "clear"
+    state["aquarium"]["scape"] = clear_scape(84 if system == "saltwater" else 42)
+    state["water"].update({
+        "system": system,
+        "temperature_c": 25.2 if system == "saltwater" else 23.0,
+        "ph": 8.1 if system == "saltwater" else 7.0,
+        "salinity_ppt": 35.0 if system == "saltwater" else 0.2,
+        "gh_dgh": 0.0 if system == "saltwater" else 7.0,
+        "kh_dkh": 8.2 if system == "saltwater" else 4.0,
+        "alkalinity_dkh": 8.2 if system == "saltwater" else 4.0,
+        "calcium_mg_l": 420.0 if system == "saltwater" else 35.0,
+        "oxygen_mg_l": 7.1,
+        "ammonia_mg_l": 0.0,
+        "nitrite_mg_l": 0.0,
+        "nitrate_mg_l": 0.0,
+        "phosphate_mg_l": 0.05,
+        "chlorine_mg_l": 0.0,
+        "tannins": 0.0,
+        "organic_waste": 0.02,
+        "turbidity": 0.02,
+    })
+    state["biology"].update({
+        "ammonia_bacteria": 0.06,
+        "nitrite_bacteria": 0.04,
+        "plant_health": 1.0,
+        "algae": 0.01,
+    })
+    state["equipment"]["filter"] = default_filter()
+    state["equipment"]["filter"]["maturity"] = 0.05
+    state["equipment"]["filter"]["media"]["biological"]["maturity"] = 0.05
+    state["equipment"]["filter"]["media"]["chemical"]["carbon_remaining"] = 0.0
+    state["planning"] = default_planning(dims["gross_litres"])
+    state["cycle"] = default_cycle()
+    state["cycle"].update({
+        "stage": "new",
+        "days_running": 0.0,
+        "ready_for_animals": False,
+        "last_ammonia_dose_mg_l": 0.0,
+    })
+    state["animals"] = []
+    state["food"] = {"available": 0.0, "decaying": 0.0, "last_fed": now_iso()}
+    state["events"] = [
+        event(
+            "info",
+            "Clear aquarium started",
+            f"{state['aquarium']['name']} is an empty {dims['gross_litres']:.0f} L {system} aquarium. Cycle and scape it before adding animals.",
+        )
+    ]
+    state["summary"] = {}
+    state["welfare"] = {"score": 100, "status": "stable", "issues": [], "animal_risks": {}}
+    return state
 
 
 def default_filter() -> dict[str, Any]:
@@ -621,6 +753,13 @@ class AquariumSimulation:
         filter_state["last_serviced"] = now_iso()
         self._record("info", "Filter serviced", "Mechanical media was rinsed gently, flow improved, carbon was refreshed, and the biofilter was disturbed only slightly.")
 
+    def setup_clear_aquarium(self, name: str = "", system: str = "freshwater", gross_litres: float = 60.0) -> None:
+        keep_clock = self.state.get("clock", {})
+        self.state.clear()
+        self.state.update(clear_state(self.species, name or "Clear Aquarium", system, gross_litres))
+        self.state["clock"].update(keep_clock)
+        self._normalize_state()
+
     def switch_system(self, system: str) -> None:
         if system not in {"freshwater", "saltwater"}:
             return
@@ -766,6 +905,10 @@ class AquariumSimulation:
             if y > 0.22:
                 return False, "Floating plants must stay near the water surface.", x, y
             return True, "", x, y
+        if category == "plants" and item_type == "hornwort":
+            if 0.25 < y < 0.70:
+                return False, "Hornwort must either float near the surface or be planted into the substrate.", x, y
+            return True, "", x, y
         if category == "plants" and y < 0.70:
             return False, "Rooted plants cannot be placed in open water.", x, y
         if category in {"rocks", "wood", "corals"} and y < 0.52:
@@ -783,6 +926,12 @@ class AquariumSimulation:
             details = "The aquascape was reset to the balanced planted starter layout."
         self.state["aquarium"].update(self._scape_metrics())
         self._record("info", title, details)
+
+    def clear_scape(self) -> None:
+        self.state["aquarium"]["scape"] = clear_scape(84 if self.state["water"].get("system") == "saltwater" else 42)
+        self.state["aquarium"]["aquascape_style"] = "clear"
+        self.state["aquarium"].update(self._scape_metrics())
+        self._record("info", "Scape cleared", "The aquarium is now visually empty except for water, substrate, equipment, and any animals.")
 
     def add_scape_item(self, category: str, item_type: str, quantity: int = 1) -> None:
         category = "wood" if category == "log" else category

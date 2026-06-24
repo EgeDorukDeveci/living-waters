@@ -1,6 +1,6 @@
 # Living Waters Research Notes
 
-Living Waters is a game simulation, not veterinary advice. Species values are conservative starting values derived from public references and should be refined as the roster grows.
+Living Waters is a living-aquarium companion simulation, not veterinary advice. Species values are conservative starting values derived from public references and should be refined as the roster grows.
 
 ## Source Policy
 
