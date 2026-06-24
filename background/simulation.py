@@ -198,6 +198,8 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "planning": default_planning(162.0),
         "cycle": default_cycle(),
         "maintenance": default_maintenance(),
+        "randomness": default_randomness(),
+        "last_test_results": {},
         "animals": [],
         "food": {"available": 0.0, "decaying": 0.0, "last_fed": now_iso()},
         "clock": {
@@ -277,6 +279,16 @@ def default_maintenance() -> dict[str, Any]:
     }
 
 
+def default_randomness() -> dict[str, Any]:
+    return {
+        "seed": random.SystemRandom().randint(10_000, 2_000_000_000),
+        "event_index": 0,
+        "noise": 0.12,
+        "latest": "No recent ecosystem surprises.",
+        "latest_at": "",
+    }
+
+
 def estimate_total_weight_kg(gross_litres: float) -> float:
     return round(gross_litres + max(8.0, gross_litres * 0.12) + max(6.0, gross_litres * 0.10), 1)
 
@@ -303,6 +315,13 @@ def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
         "chronic_stress": rng.uniform(0.01, 0.05),
         "health": rng.uniform(0.91, 0.99),
         "immune_condition": rng.uniform(0.86, 0.98),
+        "genetic_resilience": rng.uniform(0.82, 1.18),
+        "stress_sensitivity": rng.uniform(0.84, 1.24),
+        "disease_resistance": rng.uniform(0.76, 1.2),
+        "appetite_bias": rng.uniform(0.72, 1.28),
+        "boldness": rng.uniform(0.18, 0.92),
+        "microbiome_stability": rng.uniform(0.72, 1.0),
+        "latent_pathogen_load": rng.uniform(0.0, 0.08),
         "social_satisfaction": 1.0,
         "injury": 0.0,
         "disease": "",
@@ -314,6 +333,7 @@ def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
         "decomposition_hours": 0.0,
         "death_load_remaining": 0.0,
         "position_seed": seed,
+        "last_random_event": "",
     }
 
 
@@ -440,6 +460,13 @@ class AquariumSimulation:
         self.state.setdefault("planning", default_planning(float(aquarium.get("gross_litres", 60.0))))
         self.state.setdefault("cycle", default_cycle())
         self.state.setdefault("maintenance", default_maintenance())
+        randomness = self.state.setdefault("randomness", default_randomness())
+        randomness.setdefault("seed", default_randomness()["seed"])
+        randomness.setdefault("event_index", 0)
+        randomness.setdefault("noise", 0.12)
+        randomness.setdefault("latest", "No recent ecosystem surprises.")
+        randomness.setdefault("latest_at", "")
+        self.state.setdefault("last_test_results", {})
         animals = self.state.setdefault("animals", [])
         self.state.setdefault("welfare", {"score": 100, "status": "stable", "issues": [], "animal_risks": {}})
         if legacy_preplaced_animals(animals):
@@ -453,7 +480,47 @@ class AquariumSimulation:
             animal.setdefault("acclimation_minutes", self.species.get(animal.get("species_id", ""), {}).get("acclimation_minutes", 30))
             animal.setdefault("decomposition_hours", 0.0)
             animal.setdefault("death_load_remaining", 0.0 if animal.get("alive", True) else self.species.get(animal.get("species_id", ""), {}).get("bioload", 0.5) * 0.1)
+            animal.setdefault("genetic_resilience", 1.0)
+            animal.setdefault("stress_sensitivity", 1.0)
+            animal.setdefault("disease_resistance", 1.0)
+            animal.setdefault("appetite_bias", 1.0)
+            animal.setdefault("boldness", 0.5)
+            animal.setdefault("microbiome_stability", 0.9)
+            animal.setdefault("latent_pathogen_load", 0.03)
+            animal.setdefault("last_random_event", "")
         aquarium.update(self._scape_metrics())
+
+    def _randomness(self) -> dict[str, Any]:
+        randomness = self.state.setdefault("randomness", default_randomness())
+        randomness.setdefault("seed", default_randomness()["seed"])
+        randomness.setdefault("event_index", 0)
+        randomness.setdefault("noise", 0.12)
+        randomness.setdefault("latest", "No recent ecosystem surprises.")
+        randomness.setdefault("latest_at", "")
+        return randomness
+
+    def _rng(self, salt: str) -> random.Random:
+        randomness = self._randomness()
+        index = int(randomness.get("event_index", 0))
+        randomness["event_index"] = index + 1
+        return random.Random(f"{randomness.get('seed', 1)}:{index}:{salt}")
+
+    def _noise_multiplier(self, amount: float, salt: str) -> float:
+        amount = clamp(abs(amount), 0.0, 0.45)
+        if amount <= 0:
+            return 1.0
+        return 1.0 + self._rng(salt).uniform(-amount, amount)
+
+    def _chance(self, probability_per_hour: float, hours: float, salt: str) -> bool:
+        if probability_per_hour <= 0 or hours <= 0:
+            return False
+        probability = 1.0 - math.exp(-probability_per_hour * hours)
+        return self._rng(salt).random() < clamp(probability, 0.0, 0.98)
+
+    def _random_note(self, title: str) -> None:
+        randomness = self._randomness()
+        randomness["latest"] = title
+        randomness["latest_at"] = now_iso()
 
     def advance(self, real_seconds: float, offline: bool = False) -> None:
         clock = self.state["clock"]
@@ -522,7 +589,19 @@ class AquariumSimulation:
         self.state.setdefault("maintenance", default_maintenance())["last_water_test"] = now_iso()
         self.state.setdefault("cycle", default_cycle())["last_tested"] = now_iso()
         water = self.state["water"]
-        self._record("info", "Water tested", f"NH3/NH4 {water['ammonia_mg_l']:.2f}, NO2 {water['nitrite_mg_l']:.2f}, NO3 {water['nitrate_mg_l']:.0f}, pH {water['ph']:.2f}.")
+        has_kit = bool(self.state.get("equipment", {}).get("checklist", {}).get("test_kit", True))
+        error = 0.06 if has_kit else 0.18
+        readings = {
+            "ammonia_mg_l": max(0.0, water["ammonia_mg_l"] * self._noise_multiplier(error, "test_ammonia") + self._rng("test_ammonia_floor").uniform(0.0, 0.015)),
+            "nitrite_mg_l": max(0.0, water["nitrite_mg_l"] * self._noise_multiplier(error, "test_nitrite") + self._rng("test_nitrite_floor").uniform(0.0, 0.012)),
+            "nitrate_mg_l": max(0.0, water["nitrate_mg_l"] * self._noise_multiplier(error * 1.15, "test_nitrate")),
+            "ph": clamp(water["ph"] + self._rng("test_ph").uniform(-0.08, 0.08) * (1.0 if has_kit else 2.0), 4.0, 10.0),
+            "oxygen_mg_l": max(0.0, water["oxygen_mg_l"] * self._noise_multiplier(error * 0.65, "test_oxygen")),
+            "taken_at": now_iso(),
+            "confidence": "normal kit variance" if has_kit else "low confidence: no proper test kit",
+        }
+        self.state["last_test_results"] = readings
+        self._record("info", "Water tested", f"Readings: NH3/NH4 {readings['ammonia_mg_l']:.2f}, NO2 {readings['nitrite_mg_l']:.2f}, NO3 {readings['nitrate_mg_l']:.0f}, pH {readings['ph']:.2f}.")
 
     def service_filter(self, replace_carbon: bool = True) -> None:
         filter_state = self.state["equipment"].setdefault("filter", default_filter())
@@ -1022,6 +1101,7 @@ class AquariumSimulation:
 
     def _tick(self, seconds: float) -> None:
         hours = seconds / 3600.0
+        variability = float(self._randomness().get("noise", 0.12))
         water = self.state["water"]
         bio = self.state["biology"]
         equipment = self.state["equipment"]
@@ -1034,14 +1114,15 @@ class AquariumSimulation:
         living = [a for a in self.state["animals"] if a["alive"]]
         total_bioload = sum(self.species[a["species_id"]]["bioload"] for a in living)
 
-        consumed = min(food["available"], sum(max(0.0, a["hunger"] - 0.2) for a in living) * hours * 0.32)
+        appetite_demand = sum(max(0.0, a["hunger"] - 0.2) * float(a.get("appetite_bias", 1.0)) for a in living)
+        consumed = min(food["available"], appetite_demand * hours * 0.32 * self._noise_multiplier(variability * 0.65, "feeding"))
         food["available"] -= consumed
-        food["decaying"] += max(0.0, food["available"] - 0.12) * hours * 0.06
+        food["decaying"] += max(0.0, food["available"] - 0.12) * hours * 0.06 * self._noise_multiplier(variability * 0.45, "food_decay")
         if food["available"] > 0.9 or food["decaying"] > 0.55:
             self._record_once("overfeeding", "warning", "Uneaten food is decaying", "Overfeeding is producing extra ammonia risk. Feed less and remove leftovers.")
         substrate_depth = float(self.state["aquarium"].get("substrate_depth_cm", 5.0))
         substrate_trap = clamp((substrate_depth - 3.0) / 5.0, 0.0, 0.55)
-        waste_input = (total_bioload * 0.0015 + food["decaying"] * 0.035) * hours
+        waste_input = (total_bioload * 0.0015 + food["decaying"] * 0.035) * hours * self._noise_multiplier(variability * 0.5, "waste_input")
         water["organic_waste"] = clamp(water["organic_waste"] + waste_input * 0.7 + scape_metrics["maintenance_load"] * hours * 0.0015, 0, 5)
         water["organic_waste"] = clamp(water["organic_waste"] + substrate_trap * water["organic_waste"] * hours * 0.001, 0, 5)
         water["ammonia_mg_l"] += waste_input
@@ -1054,7 +1135,8 @@ class AquariumSimulation:
         chemical = media.setdefault("chemical", default_filter()["media"]["chemical"].copy())
         clog = clamp(float(mechanical.get("clog", 0.0)), 0, 1)
         mechanical_condition = clamp(float(mechanical.get("condition", 0.8)), 0, 1)
-        effective_flow = clamp(float(filter_state["flow"]) * (1.0 - clog * 0.58) * float(filter_state["health"]), 0.04, 1.0)
+        flow_jitter = self._noise_multiplier(variability * 0.15, "filter_flow_jitter")
+        effective_flow = clamp(float(filter_state["flow"]) * flow_jitter * (1.0 - clog * 0.58) * float(filter_state["health"]), 0.04, 1.0)
         filter_state["effective_flow"] = effective_flow
         biological["oxygen_access"] = clamp(effective_flow * water["oxygen_mg_l"] / 7.0, 0.05, 1.2)
         biological_maturity = clamp(float(biological.get("maturity", filter_state.get("maturity", 0.8))), 0.05, 1.0)
@@ -1075,13 +1157,13 @@ class AquariumSimulation:
         oxygen_factor = clamp(water["oxygen_mg_l"] / 7.0, 0.1, 1.2)
         ammonia_conversion = min(
             water["ammonia_mg_l"],
-            bio["ammonia_bacteria"] * filter_factor * oxygen_factor * hours * 0.045,
+            bio["ammonia_bacteria"] * filter_factor * oxygen_factor * hours * 0.045 * self._noise_multiplier(variability * 0.55, "ammonia_bacteria_conversion"),
         )
         water["ammonia_mg_l"] -= ammonia_conversion
         water["nitrite_mg_l"] += ammonia_conversion
         nitrite_conversion = min(
             water["nitrite_mg_l"],
-            bio["nitrite_bacteria"] * filter_factor * oxygen_factor * hours * 0.04,
+            bio["nitrite_bacteria"] * filter_factor * oxygen_factor * hours * 0.04 * self._noise_multiplier(variability * 0.55, "nitrite_bacteria_conversion"),
         )
         water["nitrite_mg_l"] -= nitrite_conversion
         water["nitrate_mg_l"] += nitrite_conversion
@@ -1105,7 +1187,7 @@ class AquariumSimulation:
         bacterial_food = clamp((water["ammonia_mg_l"] + water["nitrite_mg_l"]) * 2.0, 0, 1)
         bio["ammonia_bacteria"] = clamp(bio["ammonia_bacteria"] + (bacterial_food - 0.2) * hours * 0.002, 0.05, 1)
         bio["nitrite_bacteria"] = clamp(bio["nitrite_bacteria"] + (bacterial_food - 0.2) * hours * 0.0018, 0.05, 1)
-        plant_uptake = bio["plant_health"] * scape_metrics["nitrate_uptake"] * hours * 0.015
+        plant_uptake = bio["plant_health"] * scape_metrics["nitrate_uptake"] * hours * 0.015 * self._noise_multiplier(variability * 0.7, "plant_nitrate_uptake")
         water["nitrate_mg_l"] = max(0.0, water["nitrate_mg_l"] - plant_uptake)
 
         lights_on, light_hours = self._lighting_window()
@@ -1118,7 +1200,7 @@ class AquariumSimulation:
             + bio["plant_health"] * (scape_metrics["oxygen_day"] if lights_on else scape_metrics["oxygen_night"])
         )
         oxygen_use = total_bioload * 0.008 + water["organic_waste"] * 0.018
-        water["oxygen_mg_l"] = clamp(water["oxygen_mg_l"] + (oxygen_gain - oxygen_use) * hours, 0, 10)
+        water["oxygen_mg_l"] = clamp(water["oxygen_mg_l"] + (oxygen_gain - oxygen_use) * hours * self._noise_multiplier(variability * 0.25, "gas_exchange"), 0, 10)
 
         heater = equipment["heater"]
         ambient = 21.0
@@ -1151,12 +1233,50 @@ class AquariumSimulation:
         for animal in living:
             self._update_animal(animal, groups, welfare, consumed, hours)
         self._update_cycle(hours)
+        self._apply_random_ecosystem_events(hours, living, filter_state, mechanical)
 
         for item in equipment.values():
             if isinstance(item, dict) and "health" in item:
                 item["health"] = clamp(item["health"] - hours * 0.00002, 0, 1)
         filter_state["flow"] = clamp(filter_state["flow"] - water["organic_waste"] * hours * 0.00008 - mechanical["clog"] * hours * 0.00005, 0.08, 1)
         self._check_emergencies()
+
+    def _apply_random_ecosystem_events(self, hours: float, living: list[dict[str, Any]], filter_state: dict[str, Any], mechanical: dict[str, Any]) -> None:
+        water = self.state["water"]
+        bio = self.state["biology"]
+        equipment = self.state["equipment"]
+        clog = clamp(float(mechanical.get("clog", 0.0)), 0.0, 1.0)
+        organic = float(water.get("organic_waste", 0.0))
+        turbidity_rate = 0.001 + clog * 0.01 + max(0.0, organic - 0.8) * 0.006 + max(0.0, 0.7 - float(filter_state.get("health", 1.0))) * 0.006
+        if self._chance(turbidity_rate, hours, "filter_burp"):
+            water["turbidity"] = clamp(water["turbidity"] + 0.04 + clog * 0.08, 0, 1)
+            mechanical["clog"] = clamp(clog + 0.025, 0, 1)
+            self._random_note("Filter released trapped debris")
+            self._record_once("random_filter_burp", "warning", "Filter released trapped debris", "A pocket of trapped waste clouded the water. Service the mechanical media if clogging keeps rising.")
+
+        heater = equipment.get("heater", {})
+        heater_rate = max(0.0, 1.0 - float(heater.get("health", 1.0))) * 0.012
+        if self._chance(heater_rate, hours, "heater_drift"):
+            direction = -1.0 if self._rng("heater_direction").random() < 0.5 else 1.0
+            water["temperature_c"] = clamp(water["temperature_c"] + direction * self._rng("heater_amount").uniform(0.08, 0.28), 8, 36)
+            self._random_note("Heater drifted slightly")
+
+        light = equipment.get("light", {})
+        timer_rate = 0.0006 if light.get("timer_enabled", True) else 0.004
+        if self._chance(timer_rate, hours, "lighting_timer_miss"):
+            bio["algae"] = clamp(bio.get("algae", 0.0) + 0.015, 0, 1)
+            self._random_note("Lighting ran a little long")
+            self._record_once("random_light_timer", "warning", "Lighting ran long", "A timer or schedule wobble slightly increased algae pressure.")
+
+        microbial_rate = max(0.0, organic - 1.2) * 0.01 + max(0.0, water.get("phosphate_mg_l", 0.0) - 1.0) * 0.003
+        if self._chance(microbial_rate, hours, "microbial_bloom"):
+            water["oxygen_mg_l"] = clamp(water["oxygen_mg_l"] - 0.12, 0, 10)
+            water["turbidity"] = clamp(water["turbidity"] + 0.05, 0, 1)
+            self._random_note("Bacterial bloom pressure rose")
+            self._record_once("random_microbe_bloom", "warning", "Bacterial bloom pressure rose", "High organics allowed a small microbial bloom, reducing clarity and oxygen.")
+
+        for animal in living:
+            self._maybe_update_disease(animal, hours)
 
     def _decompose_dead_animals(self, hours: float) -> None:
         water = self.state["water"]
@@ -1202,6 +1322,35 @@ class AquariumSimulation:
         if stress > 0.45:
             self._record_once("coral_stress", "warning", "Corals are stressed", "Temperature, salinity, or nitrate is outside the reef comfort range.")
 
+    def _maybe_update_disease(self, animal: dict[str, Any], hours: float) -> None:
+        if not animal.get("alive", True):
+            return
+        water = self.state["water"]
+        immune_gap = max(0.0, 0.78 - float(animal.get("immune_condition", 1.0)))
+        chronic = float(animal.get("chronic_stress", 0.0))
+        pathogen = float(animal.get("latent_pathogen_load", 0.02))
+        water_pressure = (
+            clamp(water.get("ammonia_mg_l", 0.0) * 1.6 + water.get("nitrite_mg_l", 0.0) * 1.2, 0, 1.0)
+            + max(0.0, water.get("organic_waste", 0.0) - 0.8) * 0.18
+            + max(0.0, water.get("turbidity", 0.0) - 0.35) * 0.25
+        )
+        disease_resistance = max(0.2, float(animal.get("disease_resistance", 1.0)))
+        if animal.get("disease"):
+            recovery_rate = max(0.0, 0.012 * disease_resistance - chronic * 0.01 - water_pressure * 0.008)
+            if self._chance(recovery_rate, hours, f"disease_recovery_{animal['id']}"):
+                animal["disease"] = ""
+                animal["last_random_event"] = "recovered from opportunistic infection"
+                self._random_note(f"{animal['name']} recovered")
+                self._record("info", f"{animal['name']} recovered", "Stable water and reduced stress allowed the immune system to recover.", animal["id"])
+            return
+
+        disease_rate = (immune_gap * 0.04 + max(0.0, chronic - 0.25) * 0.035 + water_pressure * 0.018 + pathogen * 0.025) / disease_resistance
+        if self._chance(disease_rate, hours, f"disease_start_{animal['id']}"):
+            animal["disease"] = "opportunistic infection"
+            animal["last_random_event"] = "opportunistic infection"
+            self._random_note(f"{animal['name']} developed an opportunistic infection")
+            self._record("warning", f"{animal['name']} looks ill", "Chronic stress, immune weakness, or dirty water allowed an opportunistic infection to appear.", animal["id"])
+
     def _update_animal(self, animal: dict[str, Any], groups: dict[str, int], welfare: dict[str, Any], consumed: float, hours: float) -> None:
         spec = self.species[animal["species_id"]]
         water = self.state["water"]
@@ -1228,17 +1377,24 @@ class AquariumSimulation:
         welfare_stress = float(welfare_risk.get("stress", 0.0))
         animal["welfare_reasons"] = welfare_risk.get("reasons", [])
         stress_target = max(temp_stress, ph_stress, hardness_stress, salinity_stress, system_stress, oxygen_stress, nitrogen_stress, volume_stress, length_stress, social_stress, welfare_stress)
+        stress_target = clamp(stress_target * float(animal.get("stress_sensitivity", 1.0)), 0, 1)
         animal["acute_stress"] = clamp(animal["acute_stress"] + (stress_target - animal["acute_stress"]) * min(1, hours * 0.3), 0, 1)
         animal["chronic_stress"] = clamp(animal["chronic_stress"] + (animal["acute_stress"] - 0.2) * hours * 0.012, 0, 1)
-        animal["immune_condition"] = clamp(animal["immune_condition"] - animal["chronic_stress"] * hours * 0.004 + hours * 0.0004, 0, 1)
+        animal["immune_condition"] = clamp(animal["immune_condition"] - animal["chronic_stress"] * hours * 0.004 / max(0.35, float(animal.get("disease_resistance", 1.0))) + hours * 0.0004, 0, 1)
         damage = max(0, nitrogen_stress - 0.35) * hours * 0.05 + max(0, oxygen_stress - 0.45) * hours * 0.06
         damage += float(welfare_risk.get("damage_per_hour", 0.0)) * hours
+        damage *= clamp(1.0 + (1.0 - float(animal.get("genetic_resilience", 1.0))) * 0.45, 0.82, 1.12)
+        if animal.get("disease"):
+            disease_damage = (0.004 + animal["chronic_stress"] * 0.018 + max(0.0, 0.7 - animal["immune_condition"]) * 0.03) * hours
+            damage += disease_damage / max(0.25, float(animal.get("disease_resistance", 1.0)))
         if animal["hunger"] > 0.9:
             damage += (animal["hunger"] - 0.9) * hours * 0.02
         animal["health"] = clamp(animal["health"] - damage + (1 - stress_target) * hours * 0.0008, 0, 1)
         animal["energy"] = clamp(animal["energy"] - (0.006 + animal["acute_stress"] * 0.012) * hours, 0, 1)
 
-        if oxygen_stress > 0.45:
+        if animal.get("disease"):
+            animal["behavior"] = "hiding with signs of illness"
+        elif oxygen_stress > 0.45:
             animal["behavior"] = "gasping at the surface"
         elif nitrogen_stress > 0.35:
             animal["behavior"] = "lethargic with rapid gill movement"
@@ -1273,6 +1429,8 @@ class AquariumSimulation:
 
     def _cause_of_death(self, animal: dict[str, Any], oxygen_stress: float, nitrogen_stress: float) -> str:
         reasons = " ".join(str(reason) for reason in animal.get("welfare_reasons", []))
+        if animal.get("disease"):
+            return f"Primary cause: {animal['disease']}. The disease was enabled by sustained stress, immune decline, or degraded water rather than a random instant death."
         if "undersized" in reasons:
             return "Primary cause: severe social deprivation. This schooling or shoaling animal was kept below its minimum group size long enough to collapse from chronic stress."
         if "aggression" in reasons or "conflict" in reasons:

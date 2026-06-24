@@ -34,6 +34,7 @@ var filter_label: Label
 var cycle_label: Label
 var planning_label: Label
 var maintenance_label: Label
+var randomness_label: Label
 var tool_label: Label
 var title_label: Label
 var animal_ids: Array = []
@@ -317,6 +318,13 @@ func _build_ui() -> void:
 	maintenance_label.add_theme_font_size_override("font_size", 12)
 	maintenance_label.add_theme_color_override("font_color", Color("#a8c8bd"))
 	panel.add_child(maintenance_label)
+
+	randomness_label = Label.new()
+	randomness_label.text = "Variability: waiting for state"
+	randomness_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	randomness_label.add_theme_font_size_override("font_size", 12)
+	randomness_label.add_theme_color_override("font_color", Color("#f2d382"))
+	panel.add_child(randomness_label)
 
 	var system_row := HBoxContainer.new()
 	system_row.add_theme_constant_override("separation", 8)
@@ -1192,6 +1200,12 @@ func _refresh_ui() -> void:
 		var maintenance = state.get("maintenance", {})
 		var maint_issues: Array = maintenance.get("issues", [])
 		maintenance_label.text = "Maintenance: %s" % ("ok" if maint_issues.is_empty() else maint_issues[0].get("title", "attention needed"))
+	if randomness_label:
+		var randomness = state.get("randomness", {})
+		randomness_label.text = "Variability: %.0f%% - %s" % [
+			float(randomness.get("noise", 0.12)) * 100.0,
+			str(randomness.get("latest", "No recent ecosystem surprises."))
+		]
 	animal_list.clear()
 	animal_ids.clear()
 	for animal in state.get("animals", []):
@@ -1205,6 +1219,8 @@ func _refresh_ui() -> void:
 		var welfare_reasons: Array = animal.get("welfare_reasons", [])
 		if welfare_reasons.size() > 0 and alive:
 			line += " - %s" % welfare_reasons[0]
+		if str(animal.get("disease", "")) != "" and alive:
+			line += " - %s" % animal.get("disease", "")
 		if not alive:
 			line = "%s - died: %s" % [animal.get("name", "animal"), animal.get("cause_of_death", "unknown")]
 		animal_list.add_item(line)

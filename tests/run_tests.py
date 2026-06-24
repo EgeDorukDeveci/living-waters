@@ -234,6 +234,49 @@ def test_untreated_water_change_adds_chlorine_risk() -> None:
     assert any(issue["key"] == "chlorine" for issue in state["welfare"]["issues"])
 
 
+def test_animals_have_individual_variation() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    first = animal(species, "neon_tetra", "First", 1)
+    second = animal(species, "neon_tetra", "Second", 2)
+    assert first["genetic_resilience"] != second["genetic_resilience"]
+    assert first["stress_sensitivity"] != second["stress_sensitivity"]
+    assert first["appetite_bias"] != second["appetite_bias"]
+
+
+def test_water_test_readings_have_realistic_variance() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["randomness"]["seed"] = 12345
+    state["water"]["ammonia_mg_l"] = 0.42
+    state["water"]["nitrite_mg_l"] = 0.18
+    sim = AquariumSimulation(species, state)
+    sim.test_water()
+    readings = state["last_test_results"]
+    assert readings["confidence"] == "normal kit variance"
+    assert abs(readings["ammonia_mg_l"] - 0.42) < 0.08
+    assert readings["ammonia_mg_l"] != 0.42
+    assert abs(readings["ph"] - state["water"]["ph"]) <= 0.08
+
+
+def test_disease_risk_depends_on_stress_and_dirty_water() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["randomness"]["seed"] = 99
+    sick = animal(species, "neon_tetra", "At Risk", 1)
+    sick["immune_condition"] = 0.05
+    sick["chronic_stress"] = 0.8
+    sick["latent_pathogen_load"] = 0.9
+    sick["disease_resistance"] = 0.35
+    state["animals"].append(sick)
+    state["water"]["ammonia_mg_l"] = 0.5
+    state["water"]["organic_waste"] = 3.0
+    state["water"]["turbidity"] = 0.8
+    sim = AquariumSimulation(species, state)
+    sim._maybe_update_disease(sick, 72)
+    assert sick["disease"] == "opportunistic infection"
+    assert state["randomness"]["latest"].endswith("opportunistic infection")
+
+
 def test_saltwater_switch_species_and_reefscape_rules() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -286,6 +329,9 @@ def main() -> int:
         test_fishless_cycle_blocks_stocking_until_clear,
         test_weekly_maintenance_reduces_waste_and_logs_dates,
         test_untreated_water_change_adds_chlorine_risk,
+        test_animals_have_individual_variation,
+        test_water_test_readings_have_realistic_variance,
+        test_disease_risk_depends_on_stress_and_dirty_water,
         test_saltwater_switch_species_and_reefscape_rules,
         test_scape_placement_rules_and_relocation,
     ]
