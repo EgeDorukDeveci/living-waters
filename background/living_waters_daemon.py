@@ -16,7 +16,7 @@ import pystray
 from PIL import Image, ImageDraw
 from win11toast import notify
 
-from simulation import AquariumSimulation, default_state, load_species, now_iso
+from simulation import AquariumSimulation, default_state, load_species, make_animal, now_iso
 
 
 APP_NAME = "Living Waters"
@@ -140,6 +140,8 @@ class Daemon:
             self.sim.feed(float(command.get("amount", 0.42)))
         elif action == "water_change":
             self.sim.water_change(float(command.get("fraction", 0.25)))
+        elif action == "service_filter":
+            self.sim.service_filter(bool(command.get("replace_carbon", True)))
         elif action == "toggle_pause":
             self.state["clock"]["paused"] = not self.state["clock"]["paused"]
         elif action == "set_speed":
@@ -238,6 +240,8 @@ def register_startup(enabled: bool = True) -> None:
 def self_test() -> int:
     species = load_species(SPECIES_PATH)
     state = default_state(species)
+    for index in range(6):
+        state["animals"].append(make_animal(species["neon_tetra"], f"Neon {index + 1}", index))
     sim = AquariumSimulation(species, state)
     initial_nitrate = state["water"]["nitrate_mg_l"]
     sim.feed(0.8)
@@ -246,6 +250,8 @@ def self_test() -> int:
     assert state["clock"]["total_simulated_seconds"] == 6 * 3600
     sim.water_change(0.25)
     assert state["water"]["nitrate_mg_l"] < initial_nitrate + 5
+    sim.service_filter()
+    assert state["equipment"]["filter"]["media"]["chemical"]["carbon_remaining"] > 0.9
     neon = next(a for a in state["animals"] if a["species_id"] == "neon_tetra")
     assert neon["social_satisfaction"] > 0.9
     state["water"]["ammonia_mg_l"] = 1.0

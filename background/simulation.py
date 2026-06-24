@@ -134,13 +134,6 @@ def range_stress(value: float, ideal: list[float], tolerated: list[float]) -> fl
 
 
 def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    fish: list[dict[str, Any]] = []
-    for index in range(8):
-        fish.append(make_animal(species["neon_tetra"], f"Neon {index + 1}", index))
-    for index in range(6):
-        fish.append(make_animal(species["peppered_cory"], f"Cory {index + 1}", 20 + index))
-    for index in range(10):
-        fish.append(make_animal(species["cherry_shrimp"], f"Shrimp {index + 1}", 40 + index))
     return {
         "schema_version": SCHEMA_VERSION,
         "aquarium": {
@@ -179,12 +172,12 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "algae": 0.12,
         },
         "equipment": {
-            "filter": {"enabled": True, "health": 0.96, "flow": 0.78, "maturity": 0.9},
+            "filter": default_filter(),
             "heater": {"enabled": True, "health": 0.98, "target_c": 23.5},
             "light": {"enabled": True, "health": 0.99, "hours_per_day": 8.0},
             "air_pump": {"enabled": True, "health": 0.97, "output": 0.5},
         },
-        "animals": fish,
+        "animals": [],
         "food": {"available": 0.0, "decaying": 0.0, "last_fed": now_iso()},
         "clock": {
             "simulated_at": now_iso(),
@@ -196,9 +189,28 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "emergency_pause": False,
         },
         "events": [
-            event("info", "Aquarium established", "The biofilter is mature and the initial inhabitants are stable.")
+            event("info", "Aquarium established", "The biofilter and scape are ready. Add animals when you are ready to acclimate them.")
         ],
         "summary": {},
+        "welfare": {"score": 100, "status": "stable", "issues": [], "animal_risks": {}},
+    }
+
+
+def default_filter() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "type": "canister",
+        "health": 0.96,
+        "flow": 0.78,
+        "effective_flow": 0.74,
+        "maturity": 0.9,
+        "rated_lph": 650,
+        "last_serviced": now_iso(),
+        "media": {
+            "mechanical": {"kind": "coarse_foam_and_floss", "condition": 0.92, "clog": 0.12},
+            "biological": {"kind": "ceramic_ring", "surface_area": 1.0, "maturity": 0.9, "oxygen_access": 0.82},
+            "chemical": {"kind": "activated_carbon", "carbon_remaining": 0.35, "zeolite_remaining": 0.0},
+        },
     }
 
 
@@ -229,6 +241,25 @@ def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
         "death_load_remaining": 0.0,
         "position_seed": seed,
     }
+
+
+def legacy_preplaced_animals(animals: list[dict[str, Any]]) -> bool:
+    living = [animal for animal in animals if animal.get("alive", True)]
+    if len(living) == 24:
+        counts: dict[str, int] = {}
+        for animal in living:
+            counts[animal.get("species_id", "")] = counts.get(animal.get("species_id", ""), 0) + 1
+        names = {str(animal.get("name", "")) for animal in living}
+        return counts == {"neon_tetra": 8, "peppered_cory": 6, "cherry_shrimp": 10} and all(
+            name.startswith(("Neon ", "Cory ", "Shrimp ")) for name in names
+        )
+    if len(living) == 3:
+        counts = {}
+        for animal in living:
+            counts[animal.get("species_id", "")] = counts.get(animal.get("species_id", ""), 0) + 1
+        names = {str(animal.get("name", "")) for animal in living}
+        return counts == {"ocellaris_clownfish": 2, "royal_gramma": 1} and names == {"Clown 1", "Clown 2", "Gramma 1"}
+    return False
 
 
 def default_scape() -> dict[str, Any]:
@@ -309,6 +340,26 @@ class AquariumSimulation:
         scape.setdefault("corals", [])
         scape.setdefault("objects", [])
         scape.setdefault("layout_seed", 42)
+        equipment = self.state.setdefault("equipment", {})
+        filter_state = equipment.setdefault("filter", default_filter())
+        default_media = default_filter()
+        filter_state.setdefault("type", default_media["type"])
+        filter_state.setdefault("effective_flow", filter_state.get("flow", 0.78))
+        filter_state.setdefault("rated_lph", default_media["rated_lph"])
+        filter_state.setdefault("last_serviced", now_iso())
+        media = filter_state.setdefault("media", {})
+        for media_name, defaults in default_media["media"].items():
+            existing = media.setdefault(media_name, {})
+            for key, value in defaults.items():
+                existing.setdefault(key, value)
+        animals = self.state.setdefault("animals", [])
+        self.state.setdefault("welfare", {"score": 100, "status": "stable", "issues": [], "animal_risks": {}})
+        if legacy_preplaced_animals(animals):
+            self.state["animals"] = []
+            self.state.setdefault("events", []).insert(
+                0,
+                event("info", "Starter animals removed", "The tank now starts empty so you can choose and acclimate every animal yourself."),
+            )
         for animal in self.state.get("animals", []):
             animal.setdefault("acclimated", True)
             animal.setdefault("acclimation_minutes", self.species.get(animal.get("species_id", ""), {}).get("acclimation_minutes", 30))
@@ -347,6 +398,24 @@ class AquariumSimulation:
         water["oxygen_mg_l"] = clamp(water["oxygen_mg_l"] + fraction * 1.2, 0, 10)
         self._record("info", "Partial water change", f"{fraction * 100:.0f}% of the water was replaced gradually.")
 
+    def service_filter(self, replace_carbon: bool = True) -> None:
+        filter_state = self.state["equipment"].setdefault("filter", default_filter())
+        media = filter_state.setdefault("media", default_filter()["media"])
+        mechanical = media.setdefault("mechanical", default_filter()["media"]["mechanical"].copy())
+        biological = media.setdefault("biological", default_filter()["media"]["biological"].copy())
+        chemical = media.setdefault("chemical", default_filter()["media"]["chemical"].copy())
+        mechanical["clog"] = clamp(float(mechanical.get("clog", 0.0)) * 0.25, 0, 1)
+        mechanical["condition"] = clamp(float(mechanical.get("condition", 0.8)) + 0.18, 0, 1)
+        filter_state["flow"] = clamp(float(filter_state.get("flow", 0.7)) + 0.12, 0.08, 1.0)
+        filter_state["health"] = clamp(float(filter_state.get("health", 0.9)) + 0.04, 0, 1)
+        biological["maturity"] = clamp(float(biological.get("maturity", 0.85)) * 0.97, 0.05, 1.0)
+        self.state["biology"]["ammonia_bacteria"] = clamp(self.state["biology"]["ammonia_bacteria"] * 0.985, 0.05, 1.0)
+        self.state["biology"]["nitrite_bacteria"] = clamp(self.state["biology"]["nitrite_bacteria"] * 0.985, 0.05, 1.0)
+        if replace_carbon:
+            chemical["carbon_remaining"] = 1.0
+        filter_state["last_serviced"] = now_iso()
+        self._record("info", "Filter serviced", "Mechanical media was rinsed gently, flow improved, carbon was refreshed, and the biofilter was disturbed only slightly.")
+
     def switch_system(self, system: str) -> None:
         if system not in {"freshwater", "saltwater"}:
             return
@@ -373,10 +442,7 @@ class AquariumSimulation:
                 "organic_waste": 0.08,
                 "turbidity": 0.03,
             })
-            self.add_animal("ocellaris_clownfish", acclimation_minutes=45, name="Clown 1")
-            self.add_animal("ocellaris_clownfish", acclimation_minutes=45, name="Clown 2")
-            self.add_animal("royal_gramma", acclimation_minutes=45, name="Gramma 1")
-            self._record("info", "Saltwater reef started", "The tank was converted to a conservative starter reef. Freshwater animals were not carried over.")
+            self._record("info", "Saltwater reef started", "The tank was converted to a conservative starter reef. Add marine animals when you are ready to acclimate them.")
         else:
             fresh = default_state(self.species)
             keep_clock = self.state.get("clock", {})
@@ -596,6 +662,125 @@ class AquariumSimulation:
                 items.append(item)
         return items
 
+    def _groups(self, living: list[dict[str, Any]]) -> dict[str, int]:
+        groups: dict[str, int] = {}
+        for animal in living:
+            groups[animal["species_id"]] = groups.get(animal["species_id"], 0) + 1
+        return groups
+
+    def _add_animal_risk(self, animal_risks: dict[str, dict[str, Any]], animal: dict[str, Any], stress: float, damage_per_hour: float, reason: str) -> None:
+        risk = animal_risks.setdefault(animal["id"], {"stress": 0.0, "damage_per_hour": 0.0, "reasons": []})
+        risk["stress"] = max(float(risk["stress"]), clamp(stress, 0.0, 1.0))
+        risk["damage_per_hour"] = float(risk["damage_per_hour"]) + max(0.0, damage_per_hour)
+        if reason and reason not in risk["reasons"]:
+            risk["reasons"].append(reason)
+
+    def _community_welfare(self, living: list[dict[str, Any]], groups: dict[str, int]) -> dict[str, Any]:
+        aquarium = self.state["aquarium"]
+        animal_risks: dict[str, dict[str, Any]] = {}
+        issues: list[dict[str, Any]] = []
+        if not living:
+            return {"score": 100, "status": "stable", "issues": [], "animal_risks": {}}
+
+        litres = max(1.0, float(aquarium.get("effective_litres", 1.0)))
+        active_load = sum(
+            self.species[a["species_id"]].get("bioload", 0.5) * (0.75 + self.species[a["species_id"]].get("activity", 0.5) * 0.65)
+            for a in living
+        )
+        stocking_pressure = active_load / max(1.0, litres / 8.0)
+        if stocking_pressure > 1.0:
+            severity = clamp((stocking_pressure - 1.0) / 0.75, 0.0, 1.0)
+            issues.append({
+                "key": "overstocking",
+                "severity": "critical" if severity > 0.65 else "warning",
+                "title": "The tank is overstocked",
+                "details": f"Active bioload is {stocking_pressure:.1f}x the conservative capacity for this volume. Reduce stocking or improve volume/filtration.",
+            })
+            for animal in living:
+                self._add_animal_risk(animal_risks, animal, 0.3 + severity * 0.35, severity * 0.006, "crowding and waste pressure")
+
+        hiding = float(aquarium.get("hiding_cover", 0.0))
+        open_swimming = float(aquarium.get("open_swimming", 0.55))
+        filter_state = self.state.get("equipment", {}).get("filter", {})
+        current_strength = float(filter_state.get("effective_flow", filter_state.get("flow", 0.6)))
+        territorial_pressure = sum(self.species[a["species_id"]].get("territoriality", 0.0) for a in living) / max(1.0, hiding * 12.0)
+        if territorial_pressure > 0.55:
+            severity = clamp((territorial_pressure - 0.55) / 0.9, 0.0, 1.0)
+            issues.append({
+                "key": "aggression",
+                "severity": "critical" if severity > 0.7 else "warning",
+                "title": "Aggression pressure is high",
+                "details": "Territorial fish need more space, broken sight lines, and hiding cover.",
+            })
+            for animal in living:
+                self._add_animal_risk(animal_risks, animal, 0.25 + severity * 0.35, severity * 0.004, "territorial aggression pressure")
+
+        for species_id, count in groups.items():
+            spec = self.species[species_id]
+            minimum = int(spec.get("minimum_group", 1))
+            preferred = int(spec.get("preferred_group", minimum))
+            social = str(spec.get("social", ""))
+            members = [a for a in living if a["species_id"] == species_id]
+            if minimum > 1 and count < minimum:
+                missing_ratio = (minimum - count) / max(1, minimum)
+                hard_social = any(word in social for word in ("school", "shoal", "colony", "group"))
+                stress = (0.55 if hard_social else 0.35) + missing_ratio * (0.45 if hard_social else 0.3)
+                damage = missing_ratio * (0.012 if hard_social else 0.004)
+                if hard_social and count == 1:
+                    damage += 0.012
+                common_name = spec.get("common_name", species_id)
+                issues.append({
+                    "key": f"group_{species_id}",
+                    "severity": "critical" if hard_social and missing_ratio > 0.45 else "warning",
+                    "title": f"{common_name} needs a group",
+                    "details": f"{common_name} has {count}; this species needs at least {minimum} and does best around {preferred}.",
+                })
+                for animal in members:
+                    self._add_animal_risk(animal_risks, animal, stress, damage, f"undersized {common_name} group")
+            elif preferred > minimum and count < preferred:
+                for animal in members:
+                    self._add_animal_risk(animal_risks, animal, 0.16, 0.0, "below preferred group size")
+
+            if preferred <= 2 and spec.get("territoriality", 0.0) > 0.3 and count > preferred:
+                severity = clamp((count - preferred) / max(1, preferred + 1), 0.0, 1.0)
+                issues.append({
+                    "key": f"same_species_aggression_{species_id}",
+                    "severity": "critical" if severity > 0.65 else "warning",
+                    "title": f"{spec.get('common_name', species_id)} may fight",
+                    "details": f"This territorial species is above its preferred group size of {preferred}.",
+                })
+                for animal in members:
+                    self._add_animal_risk(animal_risks, animal, 0.38 + severity * 0.35, severity * 0.007, "same-species territorial conflict")
+
+        for animal in living:
+            spec = self.species[animal["species_id"]]
+            social = str(spec.get("social", ""))
+            if ("cave" in social or "shy" in social or spec.get("swim_zone") == "bottom") and hiding < 0.28:
+                self._add_animal_risk(animal_risks, animal, 0.28, 0.0015, "not enough hiding cover")
+            if spec.get("activity", 0.0) > 0.75 and open_swimming < 0.45:
+                self._add_animal_risk(animal_risks, animal, 0.24, 0.001, "not enough open swimming room")
+            if spec.get("oxygen_min_mg_l", 5.0) >= 5.5 and current_strength < 0.32:
+                self._add_animal_risk(animal_risks, animal, 0.22, 0.001, "too little flow for oxygen-loving fish")
+            if animal["species_id"] in {"betta_splendens", "fancy_guppy"} and current_strength > 0.82:
+                self._add_animal_risk(animal_risks, animal, 0.24, 0.001, "current is tiring long-finned fish")
+
+        for attacker in living:
+            attacker_spec = self.species[attacker["species_id"]]
+            for target in living:
+                if attacker["id"] == target["id"]:
+                    continue
+                target_spec = self.species[target["species_id"]]
+                if attacker_spec.get("fin_nipping", 0.0) > 0.16 and target["species_id"] in {"betta_splendens", "fancy_guppy"}:
+                    self._add_animal_risk(animal_risks, target, 0.25, 0.002, "fin nipping risk")
+                if attacker_spec.get("adult_cm", 0.0) > target_spec.get("adult_cm", 0.0) * 2.4 and attacker_spec.get("predator_mouth_cm", 0.0) > target_spec.get("adult_cm", 0.0) * 0.16:
+                    self._add_animal_risk(animal_risks, target, 0.42, 0.004, "predation intimidation")
+
+        worst_stress = max((float(risk["stress"]) for risk in animal_risks.values()), default=0.0)
+        total_damage = sum(float(risk["damage_per_hour"]) for risk in animal_risks.values())
+        score = int(clamp(100 - worst_stress * 55 - total_damage * 260, 0, 100))
+        status = "critical" if score < 45 or any(i["severity"] == "critical" for i in issues) else "watch" if issues or score < 75 else "stable"
+        return {"score": score, "status": status, "issues": issues[:10], "animal_risks": animal_risks}
+
     def _tick(self, seconds: float) -> None:
         hours = seconds / 3600.0
         water = self.state["water"]
@@ -616,11 +801,29 @@ class AquariumSimulation:
         water["ammonia_mg_l"] += waste_input
 
         filter_state = equipment["filter"]
+        media = filter_state.setdefault("media", default_filter()["media"])
+        mechanical = media.setdefault("mechanical", default_filter()["media"]["mechanical"].copy())
+        biological = media.setdefault("biological", default_filter()["media"]["biological"].copy())
+        chemical = media.setdefault("chemical", default_filter()["media"]["chemical"].copy())
+        clog = clamp(float(mechanical.get("clog", 0.0)), 0, 1)
+        mechanical_condition = clamp(float(mechanical.get("condition", 0.8)), 0, 1)
+        effective_flow = clamp(float(filter_state["flow"]) * (1.0 - clog * 0.58) * float(filter_state["health"]), 0.04, 1.0)
+        filter_state["effective_flow"] = effective_flow
+        biological["oxygen_access"] = clamp(effective_flow * water["oxygen_mg_l"] / 7.0, 0.05, 1.2)
+        biological_maturity = clamp(float(biological.get("maturity", filter_state.get("maturity", 0.8))), 0.05, 1.0)
+        alkalinity = float(water.get("alkalinity_dkh", water.get("kh_dkh", 4.0)))
+        alkalinity_factor = clamp(alkalinity / 4.0, 0.18, 1.18)
+        ph_factor = clamp((water["ph"] - 5.8) / 2.2, 0.08, 1.08)
         filter_factor = (
             float(filter_state["enabled"])
             * filter_state["health"]
-            * filter_state["flow"]
+            * effective_flow
             * filter_state["maturity"]
+            * biological_maturity
+            * biological.get("surface_area", 1.0)
+            * biological["oxygen_access"]
+            * alkalinity_factor
+            * ph_factor
         )
         oxygen_factor = clamp(water["oxygen_mg_l"] / 7.0, 0.1, 1.2)
         ammonia_conversion = min(
@@ -635,6 +838,22 @@ class AquariumSimulation:
         )
         water["nitrite_mg_l"] -= nitrite_conversion
         water["nitrate_mg_l"] += nitrite_conversion
+        nitrified = ammonia_conversion + nitrite_conversion
+        water["oxygen_mg_l"] = clamp(water["oxygen_mg_l"] - nitrified * 0.05, 0, 10)
+        water["kh_dkh"] = clamp(water["kh_dkh"] - nitrified * 0.018, 0, 20)
+        water["alkalinity_dkh"] = clamp(float(water.get("alkalinity_dkh", water["kh_dkh"])) - nitrified * 0.018, 0, 20)
+
+        trapped = min(water["organic_waste"], effective_flow * mechanical_condition * hours * 0.009)
+        water["organic_waste"] -= trapped
+        water["turbidity"] = clamp(water["turbidity"] - effective_flow * mechanical_condition * hours * 0.012, 0, 1)
+        mechanical["clog"] = clamp(clog + (trapped * 0.18 + water["turbidity"] * 0.006 + food["decaying"] * 0.01) * hours, 0, 1)
+        mechanical["condition"] = clamp(mechanical_condition - mechanical["clog"] * hours * 0.0008, 0.15, 1)
+        carbon = clamp(float(chemical.get("carbon_remaining", 0.0)), 0, 1)
+        if carbon > 0:
+            polish = min(water["organic_waste"], carbon * effective_flow * hours * 0.0025)
+            water["organic_waste"] -= polish
+            water["turbidity"] = clamp(water["turbidity"] - carbon * effective_flow * hours * 0.002, 0, 1)
+            chemical["carbon_remaining"] = clamp(carbon - (polish * 0.04 + hours * 0.00025), 0, 1)
 
         bacterial_food = clamp((water["ammonia_mg_l"] + water["nitrite_mg_l"]) * 2.0, 0, 1)
         bio["ammonia_bacteria"] = clamp(bio["ammonia_bacteria"] + (bacterial_food - 0.2) * hours * 0.002, 0.05, 1)
@@ -668,15 +887,15 @@ class AquariumSimulation:
         )
         self._update_corals(hours)
 
-        groups = {}
+        groups = self._groups(living)
+        welfare = self._community_welfare(living, groups)
+        self.state["welfare"] = welfare
         for animal in living:
-            groups[animal["species_id"]] = groups.get(animal["species_id"], 0) + 1
-        for animal in living:
-            self._update_animal(animal, groups, consumed, hours)
+            self._update_animal(animal, groups, welfare, consumed, hours)
 
         for item in equipment.values():
             item["health"] = clamp(item["health"] - hours * 0.00002, 0, 1)
-        filter_state["flow"] = clamp(filter_state["flow"] - water["organic_waste"] * hours * 0.00008, 0.08, 1)
+        filter_state["flow"] = clamp(filter_state["flow"] - water["organic_waste"] * hours * 0.00008 - mechanical["clog"] * hours * 0.00005, 0.08, 1)
         self._check_emergencies()
 
     def _decompose_dead_animals(self, hours: float) -> None:
@@ -723,7 +942,7 @@ class AquariumSimulation:
         if stress > 0.45:
             self._record_once("coral_stress", "warning", "Corals are stressed", "Temperature, salinity, or nitrate is outside the reef comfort range.")
 
-    def _update_animal(self, animal: dict[str, Any], groups: dict[str, int], consumed: float, hours: float) -> None:
+    def _update_animal(self, animal: dict[str, Any], groups: dict[str, int], welfare: dict[str, Any], consumed: float, hours: float) -> None:
         spec = self.species[animal["species_id"]]
         water = self.state["water"]
         aquarium = self.state["aquarium"]
@@ -745,11 +964,15 @@ class AquariumSimulation:
         group = groups[animal["species_id"]]
         social_stress = clamp((spec["minimum_group"] - group) / max(1, spec["minimum_group"]), 0, 1)
         animal["social_satisfaction"] = 1.0 - social_stress
-        stress_target = max(temp_stress, ph_stress, hardness_stress, salinity_stress, system_stress, oxygen_stress, nitrogen_stress, volume_stress, length_stress, social_stress)
+        welfare_risk = welfare.get("animal_risks", {}).get(animal["id"], {})
+        welfare_stress = float(welfare_risk.get("stress", 0.0))
+        animal["welfare_reasons"] = welfare_risk.get("reasons", [])
+        stress_target = max(temp_stress, ph_stress, hardness_stress, salinity_stress, system_stress, oxygen_stress, nitrogen_stress, volume_stress, length_stress, social_stress, welfare_stress)
         animal["acute_stress"] = clamp(animal["acute_stress"] + (stress_target - animal["acute_stress"]) * min(1, hours * 0.3), 0, 1)
         animal["chronic_stress"] = clamp(animal["chronic_stress"] + (animal["acute_stress"] - 0.2) * hours * 0.012, 0, 1)
         animal["immune_condition"] = clamp(animal["immune_condition"] - animal["chronic_stress"] * hours * 0.004 + hours * 0.0004, 0, 1)
         damage = max(0, nitrogen_stress - 0.35) * hours * 0.05 + max(0, oxygen_stress - 0.45) * hours * 0.06
+        damage += float(welfare_risk.get("damage_per_hour", 0.0)) * hours
         if animal["hunger"] > 0.9:
             damage += (animal["hunger"] - 0.9) * hours * 0.02
         animal["health"] = clamp(animal["health"] - damage + (1 - stress_target) * hours * 0.0008, 0, 1)
@@ -759,6 +982,18 @@ class AquariumSimulation:
             animal["behavior"] = "gasping at the surface"
         elif nitrogen_stress > 0.35:
             animal["behavior"] = "lethargic with rapid gill movement"
+        elif welfare_risk.get("reasons"):
+            reason = str(welfare_risk["reasons"][0])
+            if "undersized" in reason:
+                animal["behavior"] = "panicked without a proper school"
+            elif "aggression" in reason or "conflict" in reason:
+                animal["behavior"] = "dodging aggression"
+            elif "hiding" in reason:
+                animal["behavior"] = "searching for cover"
+            elif "open swimming" in reason:
+                animal["behavior"] = "pacing for swimming room"
+            else:
+                animal["behavior"] = "showing welfare stress"
         elif social_stress > 0.3:
             animal["behavior"] = "hiding and scanning for companions"
         elif animal["hunger"] > 0.72:
@@ -777,6 +1012,11 @@ class AquariumSimulation:
             self._record("critical", f"{animal['name']} died", animal["cause_of_death"], animal["id"])
 
     def _cause_of_death(self, animal: dict[str, Any], oxygen_stress: float, nitrogen_stress: float) -> str:
+        reasons = " ".join(str(reason) for reason in animal.get("welfare_reasons", []))
+        if "undersized" in reasons:
+            return "Primary cause: severe social deprivation. This schooling or shoaling animal was kept below its minimum group size long enough to collapse from chronic stress."
+        if "aggression" in reasons or "conflict" in reasons:
+            return "Primary cause: social aggression. Territorial or community pressure caused sustained stress and injury risk."
         if nitrogen_stress > 0.6:
             return "Primary cause: nitrogen toxicity. Contributing evidence includes elevated ammonia or nitrite and prolonged respiratory stress."
         if oxygen_stress > 0.6:
@@ -795,6 +1035,8 @@ class AquariumSimulation:
             self._record_once("oxygen", "critical", "Dissolved oxygen is low", f"Oxygen fell to {water['oxygen_mg_l']:.1f} mg/L. Increase aeration and inspect filtration.")
         if water["nitrate_mg_l"] > 30:
             self._record_once("nitrate", "warning", "Nitrate is accumulating", f"Nitrate reached {water['nitrate_mg_l']:.0f} mg/L. Plan a partial water change.")
+        for issue in self.state.get("welfare", {}).get("issues", [])[:4]:
+            self._record_once(f"welfare_{issue.get('key', issue.get('title', 'issue'))}", issue.get("severity", "warning"), issue.get("title", "Welfare issue"), issue.get("details", "The community has a welfare problem."))
 
     def _record_once(self, key: str, severity: str, title: str, details: str) -> None:
         now = time.time()
@@ -809,6 +1051,9 @@ class AquariumSimulation:
 
     def _summarize(self) -> None:
         living = [a for a in self.state["animals"] if a["alive"]]
+        groups = self._groups(living)
+        welfare = self._community_welfare(living, groups)
+        self.state["welfare"] = welfare
         stressed = [a for a in living if a["acute_stress"] > 0.35 or a["chronic_stress"] > 0.3]
         water = self.state["water"]
         risks = []
@@ -820,10 +1065,13 @@ class AquariumSimulation:
             risks.append("low oxygen")
         if water["nitrate_mg_l"] > 25:
             risks.append("nitrate")
+        for issue in welfare.get("issues", [])[:3]:
+            risks.append(issue["title"])
         self.state["summary"] = {
             "living_animals": len(living),
             "stressed_animals": len(stressed),
-            "status": "critical" if any(e["severity"] == "critical" for e in self.state["events"][:3]) else "watch" if risks or stressed else "stable",
+            "status": "critical" if welfare.get("status") == "critical" or any(e["severity"] == "critical" for e in self.state["events"][:3]) else "watch" if risks or stressed or welfare.get("status") == "watch" else "stable",
             "risks": risks,
+            "welfare_score": welfare.get("score", 100),
             "last_updated": now_iso(),
         }

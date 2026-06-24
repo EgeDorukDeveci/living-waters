@@ -4,6 +4,10 @@ Living Waters is a persistent aquarium simulation for Windows. The aquarium keep
 
 This is a vertical slice, not a screensaver. The background process simulates freshwater and saltwater systems, water chemistry, a nitrogen cycle, filtration, feeding, oxygen, aquascape plants, corals, fish stress, acclimation shock, health, mortality explanations, and Windows notifications.
 
+The simulation includes a welfare engine. It evaluates minimum group sizes, preferred school sizes, active bioload, tank length/volume, open swimming room, hiding cover, territorial aggression, fin-nipping risk, predation intimidation, salinity mismatch, and species-specific water limits. Schooling or shoaling fish kept alone or in small groups now suffer severe chronic stress and can die even when the water looks clean.
+
+Filtration is modeled as mechanical, biological, and chemical media. Mechanical media traps suspended waste but clogs and lowers flow. Biological media needs maturity, oxygen, alkalinity, pH stability, and flow to process ammonia and nitrite. Chemical carbon polishes organics but depletes over time. Servicing the filter restores flow and carbon without fully destroying the biofilter.
+
 ## Run
 
 Double-click:
@@ -80,7 +84,7 @@ Saltwater:
 - Yellow watchman goby
 - Firefish
 
-The shipped starter tank uses neon tetras, peppered corydoras, and cherry shrimp because their water parameters overlap better than the full catalogue. The other species are present to demonstrate compatibility constraints and future scenarios.
+New tanks start with water, equipment, and scape only. No animals are pre-placed; add each fish, shrimp, or marine animal yourself when you are ready to acclimate it.
 
 ## Visual Direction
 
@@ -91,6 +95,10 @@ The Scape Studio controls can add river stones, moss stones, live rock, reef arc
 Plant, rock, macroalgae, and coral choices affect nitrate uptake, daytime oxygen, nighttime oxygen use, hiding cover, algae control, maintenance load, and reef stability. Water color shifts with freshwater/saltwater style and worsens visibly as turbidity, ammonia, or nitrate rise.
 
 Animals can be added from the side panel. The safe path is **Acclimate**. **Skip acclimation** is intentionally dangerous: sensitive animals can die from shock, and dead animals add organic waste and ammonia until removed or decomposed.
+
+The status area shows the current welfare score and the first major welfare issue. Individual animal rows can show concrete reasons such as undersized groups, aggression pressure, crowding, lack of cover, or lack of swimming room.
+
+The side panel also shows filter flow, mechanical clogging, and carbon remaining. Use **Service filter** when flow drops or the tank becomes visually dirty.
 
 Fish, plants, stones, and driftwood are rendered from transparent 2D sprites in `assets/sprites`. Run `py -3 .\art\generate_sprites.py` to regenerate the current sprite set.
 

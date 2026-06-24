@@ -6,6 +6,7 @@ const TOP_BAR := 82.0
 const SAND_HEIGHT := 74.0
 const COMMAND_FEED := {"action": "feed", "amount": 0.42}
 const COMMAND_WATER_CHANGE := {"action": "water_change", "fraction": 0.25}
+const COMMAND_SERVICE_FILTER := {"action": "service_filter", "replace_carbon": true}
 
 var root_dir: String
 var state_path: String
@@ -26,6 +27,7 @@ var species_select: OptionButton
 var status_label: Label
 var summary_label: Label
 var scape_label: Label
+var filter_label: Label
 var tool_label: Label
 var title_label: Label
 var animal_ids: Array = []
@@ -247,12 +249,28 @@ func _build_ui() -> void:
 	change.pressed.connect(func(): _write_command(COMMAND_WATER_CHANGE.duplicate()))
 	buttons.add_child(change)
 
+	var filter_row := HBoxContainer.new()
+	filter_row.add_theme_constant_override("separation", 8)
+	panel.add_child(filter_row)
+	var service_filter := Button.new()
+	service_filter.text = "Service filter"
+	service_filter.custom_minimum_size = Vector2(300, 34)
+	service_filter.pressed.connect(func(): _write_command(COMMAND_SERVICE_FILTER.duplicate()))
+	filter_row.add_child(service_filter)
+
 	for key in ["temperature_c", "ph", "oxygen_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l"]:
 		var label := Label.new()
 		label.text = key
 		label.add_theme_color_override("font_color", Color("#d8eee9"))
 		panel.add_child(label)
 		water_labels[key] = label
+
+	filter_label = Label.new()
+	filter_label.text = "Filter: waiting for state"
+	filter_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	filter_label.add_theme_font_size_override("font_size", 12)
+	filter_label.add_theme_color_override("font_color", Color("#a8c8bd"))
+	panel.add_child(filter_label)
 
 	var system_row := HBoxContainer.new()
 	system_row.add_theme_constant_override("separation", 8)
@@ -1077,11 +1095,17 @@ func _draw_shrimp(pos: Vector2, facing: float, color: Color, accent: Color, visu
 func _refresh_ui() -> void:
 	var summary = state.get("summary", {})
 	var water = state.get("water", {})
+	var welfare = state.get("welfare", {})
 	var status = str(summary.get("status", "stable")).capitalize()
 	var living := int(summary.get("living_animals", 0))
 	var stressed := int(summary.get("stressed_animals", 0))
-	status_label.text = "%s - %d animals - %d stressed" % [status, living, stressed]
-	summary_label.text = "The aquarium keeps living in the background. Open this window to feed, change water, and check what the tank is telling you."
+	status_label.text = "%s - %d animals - %d stressed - welfare %d" % [status, living, stressed, int(summary.get("welfare_score", welfare.get("score", 100)))]
+	var issues: Array = welfare.get("issues", [])
+	if issues.size() > 0:
+		var first_issue: Dictionary = issues[0]
+		summary_label.text = "%s: %s" % [first_issue.get("title", "Welfare issue"), first_issue.get("details", "Check stocking, grouping, cover, and water quality.")]
+	else:
+		summary_label.text = "The aquarium keeps living in the background. Add animals deliberately, acclimate them, and watch water plus welfare signals."
 	var aquarium = state.get("aquarium", {})
 	if scape_label:
 		scape_label.text = "Plants affect nitrate, oxygen, algae, cover, and maintenance. Cover %.0f%% - algae control %.0f%% - upkeep %.0f%%" % [
@@ -1091,6 +1115,16 @@ func _refresh_ui() -> void:
 		]
 	for key in water_labels.keys():
 		water_labels[key].text = _format_water(key, float(water.get(key, 0.0)))
+	if filter_label:
+		var filter = state.get("equipment", {}).get("filter", {})
+		var media = filter.get("media", {})
+		var mechanical = media.get("mechanical", {})
+		var chemical = media.get("chemical", {})
+		filter_label.text = "Filter: flow %.0f%% - clog %.0f%% - carbon %.0f%%" % [
+			float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0,
+			float(mechanical.get("clog", 0.0)) * 100.0,
+			float(chemical.get("carbon_remaining", 0.0)) * 100.0
+		]
 	animal_list.clear()
 	animal_ids.clear()
 	for animal in state.get("animals", []):
@@ -1101,6 +1135,9 @@ func _refresh_ui() -> void:
 			float(animal.get("acute_stress", 0.0)) * 100.0,
 			float(animal.get("health", 1.0)) * 100.0
 		]
+		var welfare_reasons: Array = animal.get("welfare_reasons", [])
+		if welfare_reasons.size() > 0 and alive:
+			line += " - %s" % welfare_reasons[0]
 		if not alive:
 			line = "%s - died: %s" % [animal.get("name", "animal"), animal.get("cause_of_death", "unknown")]
 		animal_list.add_item(line)
