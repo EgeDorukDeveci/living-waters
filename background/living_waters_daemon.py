@@ -139,9 +139,15 @@ class Daemon:
         if action == "feed":
             self.sim.feed(float(command.get("amount", 0.42)))
         elif action == "water_change":
-            self.sim.water_change(float(command.get("fraction", 0.25)))
+            self.sim.water_change(float(command.get("fraction", 0.25)), bool(command.get("conditioner_used", True)))
+        elif action == "weekly_maintenance":
+            self.sim.weekly_maintenance()
         elif action == "service_filter":
             self.sim.service_filter(bool(command.get("replace_carbon", True)))
+        elif action == "dose_ammonia":
+            self.sim.dose_ammonia(float(command.get("amount", 1.0)))
+        elif action == "test_water":
+            self.sim.test_water()
         elif action == "toggle_pause":
             self.state["clock"]["paused"] = not self.state["clock"]["paused"]
         elif action == "set_speed":

@@ -8,6 +8,8 @@ The simulation includes a welfare engine. It evaluates minimum group sizes, pref
 
 Filtration is modeled as mechanical, biological, and chemical media. Mechanical media traps suspended waste but clogs and lowers flow. Biological media needs maturity, oxygen, alkalinity, pH stability, and flow to process ammonia and nitrite. Chemical carbon polishes organics but depletes over time. Servicing the filter restores flow and carbon without fully destroying the biofilter.
 
+Planning and husbandry are part of the simulation too. The tank tracks estimated loaded weight, stand rating, level support, direct sunlight, vibration, room temperature swing, maintenance access, required equipment, cycling state, water-test dates, water-change dates, substrate vacuuming, dechlorinator use, light duration, plant spectrum, substrate depth, tannins, phosphate, and algae pressure. Bad planning or missed care creates warnings and can feed back into fish welfare and water quality.
+
 ## Run
 
 Double-click:
@@ -98,7 +100,7 @@ Animals can be added from the side panel. The safe path is **Acclimate**. **Skip
 
 The status area shows the current welfare score and the first major welfare issue. Individual animal rows can show concrete reasons such as undersized groups, aggression pressure, crowding, lack of cover, or lack of swimming room.
 
-The side panel also shows filter flow, mechanical clogging, and carbon remaining. Use **Service filter** when flow drops or the tank becomes visually dirty.
+The side panel also shows filter flow, mechanical clogging, carbon remaining, cycle readiness, planning risk, and maintenance status. Use **Weekly care** for a dechlorinated water change and substrate cleanup, **Test water** to log parameter checks, **Service filter** when flow drops, and **Dose cycle** only for fishless cycling before animals are present.
 
 Fish, plants, stones, and driftwood are rendered from transparent 2D sprites in `assets/sprites`. Run `py -3 .\art\generate_sprites.py` to regenerate the current sprite set.
 

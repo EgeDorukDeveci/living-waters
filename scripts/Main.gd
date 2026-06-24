@@ -7,6 +7,9 @@ const SAND_HEIGHT := 74.0
 const COMMAND_FEED := {"action": "feed", "amount": 0.42}
 const COMMAND_WATER_CHANGE := {"action": "water_change", "fraction": 0.25}
 const COMMAND_SERVICE_FILTER := {"action": "service_filter", "replace_carbon": true}
+const COMMAND_WEEKLY_MAINTENANCE := {"action": "weekly_maintenance"}
+const COMMAND_DOSE_AMMONIA := {"action": "dose_ammonia", "amount": 1.0}
+const COMMAND_TEST_WATER := {"action": "test_water"}
 
 var root_dir: String
 var state_path: String
@@ -28,6 +31,9 @@ var status_label: Label
 var summary_label: Label
 var scape_label: Label
 var filter_label: Label
+var cycle_label: Label
+var planning_label: Label
+var maintenance_label: Label
 var tool_label: Label
 var title_label: Label
 var animal_ids: Array = []
@@ -249,14 +255,33 @@ func _build_ui() -> void:
 	change.pressed.connect(func(): _write_command(COMMAND_WATER_CHANGE.duplicate()))
 	buttons.add_child(change)
 
+	var care_row := HBoxContainer.new()
+	care_row.add_theme_constant_override("separation", 8)
+	panel.add_child(care_row)
+	var maintenance_button := Button.new()
+	maintenance_button.text = "Weekly care"
+	maintenance_button.custom_minimum_size = Vector2(142, 34)
+	maintenance_button.pressed.connect(func(): _write_command(COMMAND_WEEKLY_MAINTENANCE.duplicate()))
+	care_row.add_child(maintenance_button)
+	var test_button := Button.new()
+	test_button.text = "Test water"
+	test_button.custom_minimum_size = Vector2(142, 34)
+	test_button.pressed.connect(func(): _write_command(COMMAND_TEST_WATER.duplicate()))
+	care_row.add_child(test_button)
+
 	var filter_row := HBoxContainer.new()
 	filter_row.add_theme_constant_override("separation", 8)
 	panel.add_child(filter_row)
 	var service_filter := Button.new()
 	service_filter.text = "Service filter"
-	service_filter.custom_minimum_size = Vector2(300, 34)
+	service_filter.custom_minimum_size = Vector2(142, 34)
 	service_filter.pressed.connect(func(): _write_command(COMMAND_SERVICE_FILTER.duplicate()))
 	filter_row.add_child(service_filter)
+	var dose_ammonia := Button.new()
+	dose_ammonia.text = "Dose cycle"
+	dose_ammonia.custom_minimum_size = Vector2(142, 34)
+	dose_ammonia.pressed.connect(func(): _write_command(COMMAND_DOSE_AMMONIA.duplicate()))
+	filter_row.add_child(dose_ammonia)
 
 	for key in ["temperature_c", "ph", "oxygen_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l"]:
 		var label := Label.new()
@@ -271,6 +296,27 @@ func _build_ui() -> void:
 	filter_label.add_theme_font_size_override("font_size", 12)
 	filter_label.add_theme_color_override("font_color", Color("#a8c8bd"))
 	panel.add_child(filter_label)
+
+	cycle_label = Label.new()
+	cycle_label.text = "Cycle: waiting for state"
+	cycle_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	cycle_label.add_theme_font_size_override("font_size", 12)
+	cycle_label.add_theme_color_override("font_color", Color("#a8c8bd"))
+	panel.add_child(cycle_label)
+
+	planning_label = Label.new()
+	planning_label.text = "Planning: waiting for state"
+	planning_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	planning_label.add_theme_font_size_override("font_size", 12)
+	planning_label.add_theme_color_override("font_color", Color("#a8c8bd"))
+	panel.add_child(planning_label)
+
+	maintenance_label = Label.new()
+	maintenance_label.text = "Maintenance: waiting for state"
+	maintenance_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	maintenance_label.add_theme_font_size_override("font_size", 12)
+	maintenance_label.add_theme_color_override("font_color", Color("#a8c8bd"))
+	panel.add_child(maintenance_label)
 
 	var system_row := HBoxContainer.new()
 	system_row.add_theme_constant_override("separation", 8)
@@ -1125,6 +1171,27 @@ func _refresh_ui() -> void:
 			float(mechanical.get("clog", 0.0)) * 100.0,
 			float(chemical.get("carbon_remaining", 0.0)) * 100.0
 		]
+	if cycle_label:
+		var cycle = state.get("cycle", {})
+		cycle_label.text = "Cycle: %s - animals %s - day %.0f" % [
+			str(cycle.get("stage", "unknown")),
+			"ready" if bool(cycle.get("ready_for_animals", false)) else "not ready",
+			float(cycle.get("days_running", 0.0))
+		]
+	if planning_label:
+		var planning = state.get("planning", {})
+		var plan_issues: Array = planning.get("issues", [])
+		var plan_text := "Planning: %.0f kg estimated - risk %d" % [
+			float(planning.get("estimated_total_weight_kg", 0.0)),
+			int(planning.get("risk_score", 0))
+		]
+		if plan_issues.size() > 0:
+			plan_text += " - %s" % plan_issues[0].get("title", "issue")
+		planning_label.text = plan_text
+	if maintenance_label:
+		var maintenance = state.get("maintenance", {})
+		var maint_issues: Array = maintenance.get("issues", [])
+		maintenance_label.text = "Maintenance: %s" % ("ok" if maint_issues.is_empty() else maint_issues[0].get("title", "attention needed"))
 	animal_list.clear()
 	animal_ids.clear()
 	for animal in state.get("animals", []):

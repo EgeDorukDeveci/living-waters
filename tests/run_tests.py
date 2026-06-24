@@ -185,6 +185,55 @@ def test_filter_bio_capacity_depends_on_maturity() -> None:
     assert mature_state["water"]["ammonia_mg_l"] < immature_state["water"]["ammonia_mg_l"]
 
 
+def test_planning_weight_and_placement_risks() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["planning"]["stand_rating_kg"] = 40
+    state["planning"]["dedicated_stand"] = False
+    state["planning"]["direct_sunlight_hours"] = 2.0
+    sim = AquariumSimulation(species, state)
+    sim.advance(60)
+    titles = [issue["title"] for issue in state["planning"]["issues"]]
+    assert "Stand may be unsafe" in titles
+    assert "Direct sunlight risk" in titles
+    assert state["planning"]["estimated_total_weight_kg"] > state["aquarium"]["gross_litres"]
+
+
+def test_fishless_cycle_blocks_stocking_until_clear() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    sim.dose_ammonia(1.0)
+    assert state["cycle"]["ready_for_animals"] is False
+    state["animals"].append(animal(species, "neon_tetra", "Too Soon", 1))
+    sim.advance(3600)
+    assert state["welfare"]["status"] == "critical"
+    assert any(issue["key"] == "uncycled_tank" for issue in state["welfare"]["issues"])
+
+
+def test_weekly_maintenance_reduces_waste_and_logs_dates() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    state["water"]["organic_waste"] = 2.0
+    state["water"]["turbidity"] = 0.8
+    sim.weekly_maintenance()
+    assert state["water"]["organic_waste"] < 1.5
+    assert state["water"]["turbidity"] < 0.5
+    assert state["maintenance"]["water_conditioner_used"] is True
+
+
+def test_untreated_water_change_adds_chlorine_risk() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["animals"].append(animal(species, "neon_tetra", "Chlorine Test", 1))
+    sim = AquariumSimulation(species, state)
+    sim.water_change(0.3, conditioner_used=False)
+    sim.advance(60)
+    assert state["water"]["chlorine_mg_l"] > 0
+    assert any(issue["key"] == "chlorine" for issue in state["welfare"]["issues"])
+
+
 def test_saltwater_switch_species_and_reefscape_rules() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -233,6 +282,10 @@ def main() -> int:
         test_acclimation_failure_adds_death_load,
         test_filter_clogging_and_service_changes_flow,
         test_filter_bio_capacity_depends_on_maturity,
+        test_planning_weight_and_placement_risks,
+        test_fishless_cycle_blocks_stocking_until_clear,
+        test_weekly_maintenance_reduces_waste_and_logs_dates,
+        test_untreated_water_change_adds_chlorine_risk,
         test_saltwater_switch_species_and_reefscape_rules,
         test_scape_placement_rules_and_relocation,
     ]
