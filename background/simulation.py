@@ -753,6 +753,29 @@ class AquariumSimulation:
         filter_state["last_serviced"] = now_iso()
         self._record("info", "Filter serviced", "Mechanical media was rinsed gently, flow improved, carbon was refreshed, and the biofilter was disturbed only slightly.")
 
+    def set_substrate(self, substrate: str = "fine_sand", depth_cm: float = 5.0) -> None:
+        valid = {
+            "fine_sand": "fine sand",
+            "rounded_gravel": "rounded gravel",
+            "planted_soil": "planted soil",
+            "reef_sand": "reef sand",
+            "bare_bottom": "bare bottom",
+        }
+        if substrate not in valid:
+            substrate = "fine_sand"
+        depth_cm = clamp(depth_cm, 0.0, 9.0)
+        if substrate == "bare_bottom":
+            depth_cm = 0.0
+        self.state["aquarium"]["substrate"] = substrate
+        self.state["aquarium"]["substrate_depth_cm"] = depth_cm
+        if substrate == "planted_soil":
+            self.state["aquarium"]["maintenance_load"] = clamp(float(self.state["aquarium"].get("maintenance_load", 0.0)) + 0.03, 0, 1)
+            self.state["biology"]["plant_health"] = clamp(float(self.state["biology"].get("plant_health", 1.0)) + 0.04, 0, 1)
+        elif substrate == "bare_bottom":
+            self.state["water"]["organic_waste"] = clamp(float(self.state["water"].get("organic_waste", 0.0)) * 0.82, 0, 5)
+        self._record("info", "Substrate adjusted", f"Changed substrate to {valid[substrate]} at {depth_cm:.1f} cm depth.")
+        self._summarize()
+
     def setup_clear_aquarium(self, name: str = "", system: str = "freshwater", gross_litres: float = 60.0) -> None:
         keep_clock = self.state.get("clock", {})
         self.state.clear()

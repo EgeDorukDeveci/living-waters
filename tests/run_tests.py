@@ -181,6 +181,21 @@ def test_scape_items_change_biology() -> None:
     assert state["aquarium"]["scape"]["layout_seed"] == 42
 
 
+def test_substrate_can_be_configured() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    sim.set_substrate("planted_soil", 7.5)
+    assert state["aquarium"]["substrate"] == "planted_soil"
+    assert state["aquarium"]["substrate_depth_cm"] == 7.5
+    assert state["biology"]["plant_health"] >= 0.95
+    state["water"]["organic_waste"] = 1.0
+    sim.set_substrate("bare_bottom", 4.0)
+    assert state["aquarium"]["substrate"] == "bare_bottom"
+    assert state["aquarium"]["substrate_depth_cm"] == 0.0
+    assert state["water"]["organic_waste"] < 1.0
+
+
 def test_acclimation_failure_adds_death_load() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -372,6 +387,7 @@ def main() -> int:
         test_command_persistence_shape,
         test_invalid_aquarium_index_is_recovered,
         test_scape_items_change_biology,
+        test_substrate_can_be_configured,
         test_acclimation_failure_adds_death_load,
         test_filter_clogging_and_service_changes_flow,
         test_filter_bio_capacity_depends_on_maturity,

@@ -33,6 +33,8 @@ var aquarium_select: OptionButton
 var tank_name_edit: LineEdit
 var tank_litres_spin: SpinBox
 var tank_system_select: OptionButton
+var substrate_select: OptionButton
+var substrate_depth_spin: SpinBox
 var species_select: OptionButton
 var status_label: Label
 var summary_label: Label
@@ -52,6 +54,7 @@ var selected_animal_id := ""
 var selected_scape_tool: Dictionary = {}
 var selected_scape_object_id := ""
 var selected_animal_tool: Dictionary = {}
+var action_effects: Array[Dictionary] = []
 var last_command_note := ""
 var last_command_until := 0.0
 var notebook_open := false
@@ -73,6 +76,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	time_accum += delta
 	_animate_animals(delta)
+	_update_action_effects(delta)
 	_update_notebook_animation(delta)
 	if time_accum > 1.0:
 		time_accum = 0.0
@@ -151,6 +155,35 @@ func _client_position_valid(category: String, item_type: String, normalized: Vec
 func _valid_release_point(normalized: Vector2) -> bool:
 	return normalized.y > 0.10 and normalized.y < 0.86
 
+func _add_action_effect(kind: String) -> void:
+	action_effects.append({"kind": kind, "age": 0.0, "duration": _effect_duration(kind), "seed": Time.get_ticks_msec() % 1000})
+
+func _effect_duration(kind: String) -> float:
+	match kind:
+		"feed":
+			return 2.6
+		"water_change":
+			return 3.2
+		"weekly_maintenance":
+			return 3.4
+		"service_filter":
+			return 2.7
+		"test_water":
+			return 2.3
+		"dose_ammonia":
+			return 2.5
+		"set_substrate":
+			return 2.8
+	return 1.8
+
+func _update_action_effects(delta: float) -> void:
+	var alive: Array[Dictionary] = []
+	for effect in action_effects:
+		effect["age"] = float(effect.get("age", 0.0)) + delta
+		if float(effect["age"]) < float(effect.get("duration", 1.0)):
+			alive.append(effect)
+	action_effects = alive
+
 func _draw() -> void:
 	_draw_room()
 	_draw_aquarium()
@@ -159,6 +192,7 @@ func _draw() -> void:
 	_draw_plants()
 	_draw_bubbles()
 	_draw_animals()
+	_draw_action_effects()
 	_draw_front_glass()
 
 func _project_root() -> String:
@@ -379,6 +413,42 @@ func _build_ui() -> void:
 	dose_ammonia.custom_minimum_size = Vector2(142, 34)
 	dose_ammonia.pressed.connect(func(): _write_command(COMMAND_DOSE_AMMONIA.duplicate()))
 	filter_row.add_child(dose_ammonia)
+
+	var substrate_title := Label.new()
+	substrate_title.text = "Substrate"
+	substrate_title.add_theme_font_size_override("font_size", 16)
+	substrate_title.add_theme_color_override("font_color", Color("#f5efe3"))
+	panel.add_child(substrate_title)
+
+	var substrate_row := GridContainer.new()
+	substrate_row.columns = 2
+	substrate_row.add_theme_constant_override("h_separation", 8)
+	substrate_row.add_theme_constant_override("v_separation", 6)
+	panel.add_child(substrate_row)
+
+	substrate_select = OptionButton.new()
+	substrate_select.custom_minimum_size = Vector2(142, 30)
+	_add_substrate_choice("Fine sand", "fine_sand")
+	_add_substrate_choice("Rounded gravel", "rounded_gravel")
+	_add_substrate_choice("Planted soil", "planted_soil")
+	_add_substrate_choice("Reef sand", "reef_sand")
+	_add_substrate_choice("Bare bottom", "bare_bottom")
+	substrate_row.add_child(substrate_select)
+
+	substrate_depth_spin = SpinBox.new()
+	substrate_depth_spin.min_value = 0
+	substrate_depth_spin.max_value = 9
+	substrate_depth_spin.step = 0.5
+	substrate_depth_spin.value = 5
+	substrate_depth_spin.suffix = " cm"
+	substrate_depth_spin.custom_minimum_size = Vector2(142, 30)
+	substrate_row.add_child(substrate_depth_spin)
+
+	var apply_substrate := Button.new()
+	apply_substrate.text = "Apply substrate"
+	apply_substrate.custom_minimum_size = Vector2(300, 30)
+	apply_substrate.pressed.connect(func(): _apply_substrate())
+	panel.add_child(apply_substrate)
 
 	for key in ["temperature_c", "ph", "oxygen_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l"]:
 		var label := Label.new()
@@ -603,6 +673,33 @@ func _layout_ui() -> void:
 		if scroll:
 			scroll.size = side_panel.size
 
+func _add_substrate_choice(label: String, id: String) -> void:
+	if not substrate_select:
+		return
+	substrate_select.add_item(label)
+	substrate_select.set_item_metadata(substrate_select.item_count - 1, id)
+
+func _apply_substrate() -> void:
+	if not substrate_select or substrate_select.selected < 0:
+		return
+	var substrate := str(substrate_select.get_item_metadata(substrate_select.selected))
+	var depth := 5.0
+	if substrate_depth_spin:
+		depth = float(substrate_depth_spin.value)
+	_write_command({"action": "set_substrate", "substrate": substrate, "depth_cm": depth})
+
+func _sync_substrate_controls() -> void:
+	if not substrate_select:
+		return
+	var aquarium = state.get("aquarium", {})
+	var substrate := str(aquarium.get("substrate", "fine_sand"))
+	for i in range(substrate_select.item_count):
+		if str(substrate_select.get_item_metadata(i)) == substrate:
+			substrate_select.select(i)
+			break
+	if substrate_depth_spin:
+		substrate_depth_spin.value = float(aquarium.get("substrate_depth_cm", 5.0))
+
 func _toggle_notebook() -> void:
 	notebook_open = not notebook_open
 	if notebook_button:
@@ -803,14 +900,16 @@ func _remove_selected_scape() -> void:
 	selected_scape_object_id = ""
 
 func _write_command(command: Dictionary) -> void:
+	var action := str(command.get("action", "command"))
+	_add_action_effect(action)
 	command["timestamp"] = Time.get_datetime_string_from_system()
 	DirAccess.make_dir_recursive_absolute(root_dir.path_join("runtime"))
 	DirAccess.make_dir_recursive_absolute(commands_dir)
-	var path := commands_dir.path_join("%s-%d.json" % [str(command.get("action", "command")), Time.get_ticks_usec()])
+	var path := commands_dir.path_join("%s-%d.json" % [action, Time.get_ticks_usec()])
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(command, "\t"))
-		last_command_note = "%s sent" % str(command.get("action", "command")).replace("_", " ")
+		last_command_note = "%s sent" % action.replace("_", " ")
 		last_command_until = Time.get_ticks_msec() / 1000.0 + 1.8
 
 func _sync_animals() -> void:
@@ -941,14 +1040,51 @@ func _draw_aquarium() -> void:
 	for i in range(3):
 		var y := inner.position.y + 24.0 + i * 18.0 + sin(Time.get_ticks_msec() / 900.0 + i) * 3.0
 		_draw_wave(Vector2(inner.position.x + 18.0, y), inner.size.x - 36.0, Color(0.74, 0.94, 0.98, 0.16), 2.0 + i)
-	var sand := Rect2(inner.position.x, inner.end.y - SAND_HEIGHT, inner.size.x, SAND_HEIGHT)
-	draw_rect(sand, Color("#786d54"), true)
-	for i in range(70):
-		var x := inner.position.x + fposmod(i * 47.0, inner.size.x)
-		var y := sand.position.y + 12.0 + fposmod(i * 19.0, sand.size.y - 16.0)
-		draw_circle(Vector2(x, y), 1.4 + float(i % 4) * 0.45, Color(0.90, 0.79, 0.56, 0.34))
+	_draw_substrate(inner)
 	draw_rect(tank, Color("#416973"), false, 3.0)
 	draw_rect(inner, Color(1, 1, 1, 0.045), false, 1.0)
+
+func _substrate_height() -> float:
+	var aquarium = state.get("aquarium", {})
+	var depth: float = clamp(float(aquarium.get("substrate_depth_cm", 5.0)), 0.0, 9.0)
+	return lerp(6.0, 112.0, depth / 9.0)
+
+func _draw_substrate(inner: Rect2) -> void:
+	var aquarium = state.get("aquarium", {})
+	var kind := str(aquarium.get("substrate", "fine_sand"))
+	var height := 0.0 if kind == "bare_bottom" else _substrate_height()
+	if height <= 1.0:
+		draw_rect(Rect2(inner.position.x, inner.end.y - 8.0, inner.size.x, 8.0), Color(0.12, 0.20, 0.21, 0.5), true)
+		draw_line(Vector2(inner.position.x, inner.end.y - 8.0), Vector2(inner.end.x, inner.end.y - 8.0), Color(0.65, 0.9, 0.95, 0.18), 1.0, true)
+		return
+	var bed := Rect2(inner.position.x, inner.end.y - height, inner.size.x, height)
+	var base := Color("#786d54")
+	var speck := Color(0.90, 0.79, 0.56, 0.34)
+	var particle_count := 90
+	var max_radius := 1.8
+	match kind:
+		"rounded_gravel":
+			base = Color("#5b5a50")
+			speck = Color(0.78, 0.74, 0.62, 0.52)
+			particle_count = 130
+			max_radius = 3.4
+		"planted_soil":
+			base = Color("#3d3025")
+			speck = Color(0.26, 0.19, 0.13, 0.58)
+			particle_count = 120
+			max_radius = 2.6
+		"reef_sand":
+			base = Color("#b5a982")
+			speck = Color(0.98, 0.91, 0.72, 0.42)
+			particle_count = 100
+			max_radius = 1.9
+	draw_rect(bed, base, true)
+	for i in range(particle_count):
+		var x := inner.position.x + fposmod(i * 47.0 + sin(i) * 19.0, inner.size.x)
+		var y := bed.position.y + 8.0 + fposmod(i * 19.0, max(4.0, bed.size.y - 12.0))
+		var radius := 0.9 + float(i % 5) * max_radius * 0.2
+		draw_circle(Vector2(x, y), radius, speck)
+	draw_line(Vector2(bed.position.x, bed.position.y), Vector2(bed.end.x, bed.position.y), Color(0.95, 0.90, 0.72, 0.18), 1.0, true)
 
 func _aquascape_style() -> String:
 	return str(state.get("aquarium", {}).get("aquascape_style", "greenscape"))
@@ -1225,6 +1361,97 @@ func _draw_bubbles() -> void:
 		var y := inner.end.y - SAND_HEIGHT - fposmod(Time.get_ticks_msec() / 1000.0 * speed + i * 39.0, inner.size.y - 80.0)
 		var radius := 2.2 + float(i % 4)
 		draw_circle(Vector2(x, y), radius, Color(0.83, 0.98, 1.0, 0.12), false, 1.3, true)
+
+func _draw_action_effects() -> void:
+	for effect in action_effects:
+		var kind := str(effect.get("kind", ""))
+		var progress: float = clamp(float(effect.get("age", 0.0)) / max(0.1, float(effect.get("duration", 1.0))), 0.0, 1.0)
+		match kind:
+			"feed":
+				_draw_feeding_effect(progress, int(effect.get("seed", 0)))
+			"water_change":
+				_draw_water_change_effect(progress)
+			"weekly_maintenance":
+				_draw_water_change_effect(progress)
+				_draw_vacuum_effect(progress)
+			"service_filter":
+				_draw_filter_service_effect(progress)
+			"test_water":
+				_draw_test_water_effect(progress)
+			"dose_ammonia":
+				_draw_dosing_effect(progress)
+			"set_substrate":
+				_draw_substrate_settle_effect(progress)
+
+func _draw_feeding_effect(progress: float, seed: int) -> void:
+	var inner := _tank_inner()
+	for i in range(34):
+		var x := inner.position.x + inner.size.x * (0.22 + fposmod(float(i * 37 + seed) * 0.013, 0.52))
+		var fall := fposmod(progress * 1.25 + float(i % 9) * 0.07, 1.0)
+		var y := inner.position.y + 18.0 + fall * (inner.size.y * 0.46)
+		var alpha: float = 1.0 - max(0.0, progress - 0.72) / 0.28
+		draw_circle(Vector2(x, y), 2.0 + float(i % 3) * 0.7, Color(0.93, 0.62, 0.24, 0.70 * alpha))
+	draw_string(get_theme_default_font(), inner.position + Vector2(inner.size.x * 0.42, 28), "food drifting", HORIZONTAL_ALIGNMENT_CENTER, 180, 12, Color(0.98, 0.85, 0.58, 0.55))
+
+func _draw_water_change_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var drain := sin(progress * PI)
+	var line_y := inner.position.y + 20.0 + drain * 46.0
+	draw_line(Vector2(inner.position.x + 20, line_y), Vector2(inner.end.x - 20, line_y), Color(0.88, 0.98, 1.0, 0.55), 3.0, true)
+	var hose_start := Vector2(inner.end.x - 88, inner.position.y + 18)
+	var hose_end := Vector2(inner.end.x - 38, inner.end.y - _substrate_height() - 18)
+	draw_line(hose_start, hose_end, Color(0.72, 0.82, 0.86, 0.82), 6.0, true)
+	for i in range(18):
+		var t := fposmod(progress * 2.5 + float(i) / 18.0, 1.0)
+		var pos := hose_start.lerp(hose_end, t)
+		draw_circle(pos, 2.2, Color(0.78, 0.95, 1.0, 0.56))
+
+func _draw_vacuum_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var bed_y := inner.end.y - _substrate_height()
+	var x: float = lerp(inner.position.x + 90.0, inner.end.x - 130.0, progress)
+	draw_line(Vector2(x, inner.position.y + inner.size.y * 0.44), Vector2(x + 36, bed_y + 10), Color(0.82, 0.87, 0.82, 0.76), 5.0, true)
+	draw_rect(Rect2(Vector2(x + 22, bed_y - 12), Vector2(36, 34)), Color(0.90, 0.96, 0.90, 0.25), false, 2.0, true)
+	for i in range(14):
+		var pos := Vector2(x + 18 + fposmod(i * 11.0, 54.0), bed_y - 8 - fposmod(progress * 90.0 + i * 17.0, 46.0))
+		draw_circle(pos, 1.7, Color(0.42, 0.31, 0.18, 0.35 * (1.0 - progress * 0.4)))
+
+func _draw_filter_service_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var pos := Vector2(inner.end.x - 164, inner.end.y - _substrate_height() - 110)
+	draw_rect(Rect2(pos, Vector2(74, 58)), Color(0.07, 0.11, 0.12, 0.82), true)
+	draw_rect(Rect2(pos, Vector2(74, 58)), Color(0.60, 0.82, 0.82, 0.36), false, 1.4, true)
+	for i in range(6):
+		var y := pos.y + 12 + i * 8
+		var pulse := sin(progress * TAU * 3.0 + i) * 0.5 + 0.5
+		draw_line(Vector2(pos.x + 10, y), Vector2(pos.x + 58 + pulse * 8, y), Color(0.62, 0.92, 1.0, 0.55), 2.0, true)
+	draw_string(get_theme_default_font(), pos + Vector2(-6, -8), "filter rinse", HORIZONTAL_ALIGNMENT_CENTER, 88, 12, Color(0.82, 0.96, 0.96, 0.62))
+
+func _draw_test_water_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var pos := Vector2(inner.position.x + inner.size.x * 0.56, inner.position.y + 46)
+	draw_line(pos + Vector2(0, -28), pos + Vector2(0, 42), Color(0.92, 0.96, 0.92, 0.65), 3.0, true)
+	draw_rect(Rect2(pos + Vector2(-12, 18), Vector2(24, 42)), Color(0.36, 0.78, 0.74, 0.18 + 0.25 * sin(progress * PI)), true)
+	draw_rect(Rect2(pos + Vector2(-12, 18), Vector2(24, 42)), Color(0.90, 0.96, 0.92, 0.58), false, 1.2, true)
+	draw_circle(pos + Vector2(0, lerp(-12.0, 18.0, progress)), 4.0, Color(0.80, 0.94, 1.0, 0.68))
+
+func _draw_dosing_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var dropper := Vector2(inner.position.x + inner.size.x * 0.50, inner.position.y + 28)
+	draw_line(dropper + Vector2(-22, -8), dropper + Vector2(22, -8), Color(0.86, 0.90, 0.88, 0.75), 5.0, true)
+	for i in range(7):
+		var y := dropper.y + fposmod(progress * 160.0 + i * 23.0, inner.size.y * 0.45)
+		draw_circle(Vector2(dropper.x + sin(i) * 16.0, y), 3.0, Color(0.75, 0.64, 0.24, 0.64))
+	draw_string(get_theme_default_font(), dropper + Vector2(-60, 10), "cycle dose", HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(0.95, 0.85, 0.42, 0.58))
+
+func _draw_substrate_settle_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var bed_y := inner.end.y - _substrate_height()
+	for i in range(44):
+		var x := inner.position.x + fposmod(i * 31.0, inner.size.x)
+		var y := bed_y - fposmod((1.0 - progress) * 82.0 + i * 13.0, 78.0)
+		draw_circle(Vector2(x, y), 1.5 + float(i % 3), Color(0.72, 0.58, 0.36, 0.28 * (1.0 - progress)))
+	draw_line(Vector2(inner.position.x + 16, bed_y), Vector2(inner.end.x - 16, bed_y), Color(0.95, 0.86, 0.58, 0.28 * (1.0 - progress)), 3.0, true)
 
 func _draw_front_glass() -> void:
 	var inner := _tank_inner()

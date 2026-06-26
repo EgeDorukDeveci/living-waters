@@ -335,6 +335,11 @@ class Daemon:
             sim.dose_ammonia(float(command.get("amount", 1.0)))
         elif action == "test_water":
             sim.test_water()
+        elif action == "set_substrate":
+            sim.set_substrate(
+                str(command.get("substrate", "fine_sand")),
+                float(command.get("depth_cm", 5.0)),
+            )
         elif action == "toggle_pause":
             state["clock"]["paused"] = not state["clock"]["paused"]
         elif action == "set_speed":
