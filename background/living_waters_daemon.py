@@ -90,11 +90,16 @@ def load_aquarium_index(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
     if INDEX_PATH.exists():
         try:
             index = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
-            if index.get("aquariums"):
+            if isinstance(index, dict) and isinstance(index.get("aquariums"), list) and index["aquariums"]:
                 return index
-        except (OSError, json.JSONDecodeError):
-            backup = INDEX_PATH.with_name(f"corrupt-index-{int(time.time())}.json")
+            backup = INDEX_PATH.with_name(f"invalid-index-{int(time.time())}.json")
             INDEX_PATH.replace(backup)
+        except (OSError, json.JSONDecodeError):
+            try:
+                backup = INDEX_PATH.with_name(f"corrupt-index-{int(time.time())}.json")
+                INDEX_PATH.replace(backup)
+            except OSError:
+                pass
 
     AQUARIUMS_DIR.mkdir(parents=True, exist_ok=True)
     if STATE_PATH.exists():
@@ -276,6 +281,12 @@ class Daemon:
             return
         try:
             command = json.loads(COMMAND_PATH.read_text(encoding="utf-8"))
+            if not isinstance(command, dict):
+                log("ignored-invalid-command non-object")
+                return
+        except (OSError, json.JSONDecodeError) as exc:
+            log(f"ignored-invalid-command {exc}")
+            return
         finally:
             COMMAND_PATH.unlink(missing_ok=True)
         action = command.get("action")

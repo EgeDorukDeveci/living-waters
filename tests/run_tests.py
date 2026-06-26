@@ -138,6 +138,34 @@ def test_command_persistence_shape() -> None:
     assert restored["animals"] == []
 
 
+def test_invalid_aquarium_index_is_recovered() -> None:
+    import living_waters_daemon as daemon
+
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = Path(temp)
+        old_runtime = daemon.RUNTIME
+        old_state_path = daemon.STATE_PATH
+        old_aquariums_dir = daemon.AQUARIUMS_DIR
+        old_index_path = daemon.INDEX_PATH
+        try:
+            daemon.RUNTIME = runtime
+            daemon.STATE_PATH = runtime / "aquarium_state.json"
+            daemon.AQUARIUMS_DIR = runtime / "aquariums"
+            daemon.INDEX_PATH = daemon.AQUARIUMS_DIR / "index.json"
+            daemon.AQUARIUMS_DIR.mkdir(parents=True)
+            daemon.INDEX_PATH.write_text("null", encoding="utf-8")
+            index = daemon.load_aquarium_index(species)
+            assert index["aquariums"]
+            assert daemon.INDEX_PATH.exists()
+            assert list(daemon.AQUARIUMS_DIR.glob("invalid-index-*.json"))
+        finally:
+            daemon.RUNTIME = old_runtime
+            daemon.STATE_PATH = old_state_path
+            daemon.AQUARIUMS_DIR = old_aquariums_dir
+            daemon.INDEX_PATH = old_index_path
+
+
 def test_scape_items_change_biology() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -342,6 +370,7 @@ def main() -> int:
         test_proper_neon_school_avoids_social_crisis,
         test_oxygen_and_ammonia_explanations,
         test_command_persistence_shape,
+        test_invalid_aquarium_index_is_recovered,
         test_scape_items_change_biology,
         test_acclimation_failure_adds_death_load,
         test_filter_clogging_and_service_changes_flow,
