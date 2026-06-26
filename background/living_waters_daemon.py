@@ -48,6 +48,32 @@ def log(message: str) -> None:
 def load_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
     if not STATE_PATH.exists():
         return default_state(species)
+    try:
+        payload = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            return payload
+        backup = STATE_PATH.with_name(f"invalid-{int(time.time())}.json")
+        STATE_PATH.replace(backup)
+        return default_state(species)
+    except (OSError, json.JSONDecodeError):
+        backup = STATE_PATH.with_name(f"corrupt-{int(time.time())}.json")
+        STATE_PATH.replace(backup)
+        return default_state(species)
+
+
+def load_aquarium_state(species: dict[str, dict[str, Any]], aquarium_id: str, name: str, system: str, gross_litres: float) -> dict[str, Any]:
+    path = aquarium_state_path(aquarium_id)
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict) and payload:
+                return payload
+            backup = path.with_name(f"invalid-{path.stem}-{int(time.time())}.json")
+            path.replace(backup)
+        except (OSError, json.JSONDecodeError):
+            backup = path.with_name(f"corrupt-{path.stem}-{int(time.time())}.json")
+            path.replace(backup)
+    return clear_state(species, name, system, gross_litres)
 
 
 def aquarium_state_path(aquarium_id: str) -> Path:
@@ -100,12 +126,6 @@ def load_aquarium_index(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
     }
     atomic_write(INDEX_PATH, index)
     return index
-    try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        backup = STATE_PATH.with_name(f"corrupt-{int(time.time())}.json")
-        STATE_PATH.replace(backup)
-        return default_state(species)
 
 
 def app_icon() -> Image.Image:
@@ -147,14 +167,13 @@ class Daemon:
     def _load_aquariums(self) -> None:
         for item in self.index.get("aquariums", []):
             aquarium_id = str(item.get("id", "main"))
-            path = aquarium_state_path(aquarium_id)
-            if path.exists():
-                try:
-                    state = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    state = clear_state(self.species, str(item.get("name", "Recovered Aquarium")), str(item.get("system", "freshwater")), float(item.get("gross_litres", 60.0)))
-            else:
-                state = clear_state(self.species, str(item.get("name", "Clear Aquarium")), str(item.get("system", "freshwater")), float(item.get("gross_litres", 60.0)))
+            state = load_aquarium_state(
+                self.species,
+                aquarium_id,
+                str(item.get("name", "Recovered Aquarium")),
+                str(item.get("system", "freshwater")),
+                float(item.get("gross_litres", 60.0)),
+            )
             self.states[aquarium_id] = state
             self.sims[aquarium_id] = AquariumSimulation(self.species, state)
         if self.active_id not in self.states:
