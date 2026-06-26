@@ -24,7 +24,10 @@ var animal_visuals: Dictionary = {}
 var fish_textures: Dictionary = {}
 var scape_textures: Dictionary = {}
 var time_accum := 0.0
+var opening_screen := true
+var opening_cards: Array[Dictionary] = []
 
+var side_panel: PanelContainer
 var panel: VBoxContainer
 var water_labels: Dictionary = {}
 var event_list: ItemList
@@ -87,7 +90,38 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		_layout_ui()
 
+func _set_opening_mode(enabled: bool) -> void:
+	opening_screen = enabled
+	if title_label:
+		title_label.visible = not enabled
+	if status_label:
+		status_label.visible = not enabled
+	if side_panel:
+		side_panel.visible = not enabled
+	if notebook_panel:
+		notebook_panel.visible = not enabled and (notebook_amount > 0.02 or notebook_open)
+	queue_redraw()
+
+func _handle_opening_click(mouse: Vector2) -> void:
+	for card in opening_cards:
+		var rect: Rect2 = card.get("rect", Rect2())
+		if rect.has_point(mouse):
+			var aquarium_id := str(card.get("id", ""))
+			if aquarium_id != "":
+				_write_command({"action": "select_aquarium", "aquarium_id": aquarium_id})
+			_set_opening_mode(false)
+			return
+	var enter_rect := Rect2(Vector2(size.x - 250.0, size.y - 82.0), Vector2(190.0, 42.0))
+	if enter_rect.has_point(mouse):
+		_set_opening_mode(false)
+
 func _gui_input(event: InputEvent) -> void:
+	if opening_screen:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			_handle_opening_click(event.position)
+		elif event is InputEventKey and event.pressed and event.keycode in [KEY_ENTER, KEY_SPACE, KEY_ESCAPE]:
+			_set_opening_mode(false)
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		var mouse: Vector2 = event.position
 		var inner := _tank_inner()
@@ -185,6 +219,9 @@ func _update_action_effects(delta: float) -> void:
 	action_effects = alive
 
 func _draw() -> void:
+	if opening_screen:
+		_draw_opening_screen()
+		return
 	_draw_room()
 	_draw_aquarium()
 	_draw_hardscape()
@@ -194,6 +231,140 @@ func _draw() -> void:
 	_draw_animals()
 	_draw_action_effects()
 	_draw_front_glass()
+
+func _draw_opening_screen() -> void:
+	opening_cards.clear()
+	draw_rect(Rect2(Vector2.ZERO, size), Color("#081014"), true)
+	var font := get_theme_default_font()
+	var normal := get_theme_default_font_size()
+	var rack := Rect2(Vector2(max(70.0, size.x * 0.08), 116.0), Vector2(size.x * 0.72, size.y - 196.0))
+	rack.size.x = min(rack.size.x, 940.0)
+	rack.position.x = (size.x - rack.size.x) * 0.5
+	var wall_top := Color("#11191b")
+	var wall_bottom := Color("#070b0d")
+	for i in range(14):
+		var ratio := float(i) / 13.0
+		draw_rect(Rect2(0, size.y * ratio / 1.05, size.x, size.y / 13.0 + 2.0), wall_top.lerp(wall_bottom, ratio), true)
+	_draw_opening_room_details(rack)
+	draw_string(font, Vector2(rack.position.x, 58), "Living Waters", HORIZONTAL_ALIGNMENT_LEFT, -1, 34, Color("#f3efe6"))
+	draw_string(font, Vector2(rack.position.x, 86), "Your aquarium room", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#a9c8c2"))
+	draw_rect(Rect2(rack.position.x - 18, rack.position.y - 12, rack.size.x + 36, rack.size.y + 28), Color(0.02, 0.025, 0.025, 0.54), true)
+	var post_color := Color("#161b1d")
+	var wood := Color("#3b332d")
+	for x in [rack.position.x - 12.0, rack.end.x + 6.0]:
+		draw_rect(Rect2(x, rack.position.y - 28.0, 12.0, rack.size.y + 70.0), post_color, true)
+	for row in range(3):
+		var shelf_y := rack.position.y + row * (rack.size.y / 3.0)
+		draw_rect(Rect2(rack.position.x - 28, shelf_y + rack.size.y / 3.0 - 10.0, rack.size.x + 56, 16), wood, true)
+		draw_rect(Rect2(rack.position.x - 28, shelf_y + rack.size.y / 3.0 - 12.0, rack.size.x + 56, 2), Color("#8b7764"), true)
+		draw_rect(Rect2(rack.position.x + 22, shelf_y + 10, rack.size.x - 44, 5), Color(0.86, 0.96, 1.0, 0.50), true)
+	var items: Array = aquarium_index.get("aquariums", [])
+	var cols := 3
+	var rows := 2
+	var gap := 22.0
+	var card_w := (rack.size.x - gap * float(cols - 1)) / float(cols)
+	var card_h := (rack.size.y - 34.0 - gap * float(rows - 1)) / float(rows)
+	for index in range(cols * rows):
+		var col := index % cols
+		var row := index / cols
+		var rect := Rect2(rack.position + Vector2(col * (card_w + gap), 26.0 + row * (card_h + gap)), Vector2(card_w, card_h))
+		var item := {}
+		if index < items.size() and typeof(items[index]) == TYPE_DICTIONARY:
+			item = items[index]
+		_draw_opening_tank_card(rect, item, index)
+	var button := Rect2(Vector2(size.x - 250.0, size.y - 82.0), Vector2(190.0, 42.0))
+	draw_rect(button, Color("#d9c172"), true)
+	draw_rect(button, Color("#f9edba"), false, 1.5)
+	draw_string(font, button.position + Vector2(28, 27), "Open selected tank", HORIZONTAL_ALIGNMENT_LEFT, -1, normal, Color("#121716"))
+	draw_string(font, Vector2(58, size.y - 48), "Click a tank to enter. Empty spaces are starter tanks you can create from the care panel.", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("#8ba49f"))
+
+func _draw_opening_room_details(rack: Rect2) -> void:
+	draw_rect(Rect2(rack.position.x - 95, rack.position.y + 72, 54, 108), Color("#1b1f20"), true)
+	draw_rect(Rect2(rack.position.x - 87, rack.position.y + 58, 38, 24), Color("#274d39"), true)
+	for i in range(8):
+		var base := Vector2(rack.position.x - 68 + sin(i) * 8.0, rack.position.y + 62 + i * 5.0)
+		draw_line(base, base + Vector2(-16 + i * 4, -42 - i * 3), Color("#5d8f63"), 2.0, true)
+	draw_rect(Rect2(rack.end.x + 42, rack.position.y + 238, 42, 98), Color("#202629"), true)
+	draw_circle(Vector2(rack.end.x + 63, rack.position.y + 226), 28, Color("#315848"))
+	for i in range(9):
+		var root := Vector2(rack.end.x + 62, rack.position.y + 226)
+		draw_line(root, root + Vector2(cos(i * 0.7) * 34, -20 - i * 5), Color("#6ea86b"), 2.2, true)
+	draw_rect(Rect2(rack.position.x + 46, rack.end.y + 30, 70, 34), Color("#22282a"), true)
+	draw_rect(Rect2(rack.position.x + 132, rack.end.y + 18, 34, 48), Color("#2f525b"), true)
+	draw_rect(Rect2(rack.position.x + 176, rack.end.y + 35, 94, 8), Color("#55676a"), true)
+
+func _draw_opening_tank_card(rect: Rect2, item: Dictionary, index: int) -> void:
+	var font := get_theme_default_font()
+	var normal := get_theme_default_font_size()
+	var occupied := not item.is_empty()
+	var system := str(item.get("system", "freshwater"))
+	var name := str(item.get("name", "Clear starter tank"))
+	var litres := float(item.get("gross_litres", 0.0))
+	var animals := int(item.get("animals", 0))
+	var glass := Rect2(rect.position + Vector2(8, 14), rect.size - Vector2(16, 42))
+	var water_top := Color("#276c77") if system == "freshwater" else Color("#225f84")
+	var water_bottom := Color("#123134") if system == "freshwater" else Color("#102b43")
+	draw_rect(Rect2(rect.position, rect.size), Color("#111719"), true)
+	draw_rect(Rect2(rect.position + Vector2(0, rect.size.y - 14), Vector2(rect.size.x, 14)), Color("#2e2925"), true)
+	for i in range(8):
+		var ratio := float(i) / 7.0
+		draw_rect(Rect2(glass.position.x, glass.position.y + glass.size.y * ratio, glass.size.x, glass.size.y / 7.0 + 1.0), water_top.lerp(water_bottom, ratio), true)
+	if not occupied:
+		draw_rect(glass, Color(0.66, 0.87, 0.92, 0.08), true)
+		draw_rect(Rect2(glass.position.x, glass.end.y - 18, glass.size.x, 18), Color("#d8c7a2"), true)
+		draw_string(font, glass.position + Vector2(18, glass.size.y * 0.52), "empty clear tank", HORIZONTAL_ALIGNMENT_LEFT, -1, normal, Color(0.9, 0.95, 0.92, 0.55))
+	else:
+		_draw_opening_substrate(glass, system, index)
+		_draw_opening_scape(glass, system, index, animals)
+		_draw_opening_filter(glass, index)
+	draw_rect(glass, Color(0.76, 0.94, 0.98, 0.22), false, 2.0)
+	draw_line(glass.position + Vector2(10, 10), glass.position + Vector2(glass.size.x * 0.44, 10), Color(1, 1, 1, 0.36), 2.0, true)
+	var label_rect := Rect2(rect.position + Vector2(16, rect.size.y - 32), Vector2(rect.size.x - 32, 22))
+	draw_rect(label_rect, Color("#ead7bd"), true)
+	draw_rect(label_rect, Color("#8c7661"), false, 1.0)
+	var title := name
+	if title.length() > 23:
+		title = title.substr(0, 21) + ".."
+	var subtitle := "%.0fL %s" % [litres, system] if occupied else "available"
+	draw_string(font, label_rect.position + Vector2(8, 15), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#1e2422"))
+	if occupied:
+		draw_string(font, glass.position + Vector2(10, 18), subtitle, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.88, 0.97, 0.98, 0.68))
+		opening_cards.append({"rect": rect, "id": str(item.get("id", ""))})
+
+func _draw_opening_substrate(glass: Rect2, system: String, index: int) -> void:
+	var base := Color("#d9c898") if system == "freshwater" else Color("#eee2c8")
+	draw_rect(Rect2(glass.position.x, glass.end.y - 28, glass.size.x, 28), base.darkened(0.08), true)
+	for i in range(34):
+		var x := glass.position.x + fposmod(i * 31.0 + index * 17.0, glass.size.x)
+		var y := glass.end.y - 25.0 + fposmod(i * 13.0, 22.0)
+		draw_circle(Vector2(x, y), 1.5 + float(i % 3) * 0.7, base.darkened(float(i % 4) * 0.04))
+
+func _draw_opening_scape(glass: Rect2, system: String, index: int, animals: int) -> void:
+	var plant_color := Color("#6cbf70") if system == "freshwater" else Color("#87b66e")
+	for i in range(8 + index % 4):
+		var x := glass.position.x + 26.0 + fposmod(i * 47.0 + index * 19.0, glass.size.x - 52.0)
+		var height := 30.0 + float((i * 17 + index) % 48)
+		draw_line(Vector2(x, glass.end.y - 28), Vector2(x + sin(i) * 8.0, glass.end.y - 28 - height), plant_color.darkened(float(i % 3) * 0.08), 2.0, true)
+		draw_circle(Vector2(x + sin(i) * 8.0, glass.end.y - 28 - height), 5.0, plant_color.lightened(0.08))
+	for r in range(3):
+		var center := Vector2(glass.position.x + glass.size.x * (0.25 + r * 0.22), glass.end.y - 32.0 - r * 4.0)
+		draw_circle(center, 12.0 + r * 3.0, Color("#5f6257"))
+	if system == "saltwater":
+		for c in range(5):
+			var pos := Vector2(glass.position.x + 36 + c * 31, glass.end.y - 44 - float(c % 2) * 10)
+			draw_circle(pos, 7.0, Color("#b77991"))
+			draw_line(pos, pos + Vector2(0, -18), Color("#d7a27f"), 2.0, true)
+	for fish in range(min(animals, 7)):
+		var pos := Vector2(glass.position.x + 38 + fposmod(fish * 41 + index * 11, glass.size.x - 76), glass.position.y + 44 + fposmod(fish * 23, glass.size.y - 86))
+		var color := Color("#df7d55") if system == "saltwater" else Color("#63c3d9")
+		draw_ellipse(pos, 8.0, 3.0, color)
+		draw_polygon(PackedVector2Array([pos + Vector2(-8, 0), pos + Vector2(-15, -5), pos + Vector2(-15, 5)]), [color.darkened(0.15), color.darkened(0.15), color.darkened(0.15)])
+
+func _draw_opening_filter(glass: Rect2, index: int) -> void:
+	var x := glass.end.x - 26.0
+	draw_rect(Rect2(x, glass.position.y + 24.0, 12.0, 62.0), Color(0.06, 0.08, 0.09, 0.78), true)
+	for i in range(4):
+		draw_circle(Vector2(x - 7.0 + sin(Time.get_ticks_msec() / 700.0 + i + index) * 2.0, glass.position.y + 76.0 - i * 13.0), 2.0, Color(0.84, 0.96, 1.0, 0.22))
 
 func _project_root() -> String:
 	if OS.has_feature("editor"):
@@ -285,7 +456,7 @@ func _build_ui() -> void:
 	status_label.add_theme_color_override("font_color", Color("#9bc7c9"))
 	add_child(status_label)
 
-	var side_panel := PanelContainer.new()
+	side_panel = PanelContainer.new()
 	side_panel.name = "SidePanel"
 	var side_style := StyleBoxFlat.new()
 	side_style.bg_color = Color(0.055, 0.071, 0.083, 0.92)
@@ -728,6 +899,9 @@ func _toggle_notebook() -> void:
 
 func _update_notebook_animation(delta: float) -> void:
 	if not notebook_panel:
+		return
+	if opening_screen:
+		notebook_panel.visible = false
 		return
 	var target := 1.0 if notebook_open else 0.0
 	notebook_amount = move_toward(notebook_amount, target, delta * 5.5)
