@@ -15,6 +15,7 @@ var root_dir: String
 var state_path: String
 var index_path: String
 var command_path: String
+var commands_dir: String
 var species_path: String
 var state: Dictionary = {}
 var species: Dictionary = {}
@@ -36,6 +37,8 @@ var species_select: OptionButton
 var status_label: Label
 var summary_label: Label
 var research_label: Label
+var notebook_panel: PanelContainer
+var notebook_button: Button
 var scape_label: Label
 var filter_label: Label
 var cycle_label: Label
@@ -48,12 +51,18 @@ var animal_ids: Array = []
 var selected_animal_id := ""
 var selected_scape_tool: Dictionary = {}
 var selected_scape_object_id := ""
+var selected_animal_tool: Dictionary = {}
+var last_command_note := ""
+var last_command_until := 0.0
+var notebook_open := false
+var notebook_amount := 0.0
 
 func _ready() -> void:
 	root_dir = _project_root()
 	state_path = root_dir.path_join("runtime").path_join("aquarium_state.json")
 	index_path = root_dir.path_join("runtime").path_join("aquariums").path_join("index.json")
 	command_path = root_dir.path_join("runtime").path_join("command.json")
+	commands_dir = root_dir.path_join("runtime").path_join("commands")
 	species_path = root_dir.path_join("data").path_join("species").path_join("freshwater_v1.json")
 	species = _load_species(species_path)
 	_load_sprite_assets()
@@ -64,6 +73,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	time_accum += delta
 	_animate_animals(delta)
+	_update_notebook_animation(delta)
 	if time_accum > 1.0:
 		time_accum = 0.0
 		_load_state()
@@ -83,6 +93,18 @@ func _gui_input(event: InputEvent) -> void:
 			clamp((mouse.x - inner.position.x) / inner.size.x, 0.0, 1.0),
 			clamp((mouse.y - inner.position.y) / inner.size.y, 0.0, 1.0)
 		)
+		if not selected_animal_tool.is_empty():
+			if not _valid_release_point(normalized):
+				if tool_label:
+					tool_label.text = "Release inside open water, away from the rim and substrate."
+				return
+			var species_id := str(selected_animal_tool.get("species_id", ""))
+			var minutes := int(selected_animal_tool.get("acclimation_minutes", 30))
+			_write_command({"action": "add_animal", "species_id": species_id, "acclimation_minutes": minutes, "x": normalized.x, "y": normalized.y})
+			if tool_label:
+				tool_label.text = "Released into the aquarium. Watch behavior and water tests over time."
+			selected_animal_tool = {}
+			return
 		var hit := _hit_scape_object(mouse)
 		if selected_scape_tool.is_empty() and hit != "":
 			selected_scape_object_id = hit
@@ -101,30 +123,33 @@ func _gui_input(event: InputEvent) -> void:
 			return
 		_write_command({"action": "place_scape_item", "category": category, "type": item_type, "x": normalized.x, "y": normalized.y, "scale": 1.0})
 
-func _client_position_valid(category: String, item_type: String, normalized: Vector2) -> bool:
+func _client_position_valid(category: String, item_type: String, normalized: Vector2, quiet: bool = false) -> bool:
 	if category == "":
 		return true
 	if category == "plants" and item_type == "red_root_floaters":
 		if normalized.y > 0.22:
-			if tool_label:
+			if tool_label and not quiet:
 				tool_label.text = "Floaters need the surface, not the substrate."
 			return false
 		return true
 	if category == "plants" and item_type == "hornwort":
 		if normalized.y > 0.25 and normalized.y < 0.70:
-			if tool_label:
+			if tool_label and not quiet:
 				tool_label.text = "Hornwort must float near the surface or be planted into substrate."
 			return false
 		return true
 	if category == "plants" and normalized.y < 0.70:
-		if tool_label:
+		if tool_label and not quiet:
 			tool_label.text = "Rooted plants cannot be placed in open water."
 		return false
 	if category in ["rocks", "wood", "corals"] and normalized.y < 0.52:
-		if tool_label:
+		if tool_label and not quiet:
 			tool_label.text = "That item needs a surface, not open water."
 		return false
 	return true
+
+func _valid_release_point(normalized: Vector2) -> bool:
+	return normalized.y > 0.10 and normalized.y < 0.86
 
 func _draw() -> void:
 	_draw_room()
@@ -412,7 +437,7 @@ func _build_ui() -> void:
 	system_row.add_child(reef)
 
 	var animal_title_controls := Label.new()
-	animal_title_controls.text = "Add Animals"
+	animal_title_controls.text = "Acclimation / Net"
 	animal_title_controls.add_theme_font_size_override("font_size", 18)
 	animal_title_controls.add_theme_color_override("font_color", Color("#f5efe3"))
 	panel.add_child(animal_title_controls)
@@ -423,23 +448,47 @@ func _build_ui() -> void:
 	panel.add_child(species_select)
 	_refresh_species_options()
 
+	notebook_button = Button.new()
+	notebook_button.text = "Open field notebook"
+	notebook_button.custom_minimum_size = Vector2(300, 34)
+	notebook_button.pressed.connect(func(): _toggle_notebook())
+	panel.add_child(notebook_button)
+
+	notebook_panel = PanelContainer.new()
+	notebook_panel.custom_minimum_size = Vector2(300, 0)
+	notebook_panel.clip_contents = true
+	notebook_panel.visible = false
+	notebook_panel.modulate.a = 0.0
+	var paper := StyleBoxFlat.new()
+	paper.bg_color = Color("#d8c697")
+	paper.border_color = Color("#6f5737")
+	paper.set_border_width_all(2)
+	paper.set_corner_radius_all(8)
+	notebook_panel.add_theme_stylebox_override("panel", paper)
+	panel.add_child(notebook_panel)
+
 	research_label = Label.new()
-	research_label.text = "Select an animal to see care research."
+	research_label.text = "Notebook closed."
 	research_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	research_label.add_theme_font_size_override("font_size", 12)
-	research_label.add_theme_color_override("font_color", Color("#c7dcd8"))
-	panel.add_child(research_label)
+	research_label.add_theme_font_size_override("font_size", 13)
+	research_label.add_theme_color_override("font_color", Color("#312719"))
+	research_label.add_theme_constant_override("line_spacing", 3)
+	research_label.offset_left = 12
+	research_label.offset_top = 10
+	research_label.offset_right = -12
+	research_label.offset_bottom = -10
+	notebook_panel.add_child(research_label)
 
 	var add_row := HBoxContainer.new()
 	add_row.add_theme_constant_override("separation", 8)
 	panel.add_child(add_row)
 	var add_good := Button.new()
-	add_good.text = "Acclimate"
+	add_good.text = "Float bag"
 	add_good.custom_minimum_size = Vector2(142, 32)
 	add_good.pressed.connect(func(): _add_selected_animal(true))
 	add_row.add_child(add_good)
 	var add_bad := Button.new()
-	add_bad.text = "Skip acclimation"
+	add_bad.text = "Emergency net"
 	add_bad.custom_minimum_size = Vector2(142, 32)
 	add_bad.pressed.connect(func(): _add_selected_animal(false))
 	add_row.add_child(add_bad)
@@ -554,6 +603,21 @@ func _layout_ui() -> void:
 		if scroll:
 			scroll.size = side_panel.size
 
+func _toggle_notebook() -> void:
+	notebook_open = not notebook_open
+	if notebook_button:
+		notebook_button.text = "Close field notebook" if notebook_open else "Open field notebook"
+
+func _update_notebook_animation(delta: float) -> void:
+	if not notebook_panel:
+		return
+	var target := 1.0 if notebook_open else 0.0
+	notebook_amount = move_toward(notebook_amount, target, delta * 5.5)
+	var eased := 1.0 - pow(1.0 - notebook_amount, 3.0)
+	notebook_panel.custom_minimum_size = Vector2(300, lerp(0.0, 208.0, eased))
+	notebook_panel.modulate.a = lerp(0.0, 1.0, eased)
+	notebook_panel.visible = notebook_amount > 0.02 or notebook_open
+
 func _active_aquarium_id() -> String:
 	if aquarium_index.is_empty():
 		return ""
@@ -634,11 +698,14 @@ func _refresh_research_card() -> void:
 	var length := float(aquarium.get("length_cm", 0.0))
 	var group := int(spec.get("minimum_group", 1))
 	var preferred := int(spec.get("preferred_group", group))
-	var status := "Suitable tank size" if current_litres >= min_litres and length >= min_length else "Tank is too small"
+	var status := "Tank fit looks possible" if current_litres >= min_litres and length >= min_length else "This tank is probably too small"
 	var notes: Array[String] = []
-	notes.append("%s (%s)" % [spec.get("common_name", id), spec.get("scientific_name", "unknown")])
-	notes.append("%s: needs %.0fL usable volume, %.0fcm length, group %d+ (preferred %d)." % [status, min_litres, min_length, group, preferred])
-	notes.append("Water: %.0f-%.0f C ideal, pH %.1f-%.1f ideal, GH %.0f-%.0f dGH ideal." % [
+	notes.append("FIELD NOTE - %s" % str(spec.get("common_name", id)).to_upper())
+	notes.append("%s" % spec.get("scientific_name", "unknown"))
+	notes.append("")
+	notes.append("First impression: %s." % status)
+	notes.append("Needs roughly %.0f L usable water, %.0f cm swimming length, and a group of %d+; a calmer keeper would aim closer to %d." % [min_litres, min_length, group, preferred])
+	notes.append("Comfort water: %.0f-%.0f C, pH %.1f-%.1f, GH %.0f-%.0f dGH." % [
 		float(spec.get("temperature_c", {}).get("ideal", [0, 0])[0]),
 		float(spec.get("temperature_c", {}).get("ideal", [0, 0])[1]),
 		float(spec.get("ph", {}).get("ideal", [0, 0])[0]),
@@ -646,18 +713,48 @@ func _refresh_research_card() -> void:
 		float(spec.get("gh_dgh", {}).get("ideal", [0, 0])[0]),
 		float(spec.get("gh_dgh", {}).get("ideal", [0, 0])[1])
 	])
-	notes.append("Behavior: %s, %s swimmer, nitrate warning around %.0f mg/L." % [
+	notes.append("Behavior clues: %s, mostly %s water, nitrate gets worrying near %.0f mg/L." % [
 		str(spec.get("social", "community")).replace("_", " "),
 		str(spec.get("swim_zone", "middle")),
 		float(spec.get("nitrate_warning_mg_l", 20.0))
 	])
 	if str(water.get("system", "freshwater")) != str(spec.get("water_type", "freshwater")):
-		notes.append("Not compatible with this aquarium's water system.")
+		notes.append("Margin note: wrong water system for this aquarium.")
+	notes.append(_compatibility_hint(id, spec))
 	if spec.has("care_notes"):
-		notes.append(str(spec["care_notes"]))
+		notes.append("Keeper note: %s" % str(spec["care_notes"]))
 	if spec.has("sources"):
-		notes.append("Research sources: %s" % _source_summary(spec.get("sources", [])))
+		notes.append("Source bookmarks: %s" % _source_summary(spec.get("sources", [])))
 	research_label.text = "\n".join(notes)
+
+func _compatibility_hint(species_id: String, spec: Dictionary) -> String:
+	var system := str(spec.get("water_type", "freshwater"))
+	var territoriality := float(spec.get("territoriality", 0.0))
+	var mouth := float(spec.get("predator_mouth_cm", 0.0))
+	var zone := str(spec.get("swim_zone", "middle"))
+	var candidates: Array[String] = []
+	for other_id in species.keys():
+		if str(other_id) == species_id:
+			continue
+		var other: Dictionary = species[other_id]
+		if str(other.get("water_type", "freshwater")) != system:
+			continue
+		if territoriality > 0.65 and str(other.get("swim_zone", "")) == zone:
+			continue
+		if mouth > 0.6 and float(other.get("adult_cm", 0.0)) < float(spec.get("adult_cm", 0.0)) * 0.7:
+			continue
+		if abs(float(other.get("nitrate_warning_mg_l", 20.0)) - float(spec.get("nitrate_warning_mg_l", 20.0))) > 20.0:
+			continue
+		candidates.append(str(other.get("common_name", other_id)))
+		if candidates.size() >= 3:
+			break
+	if territoriality > 0.65:
+		return "Compatibility clue: treat this one as a personality fish. Research quiet tankmates that stay out of its space; do not trust a simple community label."
+	if int(spec.get("minimum_group", 1)) >= 6:
+		return "Compatibility clue: solve the school first. After that, investigate peaceful species using other water layers, such as %s." % (", ".join(candidates) if not candidates.is_empty() else "other calm, same-water species")
+	if candidates.is_empty():
+		return "Compatibility clue: no obvious shortcut. Match water, adult size, temperament, and swimming layer before buying companions."
+	return "Compatibility clue: possible research leads, not guarantees: %s." % ", ".join(candidates)
 
 func _source_summary(sources: Array) -> String:
 	var domains: Array[String] = []
@@ -673,7 +770,14 @@ func _add_selected_animal(acclimated: bool) -> void:
 	var id := str(species_select.get_item_metadata(species_select.selected))
 	var spec: Dictionary = species.get(id, {})
 	var minutes := int(spec.get("acclimation_minutes", 30)) if acclimated else 0
-	_write_command({"action": "add_animal", "species_id": id, "acclimation_minutes": minutes})
+	selected_animal_tool = {"species_id": id, "acclimation_minutes": minutes}
+	selected_scape_tool = {}
+	selected_scape_object_id = ""
+	if tool_label:
+		if acclimated:
+			tool_label.text = "Floating acclimation bag for %d minutes. Click open water to release with the net." % minutes
+		else:
+			tool_label.text = "Emergency net selected. Click open water to release, but skipping acclimation is dangerous."
 
 func _select_animal(index: int) -> void:
 	if index >= 0 and index < animal_ids.size():
@@ -688,8 +792,9 @@ func _remove_selected_animal() -> void:
 func _choose_scape_tool(category: String, item_type: String, label: String) -> void:
 	selected_scape_tool = {"category": category, "type": item_type, "label": label}
 	selected_scape_object_id = ""
+	selected_animal_tool = {}
 	if tool_label:
-		tool_label.text = "Placing %s. Click inside the tank." % label
+		tool_label.text = "Picked up %s. Move over the tank and click a valid surface." % label
 
 func _remove_selected_scape() -> void:
 	if selected_scape_object_id == "":
@@ -700,9 +805,13 @@ func _remove_selected_scape() -> void:
 func _write_command(command: Dictionary) -> void:
 	command["timestamp"] = Time.get_datetime_string_from_system()
 	DirAccess.make_dir_recursive_absolute(root_dir.path_join("runtime"))
-	var file := FileAccess.open(command_path, FileAccess.WRITE)
+	DirAccess.make_dir_recursive_absolute(commands_dir)
+	var path := commands_dir.path_join("%s-%d.json" % [str(command.get("action", "command")), Time.get_ticks_usec()])
+	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file:
 		file.store_string(JSON.stringify(command, "\t"))
+		last_command_note = "%s sent" % str(command.get("action", "command")).replace("_", " ")
+		last_command_until = Time.get_ticks_msec() / 1000.0 + 1.8
 
 func _sync_animals() -> void:
 	var alive_ids := {}
@@ -721,7 +830,7 @@ func _sync_animals() -> void:
 			"seed": seed,
 			"species_id": animal.get("species_id", ""),
 			"phase": float(seed % 628) / 100.0,
-			"pos": _seeded_point(seed, spec.get("swim_zone", "middle")),
+			"pos": _release_point(animal, seed, spec.get("swim_zone", "middle")),
 			"target": _seeded_point(seed + 31, spec.get("swim_zone", "middle")),
 			"facing": 1.0
 		}
@@ -772,6 +881,12 @@ func _seeded_point(seed: int, zone: String) -> Vector2:
 		inner.position.x + lerp(58.0, inner.size.x - 58.0, x_ratio),
 		_zone_y(zone, y_ratio)
 	)
+
+func _release_point(animal: Dictionary, seed: int, zone: String) -> Vector2:
+	if animal.has("release_x") and animal.has("release_y"):
+		var inner := _tank_inner()
+		return inner.position + Vector2(float(animal["release_x"]) * inner.size.x, float(animal["release_y"]) * inner.size.y)
+	return _seeded_point(seed, zone)
 
 func _moving_target(seed: int, zone: String) -> Vector2:
 	var t := Time.get_ticks_msec() / 1000.0
@@ -1115,6 +1230,36 @@ func _draw_front_glass() -> void:
 	var inner := _tank_inner()
 	draw_line(inner.position + Vector2(24, 14), inner.position + Vector2(inner.size.x * 0.46, 14), Color(1, 1, 1, 0.12), 2.0, true)
 	draw_line(inner.position + Vector2(inner.size.x - 118, 30), inner.position + Vector2(inner.size.x - 34, 30), Color(1, 1, 1, 0.10), 2.0, true)
+	_draw_carry_cursor()
+
+func _draw_carry_cursor() -> void:
+	var mouse := get_viewport().get_mouse_position()
+	var inner := _tank_inner()
+	if not inner.has_point(mouse):
+		return
+	if not selected_animal_tool.is_empty():
+		var spec: Dictionary = species.get(str(selected_animal_tool.get("species_id", "")), {})
+		var name := str(spec.get("common_name", "animal"))
+		draw_arc(mouse + Vector2(0, 6), 34.0, PI * 0.08, PI * 0.92, 28, Color(0.86, 0.94, 0.96, 0.72), 2.0, true)
+		draw_line(mouse + Vector2(24, 30), mouse + Vector2(54, 66), Color(0.72, 0.80, 0.82, 0.58), 2.0, true)
+		draw_circle(mouse + Vector2(-7, 5), 6.0, Color(str(spec.get("color", "#8fd1d0"))).lerp(Color.WHITE, 0.25))
+		draw_string(get_theme_default_font(), mouse + Vector2(18, -14), "Net: %s" % name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#eef8f4"))
+		return
+	if not selected_scape_tool.is_empty():
+		var category := str(selected_scape_tool.get("category", ""))
+		var item_type := str(selected_scape_tool.get("type", ""))
+		var normalized := Vector2(
+			clamp((mouse.x - inner.position.x) / inner.size.x, 0.0, 1.0),
+			clamp((mouse.y - inner.position.y) / inner.size.y, 0.0, 1.0)
+		)
+		var valid := _client_position_valid(category, item_type, normalized, true)
+		var color := Color(0.74, 0.92, 0.82, 0.54) if valid else Color(1.0, 0.42, 0.36, 0.50)
+		draw_circle(mouse, 28.0, color, false, 2.0, true)
+		if scape_textures.has(item_type):
+			var texture: Texture2D = scape_textures[item_type]
+			draw_texture_rect(texture, Rect2(mouse - Vector2(26, 26), Vector2(52, 52)), false, Color(1, 1, 1, 0.82))
+		else:
+			draw_circle(mouse, 16.0, color)
 
 func _draw_animals() -> void:
 	for animal in state.get("animals", []):

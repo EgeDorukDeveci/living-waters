@@ -26,6 +26,7 @@ ROOT = Path(os.environ.get("LIVING_WATERS_ROOT", Path(sys.executable).resolve().
 RUNTIME = ROOT / "runtime"
 STATE_PATH = RUNTIME / "aquarium_state.json"
 COMMAND_PATH = RUNTIME / "command.json"
+COMMANDS_DIR = RUNTIME / "commands"
 AQUARIUMS_DIR = RUNTIME / "aquariums"
 INDEX_PATH = AQUARIUMS_DIR / "index.json"
 SPECIES_PATH = ROOT / "data" / "species" / "freshwater_v1.json"
@@ -263,32 +264,51 @@ class Daemon:
 
     def _loop(self) -> None:
         previous = time.time()
-        while not self.stop_event.wait(5):
+        next_simulation = previous
+        while not self.stop_event.wait(0.35):
             current = time.time()
-            elapsed = current - previous
-            previous = current
             try:
-                self._handle_command()
-                for sim in self.sims.values():
-                    sim.advance(elapsed)
-                self._save_all()
-                self._notify_important_event()
+                if self._handle_commands() > 0:
+                    self._save_all()
+                    self._notify_important_event()
+                if current >= next_simulation:
+                    elapsed = current - previous
+                    previous = current
+                    next_simulation = current + 5
+                    for sim in self.sims.values():
+                        sim.advance(elapsed)
+                    self._save_all()
+                    self._notify_important_event()
             except Exception as exc:
                 log(f"simulation-error {exc}")
 
-    def _handle_command(self) -> None:
-        if not COMMAND_PATH.exists():
-            return
+    def _read_command_file(self, path: Path) -> dict[str, Any] | None:
         try:
-            command = json.loads(COMMAND_PATH.read_text(encoding="utf-8"))
+            command = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(command, dict):
                 log("ignored-invalid-command non-object")
-                return
+                return None
         except (OSError, json.JSONDecodeError) as exc:
             log(f"ignored-invalid-command {exc}")
-            return
         finally:
-            COMMAND_PATH.unlink(missing_ok=True)
+            path.unlink(missing_ok=True)
+        return command
+
+    def _handle_commands(self) -> int:
+        paths: list[Path] = []
+        if COMMAND_PATH.exists():
+            paths.append(COMMAND_PATH)
+        if COMMANDS_DIR.exists():
+            paths.extend(sorted(COMMANDS_DIR.glob("*.json")))
+        handled = 0
+        for path in paths[:24]:
+            command = self._read_command_file(path)
+            if command:
+                self._apply_command(command)
+                handled += 1
+        return handled
+
+    def _apply_command(self, command: dict[str, Any]) -> None:
         action = command.get("action")
         if action == "select_aquarium":
             self._select_aquarium(str(command.get("aquarium_id", self.active_id)))
@@ -338,11 +358,14 @@ class Daemon:
         elif action == "switch_system":
             sim.switch_system(str(command.get("system", "freshwater")))
         elif action == "add_animal":
-            sim.add_animal(
+            animal = sim.add_animal(
                 str(command.get("species_id", "")),
                 int(command.get("acclimation_minutes", 30)),
                 str(command.get("name", "")),
             )
+            if animal and "x" in command and "y" in command:
+                animal["release_x"] = max(0.02, min(0.98, float(command.get("x", 0.5))))
+                animal["release_y"] = max(0.05, min(0.92, float(command.get("y", 0.45))))
         elif action == "remove_animal":
             sim.remove_animal(str(command.get("animal_id", "")))
         elif action == "place_scape_item":
