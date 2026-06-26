@@ -384,7 +384,7 @@ func _build_ui() -> void:
 		var label := Label.new()
 		label.text = key
 		label.add_theme_color_override("font_color", Color("#d8eee9"))
-		panel.add_child(label)
+		label.visible = false
 		water_labels[key] = label
 
 	filter_label = Label.new()
@@ -392,14 +392,14 @@ func _build_ui() -> void:
 	filter_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	filter_label.add_theme_font_size_override("font_size", 12)
 	filter_label.add_theme_color_override("font_color", Color("#a8c8bd"))
-	panel.add_child(filter_label)
+	filter_label.visible = false
 
 	cycle_label = Label.new()
 	cycle_label.text = "Cycle: waiting for state"
 	cycle_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	cycle_label.add_theme_font_size_override("font_size", 12)
 	cycle_label.add_theme_color_override("font_color", Color("#a8c8bd"))
-	panel.add_child(cycle_label)
+	cycle_label.visible = false
 
 	planning_label = Label.new()
 	planning_label.text = "Planning: waiting for state"
@@ -413,14 +413,14 @@ func _build_ui() -> void:
 	maintenance_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	maintenance_label.add_theme_font_size_override("font_size", 12)
 	maintenance_label.add_theme_color_override("font_color", Color("#a8c8bd"))
-	panel.add_child(maintenance_label)
+	maintenance_label.visible = false
 
 	randomness_label = Label.new()
 	randomness_label.text = "Variability: waiting for state"
 	randomness_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	randomness_label.add_theme_font_size_override("font_size", 12)
 	randomness_label.add_theme_color_override("font_color", Color("#f2d382"))
-	panel.add_child(randomness_label)
+	randomness_label.visible = false
 
 	var system_row := HBoxContainer.new()
 	system_row.add_theme_constant_override("separation", 8)
@@ -1230,7 +1230,74 @@ func _draw_front_glass() -> void:
 	var inner := _tank_inner()
 	draw_line(inner.position + Vector2(24, 14), inner.position + Vector2(inner.size.x * 0.46, 14), Color(1, 1, 1, 0.12), 2.0, true)
 	draw_line(inner.position + Vector2(inner.size.x - 118, 30), inner.position + Vector2(inner.size.x - 34, 30), Color(1, 1, 1, 0.10), 2.0, true)
+	_draw_tank_sensors()
 	_draw_carry_cursor()
+
+func _draw_tank_sensors() -> void:
+	if state.is_empty():
+		return
+	var inner := _tank_inner()
+	var water = state.get("water", {})
+	var font := get_theme_default_font()
+	var small := 12
+	var normal := 15
+	var board := Rect2(inner.position + Vector2(18, 18), Vector2(188, 138))
+	draw_rect(board, Color(0.03, 0.045, 0.045, 0.72), true)
+	draw_rect(board, Color(0.74, 0.92, 0.89, 0.24), false, 1.4, true)
+	draw_string(font, board.position + Vector2(12, 22), "WATER PROBE", HORIZONTAL_ALIGNMENT_LEFT, -1, small, Color("#c9e7df"))
+	_draw_sensor_line(board.position + Vector2(12, 46), "pH", "%.2f" % float(water.get("ph", 0.0)), _range_color(float(water.get("ph", 0.0)), 6.5, 8.2, 5.8, 8.6), normal)
+	_draw_sensor_line(board.position + Vector2(12, 72), "O2", "%.1f mg/L" % float(water.get("oxygen_mg_l", 0.0)), _range_color(float(water.get("oxygen_mg_l", 0.0)), 6.0, 9.0, 4.8, 10.0), normal)
+	_draw_sensor_line(board.position + Vector2(12, 98), "NH3", "%.3f" % float(water.get("ammonia_mg_l", 0.0)), _max_color(float(water.get("ammonia_mg_l", 0.0)), 0.02, 0.15), normal)
+	_draw_sensor_line(board.position + Vector2(12, 124), "NO2", "%.3f" % float(water.get("nitrite_mg_l", 0.0)), _max_color(float(water.get("nitrite_mg_l", 0.0)), 0.05, 0.3), normal)
+
+	var strip := Rect2(Vector2(inner.end.x - 70, inner.position.y + 86), Vector2(34, inner.size.y - SAND_HEIGHT - 132))
+	draw_rect(strip, Color(0.92, 0.88, 0.72, 0.24), true)
+	draw_rect(strip, Color(0.96, 0.98, 0.92, 0.46), false, 1.2, true)
+	var temp := float(water.get("temperature_c", 0.0))
+	for i in range(7):
+		var y := strip.position.y + 18 + i * ((strip.size.y - 38) / 6.0)
+		draw_line(Vector2(strip.position.x + 8, y), Vector2(strip.position.x + 22, y), Color(0.9, 0.94, 0.88, 0.55), 1.0, true)
+	var temp_y := remap(clamp(temp, 18.0, 30.0), 18.0, 30.0, strip.end.y - 22, strip.position.y + 18)
+	draw_circle(Vector2(strip.position.x + 17, temp_y), 7.0, _range_color(temp, 23.0, 26.5, 20.0, 29.0))
+	draw_string(font, strip.position + Vector2(-10, -10), "%.1f C" % temp, HORIZONTAL_ALIGNMENT_CENTER, 56, small, Color("#edf7ed"))
+
+	var card := Rect2(Vector2(inner.end.x - 238, inner.position.y + 24), Vector2(144, 88))
+	draw_rect(card, Color("#d8c697", 0.82), true)
+	draw_rect(card, Color("#604a30", 0.74), false, 1.2, true)
+	draw_string(font, card.position + Vector2(10, 20), "TEST STRIP", HORIZONTAL_ALIGNMENT_LEFT, -1, small, Color("#2f271c"))
+	_draw_test_pad(card.position + Vector2(12, 34), "NO3", "%.0f" % float(water.get("nitrate_mg_l", 0.0)), _max_color(float(water.get("nitrate_mg_l", 0.0)), 25.0, 45.0))
+	_draw_test_pad(card.position + Vector2(12, 58), "PO4", "%.2f" % float(water.get("phosphate_mg_l", 0.0)), _max_color(float(water.get("phosphate_mg_l", 0.0)), 0.15, 0.5))
+	var filter = state.get("equipment", {}).get("filter", {})
+	var cycle = state.get("cycle", {})
+	var filter_text := "filter %.0f%%" % (float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0)
+	var cycle_text := "cycle %s" % ("ready" if bool(cycle.get("ready_for_animals", false)) else "new")
+	draw_string(font, inner.position + Vector2(24, inner.end.y - SAND_HEIGHT - 14), "%s  /  %s" % [filter_text, cycle_text], HORIZONTAL_ALIGNMENT_LEFT, -1, small, Color(0.85, 0.98, 0.92, 0.72))
+
+func _draw_sensor_line(pos: Vector2, label: String, value: String, color: Color, size_px: int) -> void:
+	var font := get_theme_default_font()
+	draw_circle(pos + Vector2(5, -4), 4.0, color)
+	draw_string(font, pos + Vector2(18, 0), label, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, Color("#a8cfc8"))
+	draw_string(font, pos + Vector2(72, 0), value, HORIZONTAL_ALIGNMENT_LEFT, -1, size_px, Color("#edf7ef"))
+
+func _draw_test_pad(pos: Vector2, label: String, value: String, color: Color) -> void:
+	var font := get_theme_default_font()
+	draw_rect(Rect2(pos, Vector2(18, 14)), color, true)
+	draw_rect(Rect2(pos, Vector2(18, 14)), Color("#3b2e1e", 0.4), false, 1.0, true)
+	draw_string(font, pos + Vector2(26, 12), "%s %s" % [label, value], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#2f271c"))
+
+func _range_color(value: float, good_min: float, good_max: float, warn_min: float, warn_max: float) -> Color:
+	if value >= good_min and value <= good_max:
+		return Color("#66d99a")
+	if value >= warn_min and value <= warn_max:
+		return Color("#e9c85f")
+	return Color("#ff766a")
+
+func _max_color(value: float, good_max: float, warn_max: float) -> Color:
+	if value <= good_max:
+		return Color("#66d99a")
+	if value <= warn_max:
+		return Color("#e9c85f")
+	return Color("#ff766a")
 
 func _draw_carry_cursor() -> void:
 	var mouse := get_viewport().get_mouse_position()
