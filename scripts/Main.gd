@@ -335,6 +335,19 @@ func _build_ui() -> void:
 	aquarium_select.item_selected.connect(func(index): _select_aquarium(index))
 	panel.add_child(aquarium_select)
 
+	var new_aquarium_title := Label.new()
+	new_aquarium_title.text = "New Aquarium"
+	new_aquarium_title.add_theme_font_size_override("font_size", 16)
+	new_aquarium_title.add_theme_color_override("font_color", Color("#f5efe3"))
+	panel.add_child(new_aquarium_title)
+
+	var new_aquarium_hint := Label.new()
+	new_aquarium_hint.text = "Start an empty tank with its own water, substrate, scape, animals, and history."
+	new_aquarium_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	new_aquarium_hint.add_theme_font_size_override("font_size", 12)
+	new_aquarium_hint.add_theme_color_override("font_color", Color("#a8c8bd"))
+	panel.add_child(new_aquarium_hint)
+
 	var tank_form := GridContainer.new()
 	tank_form.columns = 2
 	tank_form.add_theme_constant_override("h_separation", 8)
@@ -362,13 +375,14 @@ func _build_ui() -> void:
 	tank_system_select.set_item_metadata(0, "freshwater")
 	tank_system_select.add_item("Saltwater")
 	tank_system_select.set_item_metadata(1, "saltwater")
+	tank_system_select.select(0)
 	tank_form.add_child(tank_system_select)
 
 	var create_tank := Button.new()
-	create_tank.text = "Create clear"
-	create_tank.custom_minimum_size = Vector2(142, 30)
+	create_tank.text = "Create aquarium"
+	create_tank.custom_minimum_size = Vector2(300, 34)
 	create_tank.pressed.connect(func(): _create_clear_aquarium())
-	tank_form.add_child(create_tank)
+	panel.add_child(create_tank)
 
 	var buttons := HBoxContainer.new()
 	buttons.add_theme_constant_override("separation", 8)
@@ -507,10 +521,17 @@ func _build_ui() -> void:
 	system_row.add_child(reef)
 
 	var animal_title_controls := Label.new()
-	animal_title_controls.text = "Acclimation / Net"
+	animal_title_controls.text = "Add Fish"
 	animal_title_controls.add_theme_font_size_override("font_size", 18)
 	animal_title_controls.add_theme_color_override("font_color", Color("#f5efe3"))
 	panel.add_child(animal_title_controls)
+
+	var animal_hint := Label.new()
+	animal_hint.text = "Choose a species, then use the net and click inside the aquarium to release it."
+	animal_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	animal_hint.add_theme_font_size_override("font_size", 12)
+	animal_hint.add_theme_color_override("font_color", Color("#a8c8bd"))
+	panel.add_child(animal_hint)
 
 	species_select = OptionButton.new()
 	species_select.custom_minimum_size = Vector2(300, 32)
@@ -553,12 +574,12 @@ func _build_ui() -> void:
 	add_row.add_theme_constant_override("separation", 8)
 	panel.add_child(add_row)
 	var add_good := Button.new()
-	add_good.text = "Float bag"
+	add_good.text = "Add with net"
 	add_good.custom_minimum_size = Vector2(142, 32)
 	add_good.pressed.connect(func(): _add_selected_animal(true))
 	add_row.add_child(add_good)
 	var add_bad := Button.new()
-	add_bad.text = "Emergency net"
+	add_bad.text = "Skip acclimation"
 	add_bad.custom_minimum_size = Vector2(142, 32)
 	add_bad.pressed.connect(func(): _add_selected_animal(false))
 	add_row.add_child(add_bad)
@@ -757,6 +778,8 @@ func _create_clear_aquarium() -> void:
 	if tank_litres_spin:
 		litres = float(tank_litres_spin.value)
 	_write_command({"action": "create_aquarium", "name": name, "system": system, "gross_litres": litres})
+	if tool_label:
+		tool_label.text = "Creating %s. It will appear in the aquarium selector in a moment." % name
 
 func _refresh_species_options() -> void:
 	if not species_select:
@@ -766,6 +789,7 @@ func _refresh_species_options() -> void:
 	if species_select.item_count > 0 and species_select.selected >= 0:
 		selected_id = str(species_select.get_item_metadata(species_select.selected))
 	species_select.clear()
+	var selected_index := -1
 	for id in species.keys():
 		var spec: Dictionary = species[id]
 		if str(spec.get("water_type", "freshwater")) != current_system:
@@ -773,7 +797,11 @@ func _refresh_species_options() -> void:
 		species_select.add_item("%s (%s)" % [spec.get("common_name", id), spec.get("swim_zone", "middle")])
 		species_select.set_item_metadata(species_select.item_count - 1, id)
 		if id == selected_id:
-			species_select.select(species_select.item_count - 1)
+			selected_index = species_select.item_count - 1
+	if selected_index >= 0:
+		species_select.select(selected_index)
+	elif species_select.item_count > 0:
+		species_select.select(0)
 	_refresh_research_card()
 
 func _refresh_research_card() -> void:
@@ -863,7 +891,11 @@ func _source_summary(sources: Array) -> String:
 
 func _add_selected_animal(acclimated: bool) -> void:
 	if species_select.item_count <= 0:
+		if tool_label:
+			tool_label.text = "No compatible fish are available for this water type."
 		return
+	if species_select.selected < 0:
+		species_select.select(0)
 	var id := str(species_select.get_item_metadata(species_select.selected))
 	var spec: Dictionary = species.get(id, {})
 	var minutes := int(spec.get("acclimation_minutes", 30)) if acclimated else 0
