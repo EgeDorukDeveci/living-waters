@@ -340,6 +340,13 @@ class Daemon:
                 str(command.get("substrate", "fine_sand")),
                 float(command.get("depth_cm", 5.0)),
             )
+        elif action == "set_equipment":
+            enabled = command.get("enabled")
+            sim.set_equipment(
+                str(command.get("equipment", "")),
+                None if enabled is None else bool(enabled),
+                None if "value" not in command else float(command.get("value", 0.0)),
+            )
         elif action == "toggle_pause":
             state["clock"]["paused"] = not state["clock"]["paused"]
         elif action == "set_speed":

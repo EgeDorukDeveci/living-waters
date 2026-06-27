@@ -374,6 +374,69 @@ def test_scape_placement_rules_and_relocation() -> None:
     assert state["aquarium"]["scape"]["plants"] == []
 
 
+def test_feeding_competition_can_leave_shy_fish_hungry() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    dominant = animal(species, "zebra_danio", "Dominant", 1)
+    shy = animal(species, "fancy_guppy", "Shy", 2)
+    dominant["feeding_rank"] = 1.0
+    dominant["boldness"] = 1.0
+    dominant["hunger"] = 0.9
+    shy["feeding_rank"] = 0.1
+    shy["boldness"] = 0.1
+    shy["hunger"] = 0.9
+    state["animals"] = [dominant, shy]
+    sim = AquariumSimulation(species, state)
+    shares = sim._feeding_distribution([dominant, shy], 0.5)
+    assert shares[dominant["id"]] > shares[shy["id"]] * 2
+    sim.feed(0.8)
+    sim.advance(3 * 3600)
+    assert dominant["hunger"] <= shy["hunger"]
+
+
+def test_equipment_failure_and_service_recovery() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    filter_state = state["equipment"]["filter"]
+    filter_state["media"]["mechanical"]["clog"] = 0.92
+    filter_state["health"] = 0.55
+    sim.advance(4 * 3600)
+    assert filter_state["failure_mode"] == "impeller strain"
+    assert filter_state["noise"] > 0.2
+    sim.service_filter()
+    assert filter_state["failure_mode"] == ""
+    assert filter_state["media"]["mechanical"]["clog"] < 0.3
+    sim.set_equipment("air_pump", True, 0.9)
+    assert state["equipment"]["air_pump"]["output"] == 0.9
+
+
+def test_plants_melt_when_root_feeders_have_bad_substrate() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["aquarium"]["substrate"] = "bare_bottom"
+    state["aquarium"]["substrate_depth_cm"] = 0.0
+    state["aquarium"]["scape"]["plants"] = [{"type": "amazon_sword", "quantity": 4, "health": 0.42}]
+    state["water"]["nitrate_mg_l"] = 1.0
+    state["water"]["phosphate_mg_l"] = 0.02
+    sim = AquariumSimulation(species, state)
+    sim.advance(72 * 3600)
+    plant = state["aquarium"]["scape"]["plants"][0]
+    assert plant["health"] < 0.42
+    assert any("melting" in event["title"] for event in state["events"])
+
+
+def test_nursery_recruits_when_conditions_remain_stable() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    state["nursery"] = [{"species_id": "fancy_guppy", "count": 3, "age_days": 44.9, "survival_chance": 0.9, "created_at": "test"}]
+    before = len(state["animals"])
+    sim.advance(6 * 3600)
+    assert len(state["animals"]) > before
+    assert state["nursery"] == []
+
+
 def main() -> int:
     tests = [
         test_nitrogen_cycle_and_water_change,
@@ -400,6 +463,10 @@ def main() -> int:
         test_disease_risk_depends_on_stress_and_dirty_water,
         test_saltwater_switch_species_and_reefscape_rules,
         test_scape_placement_rules_and_relocation,
+        test_feeding_competition_can_leave_shy_fish_hungry,
+        test_equipment_failure_and_service_recovery,
+        test_plants_melt_when_root_feeders_have_bad_substrate,
+        test_nursery_recruits_when_conditions_remain_stable,
     ]
     for test in tests:
         test()

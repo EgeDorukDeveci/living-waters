@@ -38,6 +38,10 @@ var tank_litres_spin: SpinBox
 var tank_system_select: OptionButton
 var substrate_select: OptionButton
 var substrate_depth_spin: SpinBox
+var filter_flow_spin: SpinBox
+var heater_target_spin: SpinBox
+var light_hours_spin: SpinBox
+var air_output_spin: SpinBox
 var species_select: OptionButton
 var status_label: Label
 var summary_label: Label
@@ -635,6 +639,60 @@ func _build_ui() -> void:
 	apply_substrate.pressed.connect(func(): _apply_substrate())
 	panel.add_child(apply_substrate)
 
+	var equipment_title := Label.new()
+	equipment_title.text = "Equipment"
+	equipment_title.add_theme_font_size_override("font_size", 16)
+	equipment_title.add_theme_color_override("font_color", Color("#f5efe3"))
+	panel.add_child(equipment_title)
+
+	var equipment_grid := GridContainer.new()
+	equipment_grid.columns = 2
+	equipment_grid.add_theme_constant_override("h_separation", 8)
+	equipment_grid.add_theme_constant_override("v_separation", 6)
+	panel.add_child(equipment_grid)
+
+	filter_flow_spin = SpinBox.new()
+	filter_flow_spin.min_value = 8
+	filter_flow_spin.max_value = 100
+	filter_flow_spin.step = 2
+	filter_flow_spin.value = 78
+	filter_flow_spin.suffix = "% flow"
+	filter_flow_spin.custom_minimum_size = Vector2(142, 30)
+	equipment_grid.add_child(filter_flow_spin)
+
+	heater_target_spin = SpinBox.new()
+	heater_target_spin.min_value = 16
+	heater_target_spin.max_value = 31
+	heater_target_spin.step = 0.5
+	heater_target_spin.value = 24
+	heater_target_spin.suffix = " C"
+	heater_target_spin.custom_minimum_size = Vector2(142, 30)
+	equipment_grid.add_child(heater_target_spin)
+
+	light_hours_spin = SpinBox.new()
+	light_hours_spin.min_value = 0
+	light_hours_spin.max_value = 14
+	light_hours_spin.step = 0.5
+	light_hours_spin.value = 8
+	light_hours_spin.suffix = " h light"
+	light_hours_spin.custom_minimum_size = Vector2(142, 30)
+	equipment_grid.add_child(light_hours_spin)
+
+	air_output_spin = SpinBox.new()
+	air_output_spin.min_value = 0
+	air_output_spin.max_value = 100
+	air_output_spin.step = 5
+	air_output_spin.value = 50
+	air_output_spin.suffix = "% air"
+	air_output_spin.custom_minimum_size = Vector2(142, 30)
+	equipment_grid.add_child(air_output_spin)
+
+	var apply_equipment := Button.new()
+	apply_equipment.text = "Apply equipment"
+	apply_equipment.custom_minimum_size = Vector2(300, 30)
+	apply_equipment.pressed.connect(func(): _apply_equipment())
+	panel.add_child(apply_equipment)
+
 	for key in ["temperature_c", "ph", "oxygen_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l"]:
 		var label := Label.new()
 		label.text = key
@@ -880,6 +938,18 @@ func _apply_substrate() -> void:
 		depth = float(substrate_depth_spin.value)
 	_write_command({"action": "set_substrate", "substrate": substrate, "depth_cm": depth})
 
+func _apply_equipment() -> void:
+	if filter_flow_spin:
+		_write_command({"action": "set_equipment", "equipment": "filter", "enabled": true, "value": float(filter_flow_spin.value) / 100.0})
+	if heater_target_spin:
+		_write_command({"action": "set_equipment", "equipment": "heater", "enabled": true, "value": float(heater_target_spin.value)})
+	if light_hours_spin:
+		_write_command({"action": "set_equipment", "equipment": "light", "enabled": float(light_hours_spin.value) > 0.0, "value": float(light_hours_spin.value)})
+	if air_output_spin:
+		_write_command({"action": "set_equipment", "equipment": "air_pump", "enabled": float(air_output_spin.value) > 0.0, "value": float(air_output_spin.value) / 100.0})
+	if tool_label:
+		tool_label.text = "Equipment adjustments queued. Watch oxygen, temperature, flow, algae, and plant/coral response."
+
 func _sync_substrate_controls() -> void:
 	if not substrate_select:
 		return
@@ -891,6 +961,21 @@ func _sync_substrate_controls() -> void:
 			break
 	if substrate_depth_spin:
 		substrate_depth_spin.value = float(aquarium.get("substrate_depth_cm", 5.0))
+
+func _sync_equipment_controls() -> void:
+	var equipment = state.get("equipment", {})
+	var filter = equipment.get("filter", {})
+	var heater = equipment.get("heater", {})
+	var light = equipment.get("light", {})
+	var air = equipment.get("air_pump", {})
+	if filter_flow_spin:
+		filter_flow_spin.value = float(filter.get("flow", 0.78)) * 100.0
+	if heater_target_spin:
+		heater_target_spin.value = float(heater.get("target_c", state.get("water", {}).get("temperature_c", 24.0)))
+	if light_hours_spin:
+		light_hours_spin.value = float(light.get("hours_per_day", 8.0)) if bool(light.get("enabled", true)) else 0.0
+	if air_output_spin:
+		air_output_spin.value = float(air.get("output", 0.5)) * 100.0 if bool(air.get("enabled", true)) else 0.0
 
 func _toggle_notebook() -> void:
 	notebook_open = not notebook_open
@@ -1661,10 +1746,44 @@ func _draw_substrate_settle_effect(progress: float) -> void:
 
 func _draw_front_glass() -> void:
 	var inner := _tank_inner()
+	_draw_equipment_inside_tank(inner)
 	draw_line(inner.position + Vector2(24, 14), inner.position + Vector2(inner.size.x * 0.46, 14), Color(1, 1, 1, 0.12), 2.0, true)
 	draw_line(inner.position + Vector2(inner.size.x - 118, 30), inner.position + Vector2(inner.size.x - 34, 30), Color(1, 1, 1, 0.10), 2.0, true)
 	_draw_tank_sensors()
 	_draw_carry_cursor()
+
+func _draw_equipment_inside_tank(inner: Rect2) -> void:
+	var equipment = state.get("equipment", {})
+	var filter = equipment.get("filter", {})
+	var heater = equipment.get("heater", {})
+	var light = equipment.get("light", {})
+	var air = equipment.get("air_pump", {})
+	var flow := float(filter.get("effective_flow", filter.get("flow", 0.0)))
+	var filter_color := Color(0.04, 0.07, 0.075, 0.72)
+	if str(filter.get("failure_mode", "")) != "":
+		filter_color = Color(0.18, 0.10, 0.07, 0.82)
+	draw_rect(Rect2(Vector2(inner.end.x - 46, inner.position.y + 56), Vector2(16, inner.size.y - _substrate_height() - 104)), filter_color, true)
+	draw_rect(Rect2(Vector2(inner.end.x - 58, inner.position.y + 62), Vector2(10, 74)), filter_color.lightened(0.12), true)
+	for i in range(5):
+		draw_circle(Vector2(inner.end.x - 66 - flow * 34.0 + sin(Time.get_ticks_msec() / 450.0 + i) * 4.0, inner.position.y + 88 + i * 38), 1.8, Color(0.78, 0.94, 0.98, 0.18 + flow * 0.16))
+	if bool(heater.get("enabled", true)):
+		var hx := inner.position.x + 42
+		var hy := inner.position.y + 96
+		draw_rect(Rect2(Vector2(hx, hy), Vector2(10, inner.size.y - _substrate_height() - 144)), Color(0.09, 0.10, 0.10, 0.70), true)
+		var heat_alpha := 0.18 if str(heater.get("failure_mode", "")) == "" else 0.36
+		draw_line(Vector2(hx + 5, hy + 12), Vector2(hx + 5, inner.end.y - _substrate_height() - 44), Color(1.0, 0.44, 0.30, heat_alpha), 3.0, true)
+	if bool(air.get("enabled", true)) and float(air.get("output", 0.0)) > 0.01:
+		var output := float(air.get("output", 0.5)) * float(air.get("health", 1.0))
+		var stone := Vector2(inner.position.x + inner.size.x * 0.18, inner.end.y - _substrate_height() - 16)
+		draw_rect(Rect2(stone - Vector2(18, 4), Vector2(36, 8)), Color(0.18, 0.20, 0.19, 0.64), true)
+		for i in range(12):
+			var rise := fposmod(Time.get_ticks_msec() / 900.0 + float(i) * 0.11, 1.0)
+			var pos := stone + Vector2(sin(i * 1.7) * 15.0, -rise * inner.size.y * 0.68)
+			draw_circle(pos, 1.3 + float(i % 3) * 0.4, Color(0.85, 0.97, 1.0, 0.12 + output * 0.26))
+	if bool(light.get("enabled", true)) and float(light.get("hours_per_day", 0.0)) > 0.0:
+		var spectrum := float(light.get("plant_spectrum", 0.82))
+		var alpha: float = clamp(0.05 + spectrum * 0.10, 0.04, 0.18)
+		draw_rect(Rect2(inner.position.x + 32, inner.position.y + 8, inner.size.x - 64, 10), Color(0.88, 0.96, 1.0, alpha), true)
 
 func _draw_tank_sensors() -> void:
 	if state.is_empty():
@@ -2026,15 +2145,29 @@ func _refresh_ui() -> void:
 	for key in water_labels.keys():
 		water_labels[key].text = _format_water(key, float(water.get(key, 0.0)))
 	if filter_label:
-		var filter = state.get("equipment", {}).get("filter", {})
+		var equipment = state.get("equipment", {})
+		var filter = equipment.get("filter", {})
 		var media = filter.get("media", {})
 		var mechanical = media.get("mechanical", {})
 		var chemical = media.get("chemical", {})
-		filter_label.text = "Filter: flow %.0f%% - clog %.0f%% - carbon %.0f%%" % [
+		var heater = equipment.get("heater", {})
+		var light = equipment.get("light", {})
+		var air = equipment.get("air_pump", {})
+		var failure_bits := []
+		for item in [filter, heater, light, air]:
+			var mode := str(item.get("failure_mode", ""))
+			if mode != "":
+				failure_bits.append(mode)
+		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / carbon %.0f%% - heater %.1f C - light %.1fh - air %.0f%%" % [
 			float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0,
 			float(mechanical.get("clog", 0.0)) * 100.0,
-			float(chemical.get("carbon_remaining", 0.0)) * 100.0
+			float(chemical.get("carbon_remaining", 0.0)) * 100.0,
+			float(heater.get("target_c", water.get("temperature_c", 24.0))),
+			float(light.get("hours_per_day", 8.0)) if bool(light.get("enabled", true)) else 0.0,
+			float(air.get("output", 0.0)) * 100.0 if bool(air.get("enabled", true)) else 0.0
 		]
+		if failure_bits.size() > 0:
+			filter_label.text += " - wear: " + ", ".join(failure_bits)
 	if cycle_label:
 		var cycle = state.get("cycle", {})
 		cycle_label.text = "Cycle: %s - animals %s - day %.0f" % [
@@ -2058,20 +2191,29 @@ func _refresh_ui() -> void:
 		maintenance_label.text = "Maintenance: %s" % ("ok" if maint_issues.is_empty() else maint_issues[0].get("title", "attention needed"))
 	if randomness_label:
 		var randomness = state.get("randomness", {})
+		var nursery: Array = state.get("nursery", [])
 		randomness_label.text = "Variability: %.0f%% - %s" % [
 			float(randomness.get("noise", 0.12)) * 100.0,
 			str(randomness.get("latest", "No recent ecosystem surprises."))
 		]
+		if nursery.size() > 0:
+			randomness_label.text += " - nursery: %d brood(s)" % nursery.size()
+	_sync_equipment_controls()
 	animal_list.clear()
 	animal_ids.clear()
 	for animal in state.get("animals", []):
 		var alive: bool = bool(animal.get("alive", true))
-		var line := "%s - %s - stress %.0f%% - health %.0f%%" % [
+		var line := "%s - %s - stress %.0f%% - health %.0f%% - hunger %.0f%%" % [
 			animal.get("name", "animal"),
 			animal.get("behavior", "observing"),
 			float(animal.get("acute_stress", 0.0)) * 100.0,
-			float(animal.get("health", 1.0)) * 100.0
+			float(animal.get("health", 1.0)) * 100.0,
+			float(animal.get("hunger", 0.0)) * 100.0
 		]
+		if float(animal.get("injury", 0.0)) > 0.05:
+			line += " - injury %.0f%%" % (float(animal.get("injury", 0.0)) * 100.0)
+		if float(animal.get("breeding_condition", 0.0)) > 0.6:
+			line += " - breeding"
 		var welfare_reasons: Array = animal.get("welfare_reasons", [])
 		if welfare_reasons.size() > 0 and alive:
 			line += " - %s" % welfare_reasons[0]
