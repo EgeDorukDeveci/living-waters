@@ -59,6 +59,37 @@ def test_water_change_shock_depends_on_replacement_water() -> None:
     assert state["maturity"]["mulm"] < 0.7
 
 
+def test_phosphate_can_be_reduced_by_water_change_and_media() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    state["water"]["phosphate_mg_l"] = 1.2
+    state["water"]["organic_waste"] = 0.0
+    state["food"]["decaying"] = 0.0
+    sim.water_change(0.5)
+    assert state["water"]["phosphate_mg_l"] < 0.7
+    state["water"]["phosphate_mg_l"] = 1.0
+    state["equipment"]["filter"]["media"]["chemical"]["phosphate_remover_remaining"] = 1.0
+    sim.advance(24 * 3600)
+    assert state["water"]["phosphate_mg_l"] < 0.97
+    assert state["equipment"]["filter"]["media"]["chemical"]["phosphate_remover_remaining"] < 1.0
+
+
+def test_plants_and_macroalgae_use_some_phosphate() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Planted Test", "freshwater", 90)
+    state["aquarium"]["scape"]["plants"] = [{"type": "hornwort", "quantity": 18, "health": 1.0}]
+    state["water"]["phosphate_mg_l"] = 0.7
+    state["water"]["nitrate_mg_l"] = 20.0
+    state["water"]["organic_waste"] = 0.0
+    state["food"]["decaying"] = 0.0
+    state["equipment"]["filter"]["media"]["chemical"]["phosphate_remover_remaining"] = 0.0
+    sim = AquariumSimulation(species, state)
+    before = state["water"]["phosphate_mg_l"]
+    sim.advance(12 * 3600)
+    assert state["water"]["phosphate_mg_l"] < before
+
+
 def test_tank_maturity_changes_with_time_and_neglect() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = clear_state(species, "Old Desk Tank", "freshwater", 60)
@@ -493,6 +524,8 @@ def main() -> int:
     tests = [
         test_nitrogen_cycle_and_water_change,
         test_water_change_shock_depends_on_replacement_water,
+        test_phosphate_can_be_reduced_by_water_change_and_media,
+        test_plants_and_macroalgae_use_some_phosphate,
         test_tank_maturity_changes_with_time_and_neglect,
         test_fish_routine_reflects_surface_stress,
         test_default_tank_starts_empty,

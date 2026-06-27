@@ -750,7 +750,7 @@ func _build_ui() -> void:
 	change.pressed.connect(func(): _write_command(_water_change_command()))
 	water_box.add_child(change)
 
-	var equipment_box := _make_section(care_tab, "Equipment bench", "Tune the visible devices inside the tank, then service filter media when it clogs.")
+	var equipment_box := _make_section(care_tab, "Equipment bench", "Tune the visible devices inside the tank, then refresh carbon and phosphate media when it clogs.")
 	var equipment_grid := GridContainer.new()
 	equipment_grid.columns = 2
 	equipment_grid.add_theme_constant_override("h_separation", 8)
@@ -798,7 +798,7 @@ func _build_ui() -> void:
 	apply_equipment.pressed.connect(func(): _apply_equipment())
 	equipment_actions.add_child(apply_equipment)
 	var service_filter := Button.new()
-	service_filter.text = "Service filter"
+	service_filter.text = "Refresh media"
 	service_filter.custom_minimum_size = Vector2(154, 34)
 	_style_button(service_filter)
 	service_filter.pressed.connect(func(): _write_command(COMMAND_SERVICE_FILTER.duplicate()))
@@ -922,7 +922,7 @@ func _build_ui() -> void:
 	var journal_tab := _add_tab(tabs, "Journal")
 	var readings_box := _make_section(journal_tab, "Readings", "The same information appears as sensors on the tank, but this gives exact values.")
 	water_labels.clear()
-	for key in ["temperature_c", "ph", "oxygen_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l"]:
+	for key in ["temperature_c", "ph", "oxygen_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l", "phosphate_mg_l"]:
 		var label := _make_label(key, 12, Color("#d8eee9"))
 		water_labels[key] = label
 		readings_box.add_child(label)
@@ -2309,10 +2309,11 @@ func _refresh_ui() -> void:
 			var mode := str(item.get("failure_mode", ""))
 			if mode != "":
 				failure_bits.append(mode)
-		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / carbon %.0f%% - heater %.1f C - light %.1fh - air %.0f%%" % [
+		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / carbon %.0f%% / PO4 media %.0f%% - heater %.1f C - light %.1fh - air %.0f%%" % [
 			float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0,
 			float(mechanical.get("clog", 0.0)) * 100.0,
 			float(chemical.get("carbon_remaining", 0.0)) * 100.0,
+			float(chemical.get("phosphate_remover_remaining", 0.0)) * 100.0,
 			float(heater.get("target_c", water.get("temperature_c", 24.0))),
 			float(light.get("hours_per_day", 8.0)) if bool(light.get("enabled", true)) else 0.0,
 			float(air.get("output", 0.0)) * 100.0 if bool(air.get("enabled", true)) else 0.0
@@ -2398,4 +2399,6 @@ func _format_water(key: String, value: float) -> String:
 			return "Nitrite: %.3f mg/L" % value
 		"nitrate_mg_l":
 			return "Nitrate: %.1f mg/L" % value
+		"phosphate_mg_l":
+			return "Phosphate: %.2f mg/L" % value
 	return "%s: %.2f" % [key, value]

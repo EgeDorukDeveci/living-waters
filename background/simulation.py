@@ -330,6 +330,7 @@ def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium"
     state["equipment"]["filter"]["maturity"] = 0.05
     state["equipment"]["filter"]["media"]["biological"]["maturity"] = 0.05
     state["equipment"]["filter"]["media"]["chemical"]["carbon_remaining"] = 0.0
+    state["equipment"]["filter"]["media"]["chemical"]["phosphate_remover_remaining"] = 0.0
     state["planning"] = default_planning(dims["gross_litres"])
     state["cycle"] = default_cycle()
     state["cycle"].update({
@@ -366,7 +367,12 @@ def default_filter() -> dict[str, Any]:
         "media": {
             "mechanical": {"kind": "coarse_foam_and_floss", "condition": 0.92, "clog": 0.12},
             "biological": {"kind": "ceramic_ring", "surface_area": 1.0, "maturity": 0.9, "oxygen_access": 0.82},
-            "chemical": {"kind": "activated_carbon", "carbon_remaining": 0.35, "zeolite_remaining": 0.0},
+            "chemical": {
+                "kind": "carbon_and_phosphate_pad",
+                "carbon_remaining": 0.35,
+                "zeolite_remaining": 0.0,
+                "phosphate_remover_remaining": 0.25,
+            },
         },
         "failure_mode": "",
         "noise": 0.12,
@@ -740,7 +746,7 @@ class AquariumSimulation:
         replacement_temp_c = float(replacement_temp_c) if replacement_temp_c is not None else (23.0 if water.get("system") == "freshwater" else 25.0)
         replacement_ph = float(replacement_ph) if replacement_ph is not None else old_ph
         replacement_gh_dgh = float(replacement_gh_dgh) if replacement_gh_dgh is not None else old_gh
-        for key in ("ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l", "organic_waste", "turbidity"):
+        for key in ("ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l", "phosphate_mg_l", "organic_waste", "turbidity"):
             water[key] *= 1.0 - fraction
         water["temperature_c"] = old_temp * (1.0 - fraction) + replacement_temp_c * fraction
         water["ph"] = clamp(old_ph * (1.0 - fraction) + replacement_ph * fraction, 4.5, 9.2)
@@ -789,6 +795,7 @@ class AquariumSimulation:
         water = self.state["water"]
         water["organic_waste"] = clamp(water["organic_waste"] * 0.72, 0, 5)
         water["turbidity"] = clamp(water["turbidity"] * 0.6, 0, 1)
+        water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) * 0.9, 0, 10)
         maintenance = self.state.setdefault("maintenance", default_maintenance())
         maintenance["last_substrate_vacuum"] = now_iso()
         maintenance["last_water_test"] = now_iso()
@@ -841,10 +848,11 @@ class AquariumSimulation:
         self.state["biology"]["nitrite_bacteria"] = clamp(self.state["biology"]["nitrite_bacteria"] * 0.985, 0.05, 1.0)
         if replace_carbon:
             chemical["carbon_remaining"] = 1.0
+            chemical["phosphate_remover_remaining"] = 1.0
         filter_state["last_serviced"] = now_iso()
         filter_state["failure_mode"] = ""
         filter_state["noise"] = clamp(float(filter_state.get("noise", 0.12)) * 0.55, 0.02, 1.0)
-        self._record("info", "Filter serviced", "Mechanical media was rinsed gently, flow improved, carbon was refreshed, and the biofilter was disturbed only slightly.")
+        self._record("info", "Filter serviced", "Mechanical media was rinsed gently, flow improved, carbon and phosphate-removing media were refreshed, and the biofilter was disturbed only slightly.")
 
     def set_equipment(self, equipment: str, enabled: bool | None = None, value: float | None = None) -> None:
         gear = self.state.setdefault("equipment", {})
@@ -1444,7 +1452,15 @@ class AquariumSimulation:
         water["organic_waste"] = clamp(water["organic_waste"] + waste_input * 0.7 + scape_metrics["maintenance_load"] * hours * 0.0015, 0, 5)
         water["organic_waste"] = clamp(water["organic_waste"] + substrate_trap * water["organic_waste"] * hours * 0.001, 0, 5)
         water["ammonia_mg_l"] += waste_input
-        water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) + food["decaying"] * hours * 0.006, 0, 10)
+        maturity = self.state.get("maturity", {})
+        water["phosphate_mg_l"] = clamp(
+            water.get("phosphate_mg_l", 0.0)
+            + food["decaying"] * hours * 0.006
+            + water["organic_waste"] * hours * 0.00025
+            + float(maturity.get("mulm", 0.0)) * hours * 0.00035,
+            0,
+            10,
+        )
         self._update_equipment(hours)
 
         filter_state = equipment["filter"]
@@ -1502,12 +1518,19 @@ class AquariumSimulation:
             water["organic_waste"] -= polish
             water["turbidity"] = clamp(water["turbidity"] - carbon * effective_flow * hours * 0.002, 0, 1)
             chemical["carbon_remaining"] = clamp(carbon - (polish * 0.04 + hours * 0.00025), 0, 1)
+        phosphate_media = clamp(float(chemical.get("phosphate_remover_remaining", 0.0)), 0, 1)
+        if phosphate_media > 0 and filter_state.get("enabled", True):
+            phosphate_removed = min(water.get("phosphate_mg_l", 0.0), phosphate_media * effective_flow * hours * 0.0022)
+            water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) - phosphate_removed, 0, 10)
+            chemical["phosphate_remover_remaining"] = clamp(phosphate_media - (phosphate_removed * 0.18 + hours * 0.00015), 0, 1)
 
         bacterial_food = clamp((water["ammonia_mg_l"] + water["nitrite_mg_l"]) * 2.0, 0, 1)
         bio["ammonia_bacteria"] = clamp(bio["ammonia_bacteria"] + (bacterial_food - 0.2) * hours * 0.002, 0.05, 1)
         bio["nitrite_bacteria"] = clamp(bio["nitrite_bacteria"] + (bacterial_food - 0.2) * hours * 0.0018, 0.05, 1)
         plant_uptake = bio["plant_health"] * scape_metrics["nitrate_uptake"] * hours * 0.015 * self._noise_multiplier(variability * 0.7, "plant_nitrate_uptake")
         water["nitrate_mg_l"] = max(0.0, water["nitrate_mg_l"] - plant_uptake)
+        phosphate_uptake = bio["plant_health"] * scape_metrics["nitrate_uptake"] * hours * 0.00055 * self._noise_multiplier(variability * 0.7, "plant_phosphate_uptake")
+        water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) - phosphate_uptake, 0, 10)
 
         lights_on, light_hours = self._lighting_window()
         sunlight_hours = float(planning.get("direct_sunlight_hours", 0.0))
@@ -1679,6 +1702,7 @@ class AquariumSimulation:
             animal["decomposition_hours"] = float(animal.get("decomposition_hours", 0.0)) + hours
             water["ammonia_mg_l"] += release * 0.45
             water["organic_waste"] = clamp(water["organic_waste"] + release * 0.8, 0, 5)
+            water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) + release * 0.12, 0, 10)
             water["turbidity"] = clamp(water["turbidity"] + release * 0.08, 0, 1)
 
     def _feeding_distribution(self, living: list[dict[str, Any]], consumed: float) -> dict[str, float]:
@@ -1780,6 +1804,7 @@ class AquariumSimulation:
             water = self.state["water"]
             water["ammonia_mg_l"] += load * 0.25
             water["organic_waste"] = clamp(water["organic_waste"] + load * 0.35, 0, 5)
+            water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) + load * 0.05, 0, 10)
             water["turbidity"] = clamp(water["turbidity"] + load * 0.04, 0, 1)
 
     def _update_plants_and_corals(self, hours: float, lights_on: bool, light_hours: float) -> None:
@@ -1811,6 +1836,7 @@ class AquariumSimulation:
                 if health < 0.28:
                     water["organic_waste"] = clamp(water["organic_waste"] + quantity * hours * 0.00025, 0, 5)
                     water["ammonia_mg_l"] = clamp(water["ammonia_mg_l"] + quantity * hours * 0.000035, 0, 5)
+                    water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) + quantity * hours * 0.00002, 0, 10)
                     self._record_once(f"plant_melt_{plant_type}", "warning", f"{info.get('name', plant_type)} is melting", "Plant health is falling because light, nutrients, algae, or substrate conditions are wrong.")
                 plant["health"] = health
         if water.get("system") == "saltwater":
