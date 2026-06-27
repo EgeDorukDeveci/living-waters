@@ -1,8 +1,8 @@
 extends Control
 
-const PANEL_WIDTH := 336.0
+const PANEL_WIDTH := 388.0
 const EDGE := 28.0
-const TOP_BAR := 82.0
+const TOP_BAR := 76.0
 const SAND_HEIGHT := 74.0
 const COMMAND_FEED := {"action": "feed", "amount": 0.42}
 const COMMAND_WATER_CHANGE := {"action": "water_change", "fraction": 0.25}
@@ -26,9 +26,11 @@ var scape_textures: Dictionary = {}
 var time_accum := 0.0
 var opening_screen := true
 var opening_cards: Array[Dictionary] = []
+var opening_enter_rect := Rect2()
 
 var side_panel: PanelContainer
 var panel: VBoxContainer
+var keeper_tabs: TabContainer
 var water_labels: Dictionary = {}
 var event_list: ItemList
 var animal_list: ItemList
@@ -119,8 +121,7 @@ func _handle_opening_click(mouse: Vector2) -> void:
 				_write_command({"action": "select_aquarium", "aquarium_id": aquarium_id})
 			_set_opening_mode(false)
 			return
-	var enter_rect := Rect2(Vector2(size.x - 250.0, size.y - 82.0), Vector2(190.0, 42.0))
-	if enter_rect.has_point(mouse):
+	if opening_enter_rect.has_point(mouse):
 		_set_opening_mode(false)
 
 func _gui_input(event: InputEvent) -> void:
@@ -242,101 +243,105 @@ func _draw() -> void:
 
 func _draw_opening_screen() -> void:
 	opening_cards.clear()
-	draw_rect(Rect2(Vector2.ZERO, size), Color("#081014"), true)
+	opening_enter_rect = Rect2()
 	var font := get_theme_default_font()
-	var normal := get_theme_default_font_size()
-	var rack := Rect2(Vector2(max(70.0, size.x * 0.08), 116.0), Vector2(size.x * 0.72, size.y - 196.0))
-	rack.size.x = min(rack.size.x, 940.0)
+	draw_rect(Rect2(Vector2.ZERO, size), Color("#090e0f"), true)
+	for i in range(18):
+		var ratio := float(i) / 17.0
+		var band := Rect2(0, size.y * ratio, size.x, size.y / 17.0 + 2.0)
+		draw_rect(band, Color("#182120").lerp(Color("#070909"), ratio), true)
+	var rack := Rect2(Vector2(max(54.0, size.x * 0.08), max(112.0, size.y * 0.16)), Vector2(min(1040.0, size.x * 0.74), max(420.0, size.y * 0.62)))
 	rack.position.x = (size.x - rack.size.x) * 0.5
-	var wall_top := Color("#11191b")
-	var wall_bottom := Color("#070b0d")
-	for i in range(14):
-		var ratio := float(i) / 13.0
-		draw_rect(Rect2(0, size.y * ratio / 1.05, size.x, size.y / 13.0 + 2.0), wall_top.lerp(wall_bottom, ratio), true)
 	_draw_opening_room_details(rack)
-	draw_string(font, Vector2(rack.position.x, 58), "Living Waters", HORIZONTAL_ALIGNMENT_LEFT, -1, 34, Color("#f3efe6"))
-	draw_string(font, Vector2(rack.position.x, 86), "Your aquarium room", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#a9c8c2"))
-	draw_rect(Rect2(rack.position.x - 18, rack.position.y - 12, rack.size.x + 36, rack.size.y + 28), Color(0.02, 0.025, 0.025, 0.54), true)
-	var post_color := Color("#161b1d")
-	var wood := Color("#3b332d")
-	for x in [rack.position.x - 12.0, rack.end.x + 6.0]:
-		draw_rect(Rect2(x, rack.position.y - 28.0, 12.0, rack.size.y + 70.0), post_color, true)
-	for row in range(3):
-		var shelf_y := rack.position.y + row * (rack.size.y / 3.0)
-		draw_rect(Rect2(rack.position.x - 28, shelf_y + rack.size.y / 3.0 - 10.0, rack.size.x + 56, 16), wood, true)
-		draw_rect(Rect2(rack.position.x - 28, shelf_y + rack.size.y / 3.0 - 12.0, rack.size.x + 56, 2), Color("#8b7764"), true)
-		draw_rect(Rect2(rack.position.x + 22, shelf_y + 10, rack.size.x - 44, 5), Color(0.86, 0.96, 1.0, 0.50), true)
+	draw_string(font, Vector2(rack.position.x, 58), "Living Waters", HORIZONTAL_ALIGNMENT_LEFT, -1, 36, Color("#efe8dc"))
+	draw_string(font, Vector2(rack.position.x, 88), "Choose a tank. The room keeps running after you leave.", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#a5bbb4"))
+	draw_rect(Rect2(rack.position.x - 34, rack.position.y - 28, rack.size.x + 68, rack.size.y + 72), Color(0.015, 0.018, 0.017, 0.50), true)
+	var post_color := Color("#121719")
+	var shelf := Color("#312923")
+	for x in [rack.position.x - 18.0, rack.end.x + 8.0]:
+		draw_rect(Rect2(x, rack.position.y - 40.0, 14.0, rack.size.y + 92.0), post_color, true)
+	for row in range(2):
+		var shelf_y := rack.position.y + float(row + 1) * (rack.size.y / 2.0)
+		draw_rect(Rect2(rack.position.x - 38, shelf_y + 18.0, rack.size.x + 76, 18), shelf, true)
+		draw_rect(Rect2(rack.position.x - 38, shelf_y + 16.0, rack.size.x + 76, 2), Color("#8a7661"), true)
+	for row in range(2):
+		var light_y := rack.position.y + row * (rack.size.y / 2.0) + 5.0
+		draw_rect(Rect2(rack.position.x + 22, light_y, rack.size.x - 44, 5), Color(0.76, 0.90, 0.93, 0.42), true)
 	var items: Array = aquarium_index.get("aquariums", [])
-	var cols := 3
+	var cols := 2 if size.x < 1050.0 else 3
 	var rows := 2
-	var gap := 22.0
+	var gap := 26.0
 	var card_w := (rack.size.x - gap * float(cols - 1)) / float(cols)
-	var card_h := (rack.size.y - 34.0 - gap * float(rows - 1)) / float(rows)
+	var card_h := (rack.size.y - gap * float(rows - 1)) / float(rows)
 	for index in range(cols * rows):
 		var col := index % cols
 		var row := index / cols
-		var rect := Rect2(rack.position + Vector2(col * (card_w + gap), 26.0 + row * (card_h + gap)), Vector2(card_w, card_h))
+		var rect := Rect2(rack.position + Vector2(col * (card_w + gap), row * (card_h + gap)), Vector2(card_w, card_h))
 		var item := {}
 		if index < items.size() and typeof(items[index]) == TYPE_DICTIONARY:
 			item = items[index]
 		_draw_opening_tank_card(rect, item, index)
-	var button := Rect2(Vector2(size.x - 250.0, size.y - 82.0), Vector2(190.0, 42.0))
-	draw_rect(button, Color("#d9c172"), true)
-	draw_rect(button, Color("#f9edba"), false, 1.5)
-	draw_string(font, button.position + Vector2(28, 27), "Open selected tank", HORIZONTAL_ALIGNMENT_LEFT, -1, normal, Color("#121716"))
-	draw_string(font, Vector2(58, size.y - 48), "Click a tank to enter. Empty spaces are starter tanks you can create from the care panel.", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("#8ba49f"))
+	opening_enter_rect = Rect2(Vector2(size.x - 258.0, size.y - 82.0), Vector2(200.0, 42.0))
+	draw_rect(opening_enter_rect, Color("#d6be70"), true)
+	draw_rect(opening_enter_rect, Color("#f3df9b"), false, 1.4)
+	draw_string(font, opening_enter_rect.position + Vector2(30, 27), "Enter aquarium", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#101514"))
+	draw_string(font, Vector2(rack.position.x, size.y - 48), "Empty glass spaces are intentional: create new tanks inside the Tank tab.", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#839892"))
 
 func _draw_opening_room_details(rack: Rect2) -> void:
-	draw_rect(Rect2(rack.position.x - 95, rack.position.y + 72, 54, 108), Color("#1b1f20"), true)
-	draw_rect(Rect2(rack.position.x - 87, rack.position.y + 58, 38, 24), Color("#274d39"), true)
-	for i in range(8):
-		var base := Vector2(rack.position.x - 68 + sin(i) * 8.0, rack.position.y + 62 + i * 5.0)
-		draw_line(base, base + Vector2(-16 + i * 4, -42 - i * 3), Color("#5d8f63"), 2.0, true)
-	draw_rect(Rect2(rack.end.x + 42, rack.position.y + 238, 42, 98), Color("#202629"), true)
-	draw_circle(Vector2(rack.end.x + 63, rack.position.y + 226), 28, Color("#315848"))
-	for i in range(9):
-		var root := Vector2(rack.end.x + 62, rack.position.y + 226)
-		draw_line(root, root + Vector2(cos(i * 0.7) * 34, -20 - i * 5), Color("#6ea86b"), 2.2, true)
-	draw_rect(Rect2(rack.position.x + 46, rack.end.y + 30, 70, 34), Color("#22282a"), true)
-	draw_rect(Rect2(rack.position.x + 132, rack.end.y + 18, 34, 48), Color("#2f525b"), true)
-	draw_rect(Rect2(rack.position.x + 176, rack.end.y + 35, 94, 8), Color("#55676a"), true)
+	draw_rect(Rect2(0, rack.end.y + 64, size.x, size.y - rack.end.y), Color("#0b0c0c"), true)
+	draw_rect(Rect2(rack.position.x - 118, rack.position.y + 96, 58, 118), Color("#1d2221"), true)
+	draw_rect(Rect2(rack.position.x - 106, rack.position.y + 80, 34, 28), Color("#2f4b3c"), true)
+	for i in range(10):
+		var base := Vector2(rack.position.x - 89 + sin(i) * 8.0, rack.position.y + 84 + i * 5.0)
+		draw_line(base, base + Vector2(-24 + i * 5, -42 - i * 4), Color("#64885e"), 2.0, true)
+	draw_rect(Rect2(rack.end.x + 46, rack.position.y + 205, 46, 108), Color("#1e2425"), true)
+	draw_circle(Vector2(rack.end.x + 69, rack.position.y + 192), 30, Color("#334d41"))
+	for i in range(10):
+		var root := Vector2(rack.end.x + 68, rack.position.y + 192)
+		draw_line(root, root + Vector2(cos(i * 0.62) * 42, -22 - i * 5), Color("#72996b"), 2.0, true)
+	draw_rect(Rect2(rack.position.x + 64, rack.end.y + 44, 94, 16), Color("#1d2324"), true)
+	draw_rect(Rect2(rack.position.x + 178, rack.end.y + 34, 42, 56), Color("#24444a"), true)
+	draw_circle(Vector2(rack.position.x + 245, rack.end.y + 58), 13, Color("#82725d"))
+	draw_rect(Rect2(rack.position.x + 268, rack.end.y + 55, 118, 8), Color("#475459"), true)
 
 func _draw_opening_tank_card(rect: Rect2, item: Dictionary, index: int) -> void:
 	var font := get_theme_default_font()
-	var normal := get_theme_default_font_size()
 	var occupied := not item.is_empty()
 	var system := str(item.get("system", "freshwater"))
 	var name := str(item.get("name", "Clear starter tank"))
 	var litres := float(item.get("gross_litres", 0.0))
 	var animals := int(item.get("animals", 0))
-	var glass := Rect2(rect.position + Vector2(8, 14), rect.size - Vector2(16, 42))
+	var active := str(item.get("id", "")) == _active_aquarium_id() and occupied
+	var glass := Rect2(rect.position + Vector2(10, 12), rect.size - Vector2(20, 46))
 	var water_top := Color("#276c77") if system == "freshwater" else Color("#225f84")
 	var water_bottom := Color("#123134") if system == "freshwater" else Color("#102b43")
-	draw_rect(Rect2(rect.position, rect.size), Color("#111719"), true)
-	draw_rect(Rect2(rect.position + Vector2(0, rect.size.y - 14), Vector2(rect.size.x, 14)), Color("#2e2925"), true)
+	draw_rect(Rect2(rect.position + Vector2(0, 8), Vector2(rect.size.x, rect.size.y - 8)), Color("#101617"), true)
+	draw_rect(Rect2(rect.position + Vector2(0, rect.size.y - 17), Vector2(rect.size.x, 17)), Color("#2a241f"), true)
+	draw_rect(Rect2(rect.position + Vector2(8, 0), Vector2(rect.size.x - 16, 9)), Color(0.82, 0.94, 0.96, 0.36), true)
 	for i in range(8):
 		var ratio := float(i) / 7.0
 		draw_rect(Rect2(glass.position.x, glass.position.y + glass.size.y * ratio, glass.size.x, glass.size.y / 7.0 + 1.0), water_top.lerp(water_bottom, ratio), true)
 	if not occupied:
 		draw_rect(glass, Color(0.66, 0.87, 0.92, 0.08), true)
 		draw_rect(Rect2(glass.position.x, glass.end.y - 18, glass.size.x, 18), Color("#d8c7a2"), true)
-		draw_string(font, glass.position + Vector2(18, glass.size.y * 0.52), "empty clear tank", HORIZONTAL_ALIGNMENT_LEFT, -1, normal, Color(0.9, 0.95, 0.92, 0.55))
+		draw_string(font, glass.position + Vector2(18, glass.size.y * 0.52), "empty glass", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.9, 0.95, 0.92, 0.52))
 	else:
 		_draw_opening_substrate(glass, system, index)
 		_draw_opening_scape(glass, system, index, animals)
 		_draw_opening_filter(glass, index)
-	draw_rect(glass, Color(0.76, 0.94, 0.98, 0.22), false, 2.0)
+	draw_rect(glass, Color(0.76, 0.94, 0.98, 0.34 if active else 0.22), false, 2.0)
+	if active:
+		draw_rect(rect.grow(4.0), Color("#d6be70"), false, 2.0)
 	draw_line(glass.position + Vector2(10, 10), glass.position + Vector2(glass.size.x * 0.44, 10), Color(1, 1, 1, 0.36), 2.0, true)
-	var label_rect := Rect2(rect.position + Vector2(16, rect.size.y - 32), Vector2(rect.size.x - 32, 22))
-	draw_rect(label_rect, Color("#ead7bd"), true)
+	var label_rect := Rect2(rect.position + Vector2(16, rect.size.y - 34), Vector2(rect.size.x - 32, 24))
+	draw_rect(label_rect, Color("#e4d1b2"), true)
 	draw_rect(label_rect, Color("#8c7661"), false, 1.0)
 	var title := name
 	if title.length() > 23:
 		title = title.substr(0, 21) + ".."
-	var subtitle := "%.0fL %s" % [litres, system] if occupied else "available"
-	draw_string(font, label_rect.position + Vector2(8, 15), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#1e2422"))
+	draw_string(font, label_rect.position + Vector2(8, 16), title, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#1e2422"))
 	if occupied:
-		draw_string(font, glass.position + Vector2(10, 18), subtitle, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.88, 0.97, 0.98, 0.68))
+		draw_string(font, glass.position + Vector2(10, 18), "%.0fL %s  %d animals" % [litres, system, animals], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.88, 0.97, 0.98, 0.70))
 		opening_cards.append({"rect": rect, "id": str(item.get("id", ""))})
 
 func _draw_opening_substrate(glass: Rect2, system: String, index: int) -> void:
@@ -449,436 +454,426 @@ func _load_aquarium_index() -> void:
 	if typeof(payload) == TYPE_DICTIONARY:
 		aquarium_index = payload
 
+func _panel_style(bg: Color, border: Color, radius: int = 14, border_width: int = 1) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = bg
+	style.border_color = border
+	style.set_border_width_all(border_width)
+	style.set_corner_radius_all(radius)
+	style.content_margin_left = 14
+	style.content_margin_right = 14
+	style.content_margin_top = 12
+	style.content_margin_bottom = 12
+	return style
+
+func _style_button(button: Button, variant: String = "secondary") -> void:
+	var normal := StyleBoxFlat.new()
+	var hover := StyleBoxFlat.new()
+	var pressed := StyleBoxFlat.new()
+	var disabled := StyleBoxFlat.new()
+	var bg := Color("#1d292b")
+	var fg := Color("#dde8e5")
+	var border := Color("#38575a")
+	if variant == "primary":
+		bg = Color("#d8c06a")
+		fg = Color("#101514")
+		border = Color("#f1df9a")
+	elif variant == "danger":
+		bg = Color("#4a2725")
+		fg = Color("#f3c5bd")
+		border = Color("#94675e")
+	elif variant == "ghost":
+		bg = Color(0.10, 0.14, 0.15, 0.46)
+		border = Color(0.35, 0.50, 0.50, 0.38)
+	normal.bg_color = bg
+	normal.border_color = border
+	normal.set_border_width_all(1)
+	normal.set_corner_radius_all(10)
+	hover = normal.duplicate()
+	hover.bg_color = bg.lightened(0.08)
+	pressed = normal.duplicate()
+	pressed.bg_color = bg.darkened(0.08)
+	disabled = normal.duplicate()
+	disabled.bg_color = Color("#1a2021")
+	disabled.border_color = Color("#30393b")
+	button.add_theme_stylebox_override("normal", normal)
+	button.add_theme_stylebox_override("hover", hover)
+	button.add_theme_stylebox_override("pressed", pressed)
+	button.add_theme_stylebox_override("disabled", disabled)
+	button.add_theme_color_override("font_color", fg)
+	button.add_theme_color_override("font_hover_color", fg)
+	button.add_theme_color_override("font_pressed_color", fg)
+	button.add_theme_font_size_override("font_size", 13)
+
+func _style_panel_container(container: PanelContainer, bg: Color = Color(0.07, 0.10, 0.105, 0.86), border: Color = Color("#294248")) -> void:
+	container.add_theme_stylebox_override("panel", _panel_style(bg, border))
+
+func _style_field(control: Control, min_size: Vector2 = Vector2(150, 32)) -> void:
+	control.custom_minimum_size = min_size
+	if control is LineEdit:
+		var field := control as LineEdit
+		field.add_theme_color_override("font_color", Color("#eef4ee"))
+		field.add_theme_color_override("font_placeholder_color", Color(0.72, 0.80, 0.78, 0.62))
+
+func _make_label(text: String, size_px: int = 13, color: Color = Color("#b8cbc7"), wrap: bool = false) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", size_px)
+	label.add_theme_color_override("font_color", color)
+	if wrap:
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	return label
+
+func _make_section(parent: Container, title: String, note: String = "") -> VBoxContainer:
+	var card := PanelContainer.new()
+	_style_panel_container(card)
+	parent.add_child(card)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	box.offset_left = 12
+	box.offset_top = 10
+	box.offset_right = -12
+	box.offset_bottom = -10
+	card.add_child(box)
+	box.add_child(_make_label(title, 15, Color("#f1ebe0")))
+	if note != "":
+		box.add_child(_make_label(note, 12, Color("#9fb5b1"), true))
+	return box
+
+func _add_tab(tabs: TabContainer, title: String) -> VBoxContainer:
+	var scroll := ScrollContainer.new()
+	scroll.name = title
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	tabs.add_child(scroll)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(box)
+	return box
+
 func _build_ui() -> void:
 	title_label = Label.new()
 	title_label.text = "Living Waters"
-	title_label.position = Vector2(EDGE + 52, 24)
-	title_label.add_theme_font_size_override("font_size", 30)
-	title_label.add_theme_color_override("font_color", Color("#f5efe3"))
+	title_label.position = Vector2(EDGE + 56, 20)
+	title_label.add_theme_font_size_override("font_size", 27)
+	title_label.add_theme_color_override("font_color", Color("#f2ece0"))
 	add_child(title_label)
 
 	status_label = Label.new()
 	status_label.text = "Waiting for ecosystem"
-	status_label.position = Vector2(EDGE + 56, 58)
-	status_label.add_theme_font_size_override("font_size", 13)
-	status_label.add_theme_color_override("font_color", Color("#9bc7c9"))
+	status_label.position = Vector2(EDGE + 58, 52)
+	status_label.add_theme_font_size_override("font_size", 12)
+	status_label.add_theme_color_override("font_color", Color("#9fbbb7"))
 	add_child(status_label)
 
 	side_panel = PanelContainer.new()
 	side_panel.name = "SidePanel"
-	var side_style := StyleBoxFlat.new()
-	side_style.bg_color = Color(0.055, 0.071, 0.083, 0.92)
-	side_style.border_color = Color("#2c5960")
-	side_style.set_border_width_all(1)
-	side_style.set_corner_radius_all(16)
-	side_panel.add_theme_stylebox_override("panel", side_style)
+	side_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.055, 0.070, 0.073, 0.94), Color("#2f4a4f"), 18))
 	add_child(side_panel)
 
 	var scroll := ScrollContainer.new()
 	scroll.name = "SideScroll"
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.offset_left = 0
-	scroll.offset_top = 0
-	scroll.offset_right = 0
-	scroll.offset_bottom = 0
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	side_panel.add_child(scroll)
 
 	panel = VBoxContainer.new()
-	panel.add_theme_constant_override("separation", 10)
-	panel.offset_left = 18
-	panel.offset_top = 18
-	panel.offset_right = -18
-	panel.offset_bottom = -18
+	panel.add_theme_constant_override("separation", 12)
+	panel.offset_left = 16
+	panel.offset_top = 14
+	panel.offset_right = -16
+	panel.offset_bottom = -14
 	scroll.add_child(panel)
 
-	var panel_title := Label.new()
-	panel_title.text = "Tank Care"
-	panel_title.add_theme_font_size_override("font_size", 23)
-	panel_title.add_theme_color_override("font_color", Color("#f5efe3"))
-	panel.add_child(panel_title)
+	var header := VBoxContainer.new()
+	header.add_theme_constant_override("separation", 4)
+	panel.add_child(header)
+	header.add_child(_make_label("Keeper tray", 18, Color("#f1ebe0")))
+	summary_label = _make_label("The aquarium keeps living in the background.", 12, Color("#a9beb9"), true)
+	header.add_child(summary_label)
 
-	summary_label = Label.new()
-	summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	summary_label.add_theme_color_override("font_color", Color("#b7d5d1"))
-	panel.add_child(summary_label)
+	var tabs := TabContainer.new()
+	keeper_tabs = tabs
+	tabs.custom_minimum_size = Vector2(356, 640)
+	tabs.tab_alignment = TabBar.ALIGNMENT_CENTER
+	panel.add_child(tabs)
 
-	var aquarium_title := Label.new()
-	aquarium_title.text = "Aquariums"
-	aquarium_title.add_theme_font_size_override("font_size", 18)
-	aquarium_title.add_theme_color_override("font_color", Color("#f5efe3"))
-	panel.add_child(aquarium_title)
-
+	var tank_tab := _add_tab(tabs, "Tank")
+	var aquarium_box := _make_section(tank_tab, "Aquarium shelf", "Switch tanks here. Creation stays separated from daily care so accidents are harder.")
 	aquarium_select = OptionButton.new()
-	aquarium_select.custom_minimum_size = Vector2(300, 32)
+	_style_field(aquarium_select, Vector2(322, 32))
 	aquarium_select.item_selected.connect(func(index): _select_aquarium(index))
-	panel.add_child(aquarium_select)
+	aquarium_box.add_child(aquarium_select)
 
-	var new_aquarium_title := Label.new()
-	new_aquarium_title.text = "New Aquarium"
-	new_aquarium_title.add_theme_font_size_override("font_size", 16)
-	new_aquarium_title.add_theme_color_override("font_color", Color("#f5efe3"))
-	panel.add_child(new_aquarium_title)
-
-	var new_aquarium_hint := Label.new()
-	new_aquarium_hint.text = "Start an empty tank with its own water, substrate, scape, animals, and history."
-	new_aquarium_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	new_aquarium_hint.add_theme_font_size_override("font_size", 12)
-	new_aquarium_hint.add_theme_color_override("font_color", Color("#a8c8bd"))
-	panel.add_child(new_aquarium_hint)
-
+	var create_box := _make_section(tank_tab, "Start clear", "A new tank begins empty, uncycled, and unfinished on purpose.")
+	tank_name_edit = LineEdit.new()
+	tank_name_edit.placeholder_text = "Tank name"
+	tank_name_edit.text = "Clear 60L"
+	_style_field(tank_name_edit, Vector2(322, 32))
+	create_box.add_child(tank_name_edit)
 	var tank_form := GridContainer.new()
 	tank_form.columns = 2
 	tank_form.add_theme_constant_override("h_separation", 8)
-	tank_form.add_theme_constant_override("v_separation", 6)
-	panel.add_child(tank_form)
-
-	tank_name_edit = LineEdit.new()
-	tank_name_edit.placeholder_text = "New clear tank"
-	tank_name_edit.text = "Clear 60L"
-	tank_name_edit.custom_minimum_size = Vector2(142, 30)
-	tank_form.add_child(tank_name_edit)
-
+	tank_form.add_theme_constant_override("v_separation", 8)
+	create_box.add_child(tank_form)
 	tank_litres_spin = SpinBox.new()
 	tank_litres_spin.min_value = 12
 	tank_litres_spin.max_value = 900
 	tank_litres_spin.step = 1
 	tank_litres_spin.value = 60
 	tank_litres_spin.suffix = " L"
-	tank_litres_spin.custom_minimum_size = Vector2(142, 30)
+	_style_field(tank_litres_spin, Vector2(154, 32))
 	tank_form.add_child(tank_litres_spin)
-
 	tank_system_select = OptionButton.new()
-	tank_system_select.custom_minimum_size = Vector2(142, 30)
+	_style_field(tank_system_select, Vector2(154, 32))
 	tank_system_select.add_item("Freshwater")
 	tank_system_select.set_item_metadata(0, "freshwater")
 	tank_system_select.add_item("Saltwater")
 	tank_system_select.set_item_metadata(1, "saltwater")
-	tank_system_select.select(0)
 	tank_form.add_child(tank_system_select)
-
 	var create_tank := Button.new()
-	create_tank.text = "Create aquarium"
-	create_tank.custom_minimum_size = Vector2(300, 34)
+	create_tank.text = "Create empty tank"
+	create_tank.custom_minimum_size = Vector2(322, 36)
+	_style_button(create_tank, "primary")
 	create_tank.pressed.connect(func(): _create_clear_aquarium())
-	panel.add_child(create_tank)
+	create_box.add_child(create_tank)
 
-	var buttons := HBoxContainer.new()
-	buttons.add_theme_constant_override("separation", 8)
-	panel.add_child(buttons)
+	var system_box := _make_section(tank_tab, "Water type", "Changing systems clears incompatible life. It belongs here, away from daily buttons.")
+	var system_row := HBoxContainer.new()
+	system_row.add_theme_constant_override("separation", 8)
+	system_box.add_child(system_row)
+	var fresh := Button.new()
+	fresh.text = "Freshwater"
+	fresh.custom_minimum_size = Vector2(154, 34)
+	_style_button(fresh)
+	fresh.pressed.connect(func(): _write_command({"action": "switch_system", "system": "freshwater"}))
+	system_row.add_child(fresh)
+	var reef := Button.new()
+	reef.text = "Saltwater"
+	reef.custom_minimum_size = Vector2(154, 34)
+	_style_button(reef)
+	reef.pressed.connect(func(): _write_command({"action": "switch_system", "system": "saltwater"}))
+	system_row.add_child(reef)
 
-	var feed := Button.new()
-	feed.text = "Feed"
-	feed.custom_minimum_size = Vector2(134, 38)
-	feed.pressed.connect(func(): _write_command(COMMAND_FEED.duplicate()))
-	buttons.add_child(feed)
-
-	var change := Button.new()
-	change.text = "Water change"
-	change.custom_minimum_size = Vector2(142, 38)
-	change.pressed.connect(func(): _write_command(_water_change_command()))
-	buttons.add_child(change)
-
-	var water_change_grid := GridContainer.new()
-	water_change_grid.columns = 2
-	water_change_grid.add_theme_constant_override("h_separation", 8)
-	water_change_grid.add_theme_constant_override("v_separation", 6)
-	panel.add_child(water_change_grid)
-
-	replacement_temp_spin = SpinBox.new()
-	replacement_temp_spin.min_value = 8
-	replacement_temp_spin.max_value = 34
-	replacement_temp_spin.step = 0.5
-	replacement_temp_spin.value = 23
-	replacement_temp_spin.suffix = " C new water"
-	replacement_temp_spin.custom_minimum_size = Vector2(142, 30)
-	water_change_grid.add_child(replacement_temp_spin)
-
-	replacement_ph_spin = SpinBox.new()
-	replacement_ph_spin.min_value = 4.5
-	replacement_ph_spin.max_value = 9.2
-	replacement_ph_spin.step = 0.1
-	replacement_ph_spin.value = 7.0
-	replacement_ph_spin.suffix = " pH"
-	replacement_ph_spin.custom_minimum_size = Vector2(142, 30)
-	water_change_grid.add_child(replacement_ph_spin)
-
-	replacement_gh_spin = SpinBox.new()
-	replacement_gh_spin.min_value = 0
-	replacement_gh_spin.max_value = 30
-	replacement_gh_spin.step = 1
-	replacement_gh_spin.value = 7
-	replacement_gh_spin.suffix = " dGH"
-	replacement_gh_spin.custom_minimum_size = Vector2(142, 30)
-	water_change_grid.add_child(replacement_gh_spin)
-
-	disturb_substrate_check = CheckBox.new()
-	disturb_substrate_check.text = "Disturb substrate"
-	disturb_substrate_check.custom_minimum_size = Vector2(142, 30)
-	water_change_grid.add_child(disturb_substrate_check)
-
-	var care_row := HBoxContainer.new()
-	care_row.add_theme_constant_override("separation", 8)
-	panel.add_child(care_row)
-	var maintenance_button := Button.new()
-	maintenance_button.text = "Weekly care"
-	maintenance_button.custom_minimum_size = Vector2(142, 34)
-	maintenance_button.pressed.connect(func(): _write_command(COMMAND_WEEKLY_MAINTENANCE.duplicate()))
-	care_row.add_child(maintenance_button)
-	var test_button := Button.new()
-	test_button.text = "Test water"
-	test_button.custom_minimum_size = Vector2(142, 34)
-	test_button.pressed.connect(func(): _write_command(COMMAND_TEST_WATER.duplicate()))
-	care_row.add_child(test_button)
-
-	var filter_row := HBoxContainer.new()
-	filter_row.add_theme_constant_override("separation", 8)
-	panel.add_child(filter_row)
-	var service_filter := Button.new()
-	service_filter.text = "Service filter"
-	service_filter.custom_minimum_size = Vector2(142, 34)
-	service_filter.pressed.connect(func(): _write_command(COMMAND_SERVICE_FILTER.duplicate()))
-	filter_row.add_child(service_filter)
-	var dose_ammonia := Button.new()
-	dose_ammonia.text = "Dose cycle"
-	dose_ammonia.custom_minimum_size = Vector2(142, 34)
-	dose_ammonia.pressed.connect(func(): _write_command(COMMAND_DOSE_AMMONIA.duplicate()))
-	filter_row.add_child(dose_ammonia)
-
-	var substrate_title := Label.new()
-	substrate_title.text = "Substrate"
-	substrate_title.add_theme_font_size_override("font_size", 16)
-	substrate_title.add_theme_color_override("font_color", Color("#f5efe3"))
-	panel.add_child(substrate_title)
-
+	var substrate_box := _make_section(tank_tab, "Substrate", "Depth changes habitat, rooting, trapped mulm, and cleaning behavior.")
 	var substrate_row := GridContainer.new()
 	substrate_row.columns = 2
 	substrate_row.add_theme_constant_override("h_separation", 8)
-	substrate_row.add_theme_constant_override("v_separation", 6)
-	panel.add_child(substrate_row)
-
+	substrate_row.add_theme_constant_override("v_separation", 8)
+	substrate_box.add_child(substrate_row)
 	substrate_select = OptionButton.new()
-	substrate_select.custom_minimum_size = Vector2(142, 30)
+	_style_field(substrate_select, Vector2(154, 32))
 	_add_substrate_choice("Fine sand", "fine_sand")
 	_add_substrate_choice("Rounded gravel", "rounded_gravel")
 	_add_substrate_choice("Planted soil", "planted_soil")
 	_add_substrate_choice("Reef sand", "reef_sand")
 	_add_substrate_choice("Bare bottom", "bare_bottom")
 	substrate_row.add_child(substrate_select)
-
 	substrate_depth_spin = SpinBox.new()
 	substrate_depth_spin.min_value = 0
 	substrate_depth_spin.max_value = 9
 	substrate_depth_spin.step = 0.5
 	substrate_depth_spin.value = 5
 	substrate_depth_spin.suffix = " cm"
-	substrate_depth_spin.custom_minimum_size = Vector2(142, 30)
+	_style_field(substrate_depth_spin, Vector2(154, 32))
 	substrate_row.add_child(substrate_depth_spin)
-
 	var apply_substrate := Button.new()
 	apply_substrate.text = "Apply substrate"
-	apply_substrate.custom_minimum_size = Vector2(300, 30)
+	apply_substrate.custom_minimum_size = Vector2(322, 34)
+	_style_button(apply_substrate)
 	apply_substrate.pressed.connect(func(): _apply_substrate())
-	panel.add_child(apply_substrate)
+	substrate_box.add_child(apply_substrate)
 
-	var equipment_title := Label.new()
-	equipment_title.text = "Equipment"
-	equipment_title.add_theme_font_size_override("font_size", 16)
-	equipment_title.add_theme_color_override("font_color", Color("#f5efe3"))
-	panel.add_child(equipment_title)
+	var care_tab := _add_tab(tabs, "Care")
+	var quick_box := _make_section(care_tab, "Today", "Small actions first. Water changes expose the replacement-water details before you press the button.")
+	var quick_row := HBoxContainer.new()
+	quick_row.add_theme_constant_override("separation", 8)
+	quick_box.add_child(quick_row)
+	var feed := Button.new()
+	feed.text = "Feed"
+	feed.custom_minimum_size = Vector2(101, 38)
+	_style_button(feed, "primary")
+	feed.pressed.connect(func(): _write_command(COMMAND_FEED.duplicate()))
+	quick_row.add_child(feed)
+	var test_button := Button.new()
+	test_button.text = "Test"
+	test_button.custom_minimum_size = Vector2(101, 38)
+	_style_button(test_button)
+	test_button.pressed.connect(func(): _write_command(COMMAND_TEST_WATER.duplicate()))
+	quick_row.add_child(test_button)
+	var maintenance_button := Button.new()
+	maintenance_button.text = "Weekly"
+	maintenance_button.custom_minimum_size = Vector2(101, 38)
+	_style_button(maintenance_button)
+	maintenance_button.pressed.connect(func(): _write_command(COMMAND_WEEKLY_MAINTENANCE.duplicate()))
+	quick_row.add_child(maintenance_button)
 
+	var water_box := _make_section(care_tab, "Water change", "Match temperature, pH, and hardness. Disturbing substrate can release old waste.")
+	var water_change_grid := GridContainer.new()
+	water_change_grid.columns = 2
+	water_change_grid.add_theme_constant_override("h_separation", 8)
+	water_change_grid.add_theme_constant_override("v_separation", 8)
+	water_box.add_child(water_change_grid)
+	replacement_temp_spin = SpinBox.new()
+	replacement_temp_spin.min_value = 8
+	replacement_temp_spin.max_value = 34
+	replacement_temp_spin.step = 0.5
+	replacement_temp_spin.value = 23
+	replacement_temp_spin.suffix = " C"
+	_style_field(replacement_temp_spin, Vector2(154, 32))
+	water_change_grid.add_child(replacement_temp_spin)
+	replacement_ph_spin = SpinBox.new()
+	replacement_ph_spin.min_value = 4.5
+	replacement_ph_spin.max_value = 9.2
+	replacement_ph_spin.step = 0.1
+	replacement_ph_spin.value = 7.0
+	replacement_ph_spin.suffix = " pH"
+	_style_field(replacement_ph_spin, Vector2(154, 32))
+	water_change_grid.add_child(replacement_ph_spin)
+	replacement_gh_spin = SpinBox.new()
+	replacement_gh_spin.min_value = 0
+	replacement_gh_spin.max_value = 30
+	replacement_gh_spin.step = 1
+	replacement_gh_spin.value = 7
+	replacement_gh_spin.suffix = " dGH"
+	_style_field(replacement_gh_spin, Vector2(154, 32))
+	water_change_grid.add_child(replacement_gh_spin)
+	disturb_substrate_check = CheckBox.new()
+	disturb_substrate_check.text = "Disturb bed"
+	disturb_substrate_check.custom_minimum_size = Vector2(154, 32)
+	water_change_grid.add_child(disturb_substrate_check)
+	var change := Button.new()
+	change.text = "Change 25%"
+	change.custom_minimum_size = Vector2(322, 38)
+	_style_button(change, "primary")
+	change.pressed.connect(func(): _write_command(_water_change_command()))
+	water_box.add_child(change)
+
+	var equipment_box := _make_section(care_tab, "Equipment bench", "Tune the visible devices inside the tank, then service filter media when it clogs.")
 	var equipment_grid := GridContainer.new()
 	equipment_grid.columns = 2
 	equipment_grid.add_theme_constant_override("h_separation", 8)
-	equipment_grid.add_theme_constant_override("v_separation", 6)
-	panel.add_child(equipment_grid)
-
+	equipment_grid.add_theme_constant_override("v_separation", 8)
+	equipment_box.add_child(equipment_grid)
 	filter_flow_spin = SpinBox.new()
 	filter_flow_spin.min_value = 8
 	filter_flow_spin.max_value = 100
 	filter_flow_spin.step = 2
 	filter_flow_spin.value = 78
 	filter_flow_spin.suffix = "% flow"
-	filter_flow_spin.custom_minimum_size = Vector2(142, 30)
+	_style_field(filter_flow_spin, Vector2(154, 32))
 	equipment_grid.add_child(filter_flow_spin)
-
 	heater_target_spin = SpinBox.new()
 	heater_target_spin.min_value = 16
 	heater_target_spin.max_value = 31
 	heater_target_spin.step = 0.5
 	heater_target_spin.value = 24
 	heater_target_spin.suffix = " C"
-	heater_target_spin.custom_minimum_size = Vector2(142, 30)
+	_style_field(heater_target_spin, Vector2(154, 32))
 	equipment_grid.add_child(heater_target_spin)
-
 	light_hours_spin = SpinBox.new()
 	light_hours_spin.min_value = 0
 	light_hours_spin.max_value = 14
 	light_hours_spin.step = 0.5
 	light_hours_spin.value = 8
 	light_hours_spin.suffix = " h light"
-	light_hours_spin.custom_minimum_size = Vector2(142, 30)
+	_style_field(light_hours_spin, Vector2(154, 32))
 	equipment_grid.add_child(light_hours_spin)
-
 	air_output_spin = SpinBox.new()
 	air_output_spin.min_value = 0
 	air_output_spin.max_value = 100
 	air_output_spin.step = 5
 	air_output_spin.value = 50
 	air_output_spin.suffix = "% air"
-	air_output_spin.custom_minimum_size = Vector2(142, 30)
+	_style_field(air_output_spin, Vector2(154, 32))
 	equipment_grid.add_child(air_output_spin)
-
+	var equipment_actions := HBoxContainer.new()
+	equipment_actions.add_theme_constant_override("separation", 8)
+	equipment_box.add_child(equipment_actions)
 	var apply_equipment := Button.new()
-	apply_equipment.text = "Apply equipment"
-	apply_equipment.custom_minimum_size = Vector2(300, 30)
+	apply_equipment.text = "Apply"
+	apply_equipment.custom_minimum_size = Vector2(154, 34)
+	_style_button(apply_equipment)
 	apply_equipment.pressed.connect(func(): _apply_equipment())
-	panel.add_child(apply_equipment)
+	equipment_actions.add_child(apply_equipment)
+	var service_filter := Button.new()
+	service_filter.text = "Service filter"
+	service_filter.custom_minimum_size = Vector2(154, 34)
+	_style_button(service_filter)
+	service_filter.pressed.connect(func(): _write_command(COMMAND_SERVICE_FILTER.duplicate()))
+	equipment_actions.add_child(service_filter)
+	var dose_ammonia := Button.new()
+	dose_ammonia.text = "Dose fishless cycle"
+	dose_ammonia.custom_minimum_size = Vector2(322, 32)
+	_style_button(dose_ammonia, "ghost")
+	dose_ammonia.pressed.connect(func(): _write_command(COMMAND_DOSE_AMMONIA.duplicate()))
+	equipment_box.add_child(dose_ammonia)
 
-	for key in ["temperature_c", "ph", "oxygen_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l"]:
-		var label := Label.new()
-		label.text = key
-		label.add_theme_color_override("font_color", Color("#d8eee9"))
-		label.visible = false
-		water_labels[key] = label
-
-	filter_label = Label.new()
-	filter_label.text = "Filter: waiting for state"
-	filter_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	filter_label.add_theme_font_size_override("font_size", 12)
-	filter_label.add_theme_color_override("font_color", Color("#a8c8bd"))
-	panel.add_child(filter_label)
-
-	cycle_label = Label.new()
-	cycle_label.text = "Cycle: waiting for state"
-	cycle_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	cycle_label.add_theme_font_size_override("font_size", 12)
-	cycle_label.add_theme_color_override("font_color", Color("#a8c8bd"))
-	panel.add_child(cycle_label)
-
-	planning_label = Label.new()
-	planning_label.text = "Planning: waiting for state"
-	planning_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	planning_label.add_theme_font_size_override("font_size", 12)
-	planning_label.add_theme_color_override("font_color", Color("#a8c8bd"))
-	panel.add_child(planning_label)
-
-	maintenance_label = Label.new()
-	maintenance_label.text = "Maintenance: waiting for state"
-	maintenance_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	maintenance_label.add_theme_font_size_override("font_size", 12)
-	maintenance_label.add_theme_color_override("font_color", Color("#a8c8bd"))
-	panel.add_child(maintenance_label)
-
-	randomness_label = Label.new()
-	randomness_label.text = "Variability: waiting for state"
-	randomness_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	randomness_label.add_theme_font_size_override("font_size", 12)
-	randomness_label.add_theme_color_override("font_color", Color("#f2d382"))
-	panel.add_child(randomness_label)
-
-	var system_row := HBoxContainer.new()
-	system_row.add_theme_constant_override("separation", 8)
-	panel.add_child(system_row)
-	var fresh := Button.new()
-	fresh.text = "Freshwater"
-	fresh.custom_minimum_size = Vector2(142, 32)
-	fresh.pressed.connect(func(): _write_command({"action": "switch_system", "system": "freshwater"}))
-	system_row.add_child(fresh)
-	var reef := Button.new()
-	reef.text = "Saltwater"
-	reef.custom_minimum_size = Vector2(142, 32)
-	reef.pressed.connect(func(): _write_command({"action": "switch_system", "system": "saltwater"}))
-	system_row.add_child(reef)
-
-	var animal_title_controls := Label.new()
-	animal_title_controls.text = "Add Fish"
-	animal_title_controls.add_theme_font_size_override("font_size", 18)
-	animal_title_controls.add_theme_color_override("font_color", Color("#f5efe3"))
-	panel.add_child(animal_title_controls)
-
-	var animal_hint := Label.new()
-	animal_hint.text = "Choose a species, then use the net and click inside the aquarium to release it."
-	animal_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	animal_hint.add_theme_font_size_override("font_size", 12)
-	animal_hint.add_theme_color_override("font_color", Color("#a8c8bd"))
-	panel.add_child(animal_hint)
-
+	var life_tab := _add_tab(tabs, "Life")
+	var species_box := _make_section(life_tab, "Species notebook", "Read first, acclimate second, release by clicking open water.")
 	species_select = OptionButton.new()
-	species_select.custom_minimum_size = Vector2(300, 32)
+	_style_field(species_select, Vector2(322, 32))
 	species_select.item_selected.connect(func(_index): _refresh_research_card())
-	panel.add_child(species_select)
-	_refresh_species_options()
-
+	species_box.add_child(species_select)
 	notebook_button = Button.new()
 	notebook_button.text = "Open field notebook"
-	notebook_button.custom_minimum_size = Vector2(300, 34)
+	notebook_button.custom_minimum_size = Vector2(322, 34)
+	_style_button(notebook_button)
 	notebook_button.pressed.connect(func(): _toggle_notebook())
-	panel.add_child(notebook_button)
-
+	species_box.add_child(notebook_button)
 	notebook_panel = PanelContainer.new()
-	notebook_panel.custom_minimum_size = Vector2(300, 0)
+	notebook_panel.custom_minimum_size = Vector2(322, 0)
 	notebook_panel.clip_contents = true
 	notebook_panel.visible = false
 	notebook_panel.modulate.a = 0.0
-	var paper := StyleBoxFlat.new()
-	paper.bg_color = Color("#d8c697")
-	paper.border_color = Color("#6f5737")
-	paper.set_border_width_all(2)
-	paper.set_corner_radius_all(8)
-	notebook_panel.add_theme_stylebox_override("panel", paper)
-	panel.add_child(notebook_panel)
-
-	research_label = Label.new()
-	research_label.text = "Notebook closed."
-	research_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	research_label.add_theme_font_size_override("font_size", 13)
-	research_label.add_theme_color_override("font_color", Color("#312719"))
+	notebook_panel.add_theme_stylebox_override("panel", _panel_style(Color("#d8c697"), Color("#6f5737"), 10, 2))
+	species_box.add_child(notebook_panel)
+	research_label = _make_label("Notebook closed.", 13, Color("#312719"), true)
 	research_label.add_theme_constant_override("line_spacing", 3)
 	research_label.offset_left = 12
 	research_label.offset_top = 10
 	research_label.offset_right = -12
 	research_label.offset_bottom = -10
 	notebook_panel.add_child(research_label)
-
 	var add_row := HBoxContainer.new()
 	add_row.add_theme_constant_override("separation", 8)
-	panel.add_child(add_row)
+	species_box.add_child(add_row)
 	var add_good := Button.new()
-	add_good.text = "Add with net"
-	add_good.custom_minimum_size = Vector2(142, 32)
+	add_good.text = "Acclimate net"
+	add_good.custom_minimum_size = Vector2(154, 34)
+	_style_button(add_good, "primary")
 	add_good.pressed.connect(func(): _add_selected_animal(true))
 	add_row.add_child(add_good)
 	var add_bad := Button.new()
 	add_bad.text = "Skip acclimation"
-	add_bad.custom_minimum_size = Vector2(142, 32)
+	add_bad.custom_minimum_size = Vector2(154, 34)
+	_style_button(add_bad, "danger")
 	add_bad.pressed.connect(func(): _add_selected_animal(false))
 	add_row.add_child(add_bad)
+	var animal_box := _make_section(life_tab, "Residents", "Select a resident to remove it. The aquarium drawing remains the main place to observe behavior.")
+	animal_list = ItemList.new()
+	animal_list.custom_minimum_size = Vector2(322, 178)
+	animal_list.item_selected.connect(func(index): _select_animal(index))
+	animal_box.add_child(animal_list)
+	var remove_animal := Button.new()
+	remove_animal.text = "Remove selected animal"
+	remove_animal.custom_minimum_size = Vector2(322, 34)
+	_style_button(remove_animal, "danger")
+	remove_animal.pressed.connect(func(): _remove_selected_animal())
+	animal_box.add_child(remove_animal)
 
-	var scape_title := Label.new()
-	scape_title.text = "Scape Studio"
-	scape_title.add_theme_font_size_override("font_size", 18)
-	scape_title.add_theme_color_override("font_color", Color("#f5efe3"))
-	panel.add_child(scape_title)
-
-	scape_label = Label.new()
-	scape_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	scape_label.add_theme_font_size_override("font_size", 12)
-	scape_label.add_theme_color_override("font_color", Color("#a8c8bd"))
-	panel.add_child(scape_label)
-
-	tool_label = Label.new()
-	tool_label.text = "Choose a scape item, then click inside the tank."
-	tool_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tool_label.add_theme_font_size_override("font_size", 12)
-	tool_label.add_theme_color_override("font_color", Color("#e7d08a"))
-	panel.add_child(tool_label)
-
+	var scape_tab := _add_tab(tabs, "Scape")
+	var scape_box := _make_section(scape_tab, "Scape studio", "Pick a piece, then place it in the tank. Rooted plants need substrate, floaters need surface.")
+	scape_label = _make_label("", 12, Color("#9fb5b1"), true)
+	scape_box.add_child(scape_label)
+	tool_label = _make_label("Choose a piece, then click inside the tank.", 12, Color("#e1cd87"), true)
+	scape_box.add_child(tool_label)
 	var scape_grid := GridContainer.new()
 	scape_grid.columns = 2
 	scape_grid.add_theme_constant_override("h_separation", 8)
-	scape_grid.add_theme_constant_override("v_separation", 6)
-	panel.add_child(scape_grid)
+	scape_grid.add_theme_constant_override("v_separation", 8)
+	scape_box.add_child(scape_grid)
 	_add_scape_button(scape_grid, "River stone", "rocks", "river_stone")
 	_add_scape_button(scape_grid, "Moss stone", "rocks", "moss_stone")
 	_add_scape_button(scape_grid, "Slate stack", "rocks", "slate_stack")
@@ -892,7 +887,7 @@ func _build_ui() -> void:
 	_add_scape_button(scape_grid, "Vallisneria", "plants", "vallisneria")
 	_add_scape_button(scape_grid, "Java fern", "plants", "java_fern")
 	_add_scape_button(scape_grid, "Amazon sword", "plants", "amazon_sword")
-	_add_scape_button(scape_grid, "Crypt wendtii", "plants", "cryptocoryne_wendtii")
+	_add_scape_button(scape_grid, "Crypt", "plants", "cryptocoryne_wendtii")
 	_add_scape_button(scape_grid, "Java moss", "plants", "java_moss")
 	_add_scape_button(scape_grid, "Hornwort", "plants", "hornwort")
 	_add_scape_button(scape_grid, "Floaters", "plants", "red_root_floaters")
@@ -902,57 +897,60 @@ func _build_ui() -> void:
 	_add_scape_button(scape_grid, "Torch coral", "corals", "torch_coral")
 	_add_scape_button(scape_grid, "Xenia", "corals", "pulsing_xenia")
 	_add_scape_button(scape_grid, "Kenya tree", "corals", "kenya_tree_coral")
-
+	var scape_actions := HBoxContainer.new()
+	scape_actions.add_theme_constant_override("separation", 8)
+	scape_box.add_child(scape_actions)
 	var reset_scape := Button.new()
-	reset_scape.text = "Reset greenscape"
-	reset_scape.custom_minimum_size = Vector2(300, 32)
+	reset_scape.text = "Starter scape"
+	reset_scape.custom_minimum_size = Vector2(101, 34)
+	_style_button(reset_scape)
 	reset_scape.pressed.connect(func(): _write_command({"action": "reset_scape"}))
-	panel.add_child(reset_scape)
-
+	scape_actions.add_child(reset_scape)
 	var clear_scape_button := Button.new()
-	clear_scape_button.text = "Clear scape"
-	clear_scape_button.custom_minimum_size = Vector2(300, 32)
+	clear_scape_button.text = "Clear"
+	clear_scape_button.custom_minimum_size = Vector2(101, 34)
+	_style_button(clear_scape_button, "danger")
 	clear_scape_button.pressed.connect(func(): _write_command({"action": "clear_scape"}))
-	panel.add_child(clear_scape_button)
-
-	var animal_title := Label.new()
-	animal_title.text = "Animals"
-	animal_title.add_theme_font_size_override("font_size", 18)
-	animal_title.add_theme_color_override("font_color", Color("#f5efe3"))
-	panel.add_child(animal_title)
-
-	animal_list = ItemList.new()
-	animal_list.custom_minimum_size = Vector2(300, 112)
-	animal_list.item_selected.connect(func(index): _select_animal(index))
-	panel.add_child(animal_list)
-
-	var remove_animal := Button.new()
-	remove_animal.text = "Remove selected animal"
-	remove_animal.custom_minimum_size = Vector2(300, 32)
-	remove_animal.pressed.connect(func(): _remove_selected_animal())
-	panel.add_child(remove_animal)
-
+	scape_actions.add_child(clear_scape_button)
 	var remove_scape := Button.new()
-	remove_scape.text = "Remove selected scape"
-	remove_scape.custom_minimum_size = Vector2(300, 32)
+	remove_scape.text = "Remove"
+	remove_scape.custom_minimum_size = Vector2(101, 34)
+	_style_button(remove_scape, "danger")
 	remove_scape.pressed.connect(func(): _remove_selected_scape())
-	panel.add_child(remove_scape)
+	scape_actions.add_child(remove_scape)
 
-	var event_title := Label.new()
-	event_title.text = "Timeline"
-	event_title.add_theme_font_size_override("font_size", 18)
-	event_title.add_theme_color_override("font_color", Color("#f5efe3"))
-	panel.add_child(event_title)
-
+	var journal_tab := _add_tab(tabs, "Journal")
+	var readings_box := _make_section(journal_tab, "Readings", "The same information appears as sensors on the tank, but this gives exact values.")
+	water_labels.clear()
+	for key in ["temperature_c", "ph", "oxygen_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l"]:
+		var label := _make_label(key, 12, Color("#d8eee9"))
+		water_labels[key] = label
+		readings_box.add_child(label)
+	filter_label = _make_label("Filter: waiting for state", 12, Color("#a8c8bd"), true)
+	readings_box.add_child(filter_label)
+	cycle_label = _make_label("Cycle: waiting for state", 12, Color("#a8c8bd"), true)
+	readings_box.add_child(cycle_label)
+	planning_label = _make_label("Planning: waiting for state", 12, Color("#a8c8bd"), true)
+	readings_box.add_child(planning_label)
+	maintenance_label = _make_label("Maintenance: waiting for state", 12, Color("#a8c8bd"), true)
+	readings_box.add_child(maintenance_label)
+	randomness_label = _make_label("Variability: waiting for state", 12, Color("#f2d382"), true)
+	readings_box.add_child(randomness_label)
+	var event_box := _make_section(journal_tab, "Timeline")
 	event_list = ItemList.new()
-	event_list.custom_minimum_size = Vector2(300, 108)
-	panel.add_child(event_list)
+	event_list.custom_minimum_size = Vector2(322, 188)
+	event_box.add_child(event_list)
+
+	_refresh_species_options()
 	_layout_ui()
+	_set_opening_mode(true)
+	return
 
 func _add_scape_button(parent: Container, text: String, category: String, item_type: String, quantity: int = 1) -> void:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(142, 30)
+	button.custom_minimum_size = Vector2(154, 30)
+	_style_button(button, "ghost")
 	button.pressed.connect(func(): _choose_scape_tool(category, item_type, text))
 	parent.add_child(button)
 
@@ -964,6 +962,8 @@ func _layout_ui() -> void:
 		var scroll := side_panel.get_node_or_null("SideScroll") as ScrollContainer
 		if scroll:
 			scroll.size = side_panel.size
+		if keeper_tabs:
+			keeper_tabs.custom_minimum_size = Vector2(PANEL_WIDTH - 32.0, max(430.0, side_panel.size.y - 126.0))
 
 func _add_substrate_choice(label: String, id: String) -> void:
 	if not substrate_select:
