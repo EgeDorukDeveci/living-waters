@@ -326,7 +326,14 @@ class Daemon:
         if action == "feed":
             sim.feed(float(command.get("amount", 0.42)))
         elif action == "water_change":
-            sim.water_change(float(command.get("fraction", 0.25)), bool(command.get("conditioner_used", True)))
+            sim.water_change(
+                float(command.get("fraction", 0.25)),
+                bool(command.get("conditioner_used", True)),
+                None if "replacement_temp_c" not in command else float(command.get("replacement_temp_c", 23.0)),
+                None if "replacement_ph" not in command else float(command.get("replacement_ph", 7.0)),
+                None if "replacement_gh_dgh" not in command else float(command.get("replacement_gh_dgh", 7.0)),
+                bool(command.get("disturbed_substrate", False)),
+            )
         elif action == "weekly_maintenance":
             sim.weekly_maintenance()
         elif action == "service_filter":

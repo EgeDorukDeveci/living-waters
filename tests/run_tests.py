@@ -36,6 +36,58 @@ def test_nitrogen_cycle_and_water_change() -> None:
     assert state["water"]["nitrate_mg_l"] < before * 0.65
 
 
+def test_water_change_shock_depends_on_replacement_water() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    fish = animal(species, "neon_tetra", "Shock", 1)
+    state["animals"].append(fish)
+    state["maturity"]["mulm"] = 0.7
+    sim = AquariumSimulation(species, state)
+    before = fish["acute_stress"]
+    sim.water_change(
+        0.55,
+        conditioner_used=False,
+        replacement_temp_c=12.0,
+        replacement_ph=8.8,
+        replacement_gh_dgh=24.0,
+        disturbed_substrate=True,
+    )
+    assert state["maturity"]["last_water_change_shock"] > 0.5
+    assert fish["acute_stress"] > before
+    assert state["water"]["chlorine_mg_l"] > 0
+    assert state["water"]["turbidity"] > 0.02
+    assert state["maturity"]["mulm"] < 0.7
+
+
+def test_tank_maturity_changes_with_time_and_neglect() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Old Desk Tank", "freshwater", 60)
+    sim = AquariumSimulation(species, state)
+    state["cycle"]["days_running"] = 320
+    state["maintenance"]["last_water_change"] = "2019-01-01T00:00:00"
+    state["water"]["nitrate_mg_l"] = 80
+    state["water"]["kh_dkh"] = 0.5
+    before = state["maturity"]["biofilm"]
+    sim.advance(24 * 3600)
+    assert state["maturity"]["biofilm"] > before
+    assert state["maturity"]["old_tank_risk"] > 0.5
+    assert any(event.get("title") == "Old-tank pressure is building" for event in state["events"])
+
+
+def test_fish_routine_reflects_surface_stress() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    fish = animal(species, "neon_tetra", "Breathing Hard", 1)
+    state["animals"].append(fish)
+    state["water"]["oxygen_mg_l"] = 2.0
+    state["equipment"]["air_pump"]["enabled"] = False
+    state["equipment"]["filter"]["enabled"] = False
+    sim = AquariumSimulation(species, state)
+    sim.advance(3600)
+    assert fish["routine"] == "surface"
+    assert "surface" in fish["behavior"]
+
+
 def test_default_tank_starts_empty() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -440,6 +492,9 @@ def test_nursery_recruits_when_conditions_remain_stable() -> None:
 def main() -> int:
     tests = [
         test_nitrogen_cycle_and_water_change,
+        test_water_change_shock_depends_on_replacement_water,
+        test_tank_maturity_changes_with_time_and_neglect,
+        test_fish_routine_reflects_surface_stress,
         test_default_tank_starts_empty,
         test_clear_tank_setup_is_empty_uncycled_and_sized,
         test_legacy_preplaced_animals_are_cleared,

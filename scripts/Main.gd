@@ -42,6 +42,10 @@ var filter_flow_spin: SpinBox
 var heater_target_spin: SpinBox
 var light_hours_spin: SpinBox
 var air_output_spin: SpinBox
+var replacement_temp_spin: SpinBox
+var replacement_ph_spin: SpinBox
+var replacement_gh_spin: SpinBox
+var disturb_substrate_check: CheckBox
 var species_select: OptionButton
 var status_label: Label
 var summary_label: Label
@@ -572,8 +576,46 @@ func _build_ui() -> void:
 	var change := Button.new()
 	change.text = "Water change"
 	change.custom_minimum_size = Vector2(142, 38)
-	change.pressed.connect(func(): _write_command(COMMAND_WATER_CHANGE.duplicate()))
+	change.pressed.connect(func(): _write_command(_water_change_command()))
 	buttons.add_child(change)
+
+	var water_change_grid := GridContainer.new()
+	water_change_grid.columns = 2
+	water_change_grid.add_theme_constant_override("h_separation", 8)
+	water_change_grid.add_theme_constant_override("v_separation", 6)
+	panel.add_child(water_change_grid)
+
+	replacement_temp_spin = SpinBox.new()
+	replacement_temp_spin.min_value = 8
+	replacement_temp_spin.max_value = 34
+	replacement_temp_spin.step = 0.5
+	replacement_temp_spin.value = 23
+	replacement_temp_spin.suffix = " C new water"
+	replacement_temp_spin.custom_minimum_size = Vector2(142, 30)
+	water_change_grid.add_child(replacement_temp_spin)
+
+	replacement_ph_spin = SpinBox.new()
+	replacement_ph_spin.min_value = 4.5
+	replacement_ph_spin.max_value = 9.2
+	replacement_ph_spin.step = 0.1
+	replacement_ph_spin.value = 7.0
+	replacement_ph_spin.suffix = " pH"
+	replacement_ph_spin.custom_minimum_size = Vector2(142, 30)
+	water_change_grid.add_child(replacement_ph_spin)
+
+	replacement_gh_spin = SpinBox.new()
+	replacement_gh_spin.min_value = 0
+	replacement_gh_spin.max_value = 30
+	replacement_gh_spin.step = 1
+	replacement_gh_spin.value = 7
+	replacement_gh_spin.suffix = " dGH"
+	replacement_gh_spin.custom_minimum_size = Vector2(142, 30)
+	water_change_grid.add_child(replacement_gh_spin)
+
+	disturb_substrate_check = CheckBox.new()
+	disturb_substrate_check.text = "Disturb substrate"
+	disturb_substrate_check.custom_minimum_size = Vector2(142, 30)
+	water_change_grid.add_child(disturb_substrate_check)
 
 	var care_row := HBoxContainer.new()
 	care_row.add_theme_constant_override("separation", 8)
@@ -705,14 +747,14 @@ func _build_ui() -> void:
 	filter_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	filter_label.add_theme_font_size_override("font_size", 12)
 	filter_label.add_theme_color_override("font_color", Color("#a8c8bd"))
-	filter_label.visible = false
+	panel.add_child(filter_label)
 
 	cycle_label = Label.new()
 	cycle_label.text = "Cycle: waiting for state"
 	cycle_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	cycle_label.add_theme_font_size_override("font_size", 12)
 	cycle_label.add_theme_color_override("font_color", Color("#a8c8bd"))
-	cycle_label.visible = false
+	panel.add_child(cycle_label)
 
 	planning_label = Label.new()
 	planning_label.text = "Planning: waiting for state"
@@ -726,14 +768,14 @@ func _build_ui() -> void:
 	maintenance_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	maintenance_label.add_theme_font_size_override("font_size", 12)
 	maintenance_label.add_theme_color_override("font_color", Color("#a8c8bd"))
-	maintenance_label.visible = false
+	panel.add_child(maintenance_label)
 
 	randomness_label = Label.new()
 	randomness_label.text = "Variability: waiting for state"
 	randomness_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	randomness_label.add_theme_font_size_override("font_size", 12)
 	randomness_label.add_theme_color_override("font_color", Color("#f2d382"))
-	randomness_label.visible = false
+	panel.add_child(randomness_label)
 
 	var system_row := HBoxContainer.new()
 	system_row.add_theme_constant_override("separation", 8)
@@ -937,6 +979,18 @@ func _apply_substrate() -> void:
 	if substrate_depth_spin:
 		depth = float(substrate_depth_spin.value)
 	_write_command({"action": "set_substrate", "substrate": substrate, "depth_cm": depth})
+
+func _water_change_command() -> Dictionary:
+	var command := COMMAND_WATER_CHANGE.duplicate()
+	if replacement_temp_spin:
+		command["replacement_temp_c"] = float(replacement_temp_spin.value)
+	if replacement_ph_spin:
+		command["replacement_ph"] = float(replacement_ph_spin.value)
+	if replacement_gh_spin:
+		command["replacement_gh_dgh"] = float(replacement_gh_spin.value)
+	if disturb_substrate_check:
+		command["disturbed_substrate"] = bool(disturb_substrate_check.button_pressed)
+	return command
 
 func _apply_equipment() -> void:
 	if filter_flow_spin:
@@ -1234,6 +1288,7 @@ func _animate_animals(delta: float) -> void:
 	if aquarium.size.x <= 0:
 		return
 	var animals: Array = state.get("animals", [])
+	var school_centers := _school_centers(animals)
 	for animal in animals:
 		var id: String = str(animal.get("id", ""))
 		if not animal_visuals.has(id):
@@ -1245,15 +1300,65 @@ func _animate_animals(delta: float) -> void:
 		var activity := float(spec.get("activity", 0.5))
 		var pos: Vector2 = visual["pos"]
 		var target: Vector2 = visual["target"]
+		var routine := str(animal.get("routine", "explore"))
 		if pos.distance_to(target) < 16.0:
-			visual["target"] = _moving_target(seed, zone)
+			visual["target"] = _routine_target(animal, spec, visual, school_centers)
 			target = visual["target"]
 		var speed: float = lerp(18.0, 58.0, activity)
+		if routine in ["rest", "hide", "hang_back"]:
+			speed *= 0.42
+		elif routine in ["flee", "pace"]:
+			speed *= 1.45
+		elif routine == "school":
+			speed *= 0.92
 		var next := pos.move_toward(target, speed * delta)
 		visual["facing"] = 1.0 if target.x >= pos.x else -1.0
 		visual["pos"] = next
 		visual["phase"] = float(visual["phase"]) + delta * (2.0 + activity * 2.6)
 		animal_visuals[id] = visual
+
+func _school_centers(animals: Array) -> Dictionary:
+	var accum := {}
+	var counts := {}
+	for animal in animals:
+		if not bool(animal.get("alive", true)):
+			continue
+		var spec = species.get(animal.get("species_id", ""), {})
+		if str(spec.get("social", "")) != "schooling":
+			continue
+		var id := str(animal.get("id", ""))
+		if not animal_visuals.has(id):
+			continue
+		var species_id := str(animal.get("species_id", ""))
+		accum[species_id] = accum.get(species_id, Vector2.ZERO) + animal_visuals[id].get("pos", Vector2.ZERO)
+		counts[species_id] = int(counts.get(species_id, 0)) + 1
+	var centers := {}
+	for key in accum.keys():
+		centers[key] = accum[key] / max(1, int(counts.get(key, 1)))
+	return centers
+
+func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, school_centers: Dictionary) -> Vector2:
+	var inner := _tank_inner()
+	var seed: int = int(visual.get("seed", 1))
+	var zone := str(spec.get("swim_zone", "middle"))
+	var routine := str(animal.get("routine", "explore"))
+	var home := inner.position + Vector2(float(animal.get("home_x", 0.5)) * inner.size.x, float(animal.get("home_y", 0.5)) * inner.size.y)
+	match routine:
+		"rest", "hide":
+			return Vector2(clamp(home.x, inner.position.x + 34, inner.end.x - 34), clamp(max(home.y, inner.end.y - _substrate_height() - 120), inner.position.y + 48, inner.end.y - 42))
+		"surface":
+			return Vector2(inner.position.x + 60.0 + fposmod(seed * 37.0 + Time.get_ticks_msec() / 20.0, inner.size.x - 120.0), inner.position.y + 46.0)
+		"forage":
+			return Vector2(inner.position.x + 50.0 + fposmod(seed * 71.0 + Time.get_ticks_msec() / 24.0, inner.size.x - 100.0), inner.end.y - _substrate_height() - 22.0 - fposmod(seed * 11.0, 34.0))
+		"school":
+			var center: Vector2 = school_centers.get(str(animal.get("species_id", "")), _moving_target(seed, zone))
+			var offset := Vector2(sin(seed) * 46.0, cos(seed * 0.7) * 22.0)
+			return Vector2(clamp(center.x + offset.x, inner.position.x + 52, inner.end.x - 52), clamp(center.y + offset.y, inner.position.y + 54, inner.end.y - _substrate_height() - 38))
+		"flee":
+			return Vector2(inner.position.x + 42.0 + fposmod(seed * 91.0, inner.size.x - 84.0), inner.position.y + inner.size.y * 0.72)
+		"display", "patrol":
+			return _moving_target(seed + int(Time.get_ticks_msec() / 900), zone)
+	return _moving_target(seed, zone)
 
 func _aquarium_rect() -> Rect2:
 	var right_edge := size.x - PANEL_WIDTH - EDGE * 2.0
@@ -1328,6 +1433,7 @@ func _draw_aquarium() -> void:
 		draw_rect(inner, Color(0.78, 0.70, 0.30, ammonia * 0.16), true)
 	if nitrate > 0.02:
 		draw_rect(inner, Color(0.22, 0.56, 0.22, nitrate * 0.14), true)
+	_draw_water_seasoning(inner)
 	for i in range(3):
 		var y := inner.position.y + 24.0 + i * 18.0 + sin(Time.get_ticks_msec() / 900.0 + i) * 3.0
 		_draw_wave(Vector2(inner.position.x + 18.0, y), inner.size.x - 36.0, Color(0.74, 0.94, 0.98, 0.16), 2.0 + i)
@@ -1376,6 +1482,30 @@ func _draw_substrate(inner: Rect2) -> void:
 		var radius := 0.9 + float(i % 5) * max_radius * 0.2
 		draw_circle(Vector2(x, y), radius, speck)
 	draw_line(Vector2(bed.position.x, bed.position.y), Vector2(bed.end.x, bed.position.y), Color(0.95, 0.90, 0.72, 0.18), 1.0, true)
+	var maturity = state.get("maturity", {})
+	var mulm := float(maturity.get("mulm", 0.0))
+	if mulm > 0.04:
+		for i in range(int(18 + mulm * 80.0)):
+			var x := inner.position.x + fposmod(i * 53.0 + sin(i * 1.7) * 29.0, inner.size.x)
+			var y := bed.position.y + 5.0 + fposmod(i * 23.0, max(5.0, bed.size.y * 0.45))
+			draw_circle(Vector2(x, y), 1.2 + float(i % 4) * 0.6, Color(0.12, 0.095, 0.055, 0.10 + mulm * 0.22))
+
+func _draw_water_seasoning(inner: Rect2) -> void:
+	var maturity = state.get("maturity", {})
+	var biofilm := float(maturity.get("biofilm", 0.0))
+	var microfauna := float(maturity.get("microfauna", 0.0))
+	var shock := float(maturity.get("last_water_change_shock", 0.0))
+	if biofilm > 0.08:
+		draw_rect(inner, Color(0.68, 0.82, 0.70, biofilm * 0.035), true)
+	if shock > 0.04:
+		draw_rect(inner, Color(0.86, 0.92, 0.72, shock * 0.12), true)
+	if microfauna > 0.16:
+		for i in range(int(10 + microfauna * 24.0)):
+			var pos := Vector2(
+				inner.position.x + fposmod(i * 89.0 + Time.get_ticks_msec() / 95.0, inner.size.x),
+				inner.position.y + 48.0 + fposmod(i * 61.0 + sin(Time.get_ticks_msec() / 1300.0 + i) * 14.0, inner.size.y - SAND_HEIGHT - 88.0)
+			)
+			draw_circle(pos, 0.9, Color(0.88, 0.96, 0.84, 0.08 + microfauna * 0.08))
 
 func _aquascape_style() -> String:
 	return str(state.get("aquarium", {}).get("aquascape_style", "greenscape"))
@@ -1482,15 +1612,16 @@ func _draw_corals() -> void:
 		var quantity := int(item.get("quantity", 0))
 		var kind := str(item.get("type", "zoanthids"))
 		var health: float = clamp(float(item.get("health", 0.82)), 0.0, 1.0)
-		for n in range(quantity):
+		var visible_quantity: int = max(1, int(round(float(quantity) * lerp(0.35, 1.0, health))))
+		for n in range(visible_quantity):
 			var seed := coral_index + n + kind.length() * 3
 			var pos := Vector2(
 				inner.position.x + inner.size.x * (0.36 + fposmod(float(seed) * 0.117, 0.36)),
 				sand_top - 8.0 + fposmod(float(seed) * 13.0, 28.0)
 			)
 			pos = _object_pos(item, pos)
-			var draw_size := Vector2(74, 58) if kind != "torch_coral" else Vector2(88, 92)
-			var tint := Color.WHITE.lerp(Color("#b79b82"), 1.0 - health)
+			var draw_size: Vector2 = (Vector2(74, 58) if kind != "torch_coral" else Vector2(88, 92)) * lerp(0.55, 1.0, health)
+			var tint := Color.WHITE.lerp(Color("#ddd3bd") if bool(item.get("bleached", false)) else Color("#b79b82"), 1.0 - health)
 			if not _draw_scape_sprite(kind, pos, draw_size, seed % 2 == 0, tint):
 				_draw_coral_fallback(kind, pos, seed, health)
 		coral_index += quantity
@@ -1555,73 +1686,76 @@ func _draw_plants() -> void:
 	for item in _scape_items("plants"):
 		var kind := str(item.get("type", "java_fern"))
 		var quantity := int(item.get("quantity", 0))
-		for n in range(quantity):
+		var health: float = clamp(float(item.get("health", 0.86)), 0.0, 1.0)
+		var visible_quantity: int = max(1, int(round(float(quantity) * lerp(0.22, 1.0, health))))
+		var tint := Color.WHITE.lerp(Color("#8e7b4f"), 1.0 - health)
+		for n in range(visible_quantity):
 			var seed := n + quantity * kind.length()
 			match kind:
 				"dwarf_hairgrass":
 					var pos := Vector2(inner.position.x + fposmod(seed * 31.0, inner.size.x), sand_top + 17.0 + fposmod(seed * 17.0, 34.0))
 					pos = _object_pos(item, pos)
-					if not _draw_scape_sprite(kind, pos, Vector2(86, 86), seed % 2 == 0):
-						_draw_carpet_patch(seed, inner, sand_top)
+					if not _draw_scape_sprite(kind, pos, Vector2(86, 86) * lerp(0.55, 1.0, health), seed % 2 == 0, tint):
+						_draw_carpet_patch(seed, inner, sand_top, health)
 				"vallisneria":
 					var pos := Vector2(inner.position.x + 42.0 + fposmod(seed * 73.0, inner.size.x - 84.0), sand_top - 38.0)
 					pos = _object_pos(item, pos)
-					if not _draw_scape_sprite(kind, pos, Vector2(86, 132), seed % 2 == 0):
-						_draw_vallisneria(seed, inner, sand_top)
+					if not _draw_scape_sprite(kind, pos, Vector2(86, 132) * lerp(0.62, 1.0, health), seed % 2 == 0, tint):
+						_draw_vallisneria(seed, inner, sand_top, health)
 				"amazon_sword":
 					var pos := _object_pos(item, Vector2(inner.position.x + 48.0 + fposmod(seed * 61.0, inner.size.x - 96.0), sand_top - 24.0))
-					if not _draw_scape_sprite(kind, pos, Vector2(86, 104), seed % 2 == 0):
-						_draw_rosette(seed, inner, sand_top, Color("#4f9f64"), 58.0)
+					if not _draw_scape_sprite(kind, pos, Vector2(86, 104) * lerp(0.55, 1.0, health), seed % 2 == 0, tint):
+						_draw_rosette(seed, inner, sand_top, Color("#4f9f64").lerp(Color("#8e7b4f"), 1.0 - health), 58.0 * lerp(0.45, 1.0, health))
 				"cryptocoryne_wendtii":
 					var pos := _object_pos(item, Vector2(inner.position.x + 48.0 + fposmod(seed * 53.0, inner.size.x - 96.0), sand_top - 10.0))
-					if not _draw_scape_sprite(kind, pos, Vector2(70, 62), seed % 2 == 0):
-						_draw_rosette(seed, inner, sand_top, Color("#668d54"), 32.0)
+					if not _draw_scape_sprite(kind, pos, Vector2(70, 62) * lerp(0.55, 1.0, health), seed % 2 == 0, tint):
+						_draw_rosette(seed, inner, sand_top, Color("#668d54").lerp(Color("#8e7b4f"), 1.0 - health), 32.0 * lerp(0.45, 1.0, health))
 				"java_moss":
 					var pos := _object_pos(item, Vector2(inner.position.x + 48.0 + fposmod(seed * 67.0, inner.size.x - 96.0), sand_top - 4.0))
-					if not _draw_scape_sprite(kind, pos, Vector2(72, 54), seed % 2 == 0):
-						for puff in range(5):
-							draw_circle(pos + Vector2(cos(puff * TAU / 5.0) * 12.0, sin(puff * TAU / 5.0) * 7.0), 11.0, Color("#5aaa63"))
+					if not _draw_scape_sprite(kind, pos, Vector2(72, 54) * lerp(0.55, 1.0, health), seed % 2 == 0, tint):
+						for puff in range(max(1, int(5 * health))):
+							draw_circle(pos + Vector2(cos(puff * TAU / 5.0) * 12.0, sin(puff * TAU / 5.0) * 7.0), 11.0 * lerp(0.5, 1.0, health), Color("#5aaa63").lerp(Color("#8e7b4f"), 1.0 - health))
 				"hornwort":
 					var pos := _object_pos(item, Vector2(inner.position.x + 42.0 + fposmod(seed * 71.0, inner.size.x - 84.0), sand_top - 34.0))
-					if not _draw_scape_sprite(kind, pos, Vector2(82, 112), seed % 2 == 0):
-						_draw_vallisneria(seed + 17, inner, sand_top)
+					if not _draw_scape_sprite(kind, pos, Vector2(82, 112) * lerp(0.62, 1.0, health), seed % 2 == 0, tint):
+						_draw_vallisneria(seed + 17, inner, sand_top, health)
 				"java_fern":
 					var pos := Vector2(inner.position.x + 48.0 + fposmod(seed * 59.0, inner.size.x - 96.0), sand_top - 18.0)
 					pos = _object_pos(item, pos)
-					if not _draw_scape_sprite(kind, pos, Vector2(78, 78), seed % 2 == 0):
-						_draw_rosette(seed, inner, sand_top, Color("#4f9c5c"), 42.0)
+					if not _draw_scape_sprite(kind, pos, Vector2(78, 78) * lerp(0.55, 1.0, health), seed % 2 == 0, tint):
+						_draw_rosette(seed, inner, sand_top, Color("#4f9c5c").lerp(Color("#8e7b4f"), 1.0 - health), 42.0 * lerp(0.45, 1.0, health))
 				"anubias":
 					var pos := Vector2(inner.position.x + 48.0 + fposmod(seed * 59.0, inner.size.x - 96.0), sand_top - 12.0)
 					pos = _object_pos(item, pos)
-					if not _draw_scape_sprite(kind, pos, Vector2(66, 66), seed % 2 == 0):
-						_draw_rosette(seed, inner, sand_top, Color("#3f8758"), 30.0)
+					if not _draw_scape_sprite(kind, pos, Vector2(66, 66) * lerp(0.55, 1.0, health), seed % 2 == 0, tint):
+						_draw_rosette(seed, inner, sand_top, Color("#3f8758").lerp(Color("#8e7b4f"), 1.0 - health), 30.0 * lerp(0.45, 1.0, health))
 				"red_root_floaters":
 					var pos := Vector2(inner.position.x + 44.0 + fposmod(seed * 67.0, inner.size.x - 88.0), inner.position.y + 46.0 + fposmod(seed * 11.0, 25.0))
 					pos = _object_pos(item, pos)
-					if not _draw_scape_sprite(kind, pos, Vector2(70, 70), seed % 2 == 0):
-						_draw_floaters(seed, inner)
+					if not _draw_scape_sprite(kind, pos, Vector2(70, 70) * lerp(0.55, 1.0, health), seed % 2 == 0, tint):
+						_draw_floaters(seed, inner, health)
 				"halimeda_macroalgae":
 					var pos := _object_pos(item, Vector2(inner.position.x + 48.0 + fposmod(seed * 59.0, inner.size.x - 96.0), sand_top - 16.0))
-					if not _draw_scape_sprite(kind, pos, Vector2(76, 76), seed % 2 == 0):
-						_draw_rosette(seed, inner, sand_top, Color("#78ba70"), 34.0)
+					if not _draw_scape_sprite(kind, pos, Vector2(76, 76) * lerp(0.55, 1.0, health), seed % 2 == 0, tint):
+						_draw_rosette(seed, inner, sand_top, Color("#78ba70").lerp(Color("#8e7b4f"), 1.0 - health), 34.0 * lerp(0.45, 1.0, health))
 				_:
 					_draw_rosette(seed, inner, sand_top, Color("#5ca86c"), 34.0)
 
-func _draw_carpet_patch(seed: int, inner: Rect2, sand_top: float) -> void:
+func _draw_carpet_patch(seed: int, inner: Rect2, sand_top: float, health: float = 1.0) -> void:
 	var x := inner.position.x + fposmod(seed * 31.0, inner.size.x)
 	var y := sand_top + 10.0 + fposmod(seed * 17.0, 46.0)
-	var leaf := Color("#5fbf73") if seed % 2 == 0 else Color("#7ad089")
-	_draw_leaf(Vector2(x, y), 12.0, 5.0, leaf)
+	var leaf := (Color("#5fbf73") if seed % 2 == 0 else Color("#7ad089")).lerp(Color("#8e7b4f"), 1.0 - health)
+	_draw_leaf(Vector2(x, y), 12.0 * lerp(0.55, 1.0, health), 5.0 * lerp(0.55, 1.0, health), leaf)
 
-func _draw_vallisneria(seed: int, inner: Rect2, sand_top: float) -> void:
+func _draw_vallisneria(seed: int, inner: Rect2, sand_top: float, health: float = 1.0) -> void:
 	var base_x := inner.position.x + 34.0 + fposmod(seed * 73.0, inner.size.x - 68.0)
-	var height := 72.0 + float((seed * 29) % 96)
+	var height: float = (72.0 + float((seed * 29) % 96)) * lerp(0.48, 1.0, health)
 	var base := Vector2(base_x, sand_top + 8.0)
 	var sway := sin(Time.get_ticks_msec() / 1200.0 + seed) * 10.0
-	for blade in range(4):
+	for blade in range(max(1, int(ceil(4.0 * health)))):
 		var offset := float(blade - 1) * 4.0
 		var tip := base + Vector2(offset + sway * (0.45 + blade * 0.08), -height + blade * 13.0)
-		draw_line(base + Vector2(offset, 0), tip, Color("#6cbd72"), 3.0, true)
+		draw_line(base + Vector2(offset, 0), tip, Color("#6cbd72").lerp(Color("#8e7b4f"), 1.0 - health), 3.0, true)
 
 func _draw_rosette(seed: int, inner: Rect2, sand_top: float, color: Color, height: float) -> void:
 	var base := Vector2(
@@ -1634,15 +1768,15 @@ func _draw_rosette(seed: int, inner: Rect2, sand_top: float, color: Color, heigh
 		draw_line(base, tip, color.darkened(0.08), 3.0, true)
 		_draw_leaf(tip, 16.0, 7.0, color.lightened(float(leaf_index % 2) * 0.05))
 
-func _draw_floaters(seed: int, inner: Rect2) -> void:
+func _draw_floaters(seed: int, inner: Rect2, health: float = 1.0) -> void:
 	var base := Vector2(
 		inner.position.x + 28.0 + fposmod(seed * 67.0, inner.size.x - 56.0),
 		inner.position.y + 26.0 + fposmod(seed * 11.0, 28.0)
 	)
-	for leaf_index in range(4):
+	for leaf_index in range(max(1, int(ceil(4.0 * health)))):
 		var pos := base + Vector2(cos(leaf_index * TAU / 4.0) * 9.0, sin(leaf_index * TAU / 4.0) * 4.0)
-		_draw_leaf(pos, 12.0, 7.0, Color("#76b86a"))
-		draw_line(pos, pos + Vector2(3.0, 14.0 + leaf_index * 3.0), Color("#c26163"), 1.1, true)
+		_draw_leaf(pos, 12.0 * lerp(0.55, 1.0, health), 7.0 * lerp(0.55, 1.0, health), Color("#76b86a").lerp(Color("#8e7b4f"), 1.0 - health))
+		draw_line(pos, pos + Vector2(3.0, (14.0 + leaf_index * 3.0) * health), Color("#c26163"), 1.1, true)
 
 func _draw_bubbles() -> void:
 	var inner := _tank_inner()
@@ -1747,10 +1881,27 @@ func _draw_substrate_settle_effect(progress: float) -> void:
 func _draw_front_glass() -> void:
 	var inner := _tank_inner()
 	_draw_equipment_inside_tank(inner)
+	_draw_glass_age(inner)
 	draw_line(inner.position + Vector2(24, 14), inner.position + Vector2(inner.size.x * 0.46, 14), Color(1, 1, 1, 0.12), 2.0, true)
 	draw_line(inner.position + Vector2(inner.size.x - 118, 30), inner.position + Vector2(inner.size.x - 34, 30), Color(1, 1, 1, 0.10), 2.0, true)
 	_draw_tank_sensors()
 	_draw_carry_cursor()
+
+func _draw_glass_age(inner: Rect2) -> void:
+	var maturity = state.get("maturity", {})
+	var glass_algae := float(maturity.get("glass_algae", 0.0))
+	var biofilm := float(maturity.get("biofilm", 0.0))
+	if biofilm > 0.12:
+		draw_rect(inner, Color(0.85, 0.96, 0.82, biofilm * 0.025), true)
+	if glass_algae <= 0.04:
+		return
+	for i in range(int(10 + glass_algae * 70.0)):
+		var pos := Vector2(
+			inner.position.x + 18.0 + fposmod(i * 97.0 + sin(i) * 31.0, inner.size.x - 36.0),
+			inner.position.y + 24.0 + fposmod(i * 43.0 + cos(i) * 19.0, inner.size.y - 72.0)
+		)
+		var radius := 3.0 + float(i % 5) * 1.4
+		draw_circle(pos, radius, Color(0.36, 0.62, 0.28, 0.035 + glass_algae * 0.075))
 
 func _draw_equipment_inside_tank(inner: Rect2) -> void:
 	var equipment = state.get("equipment", {})
@@ -2192,9 +2343,15 @@ func _refresh_ui() -> void:
 	if randomness_label:
 		var randomness = state.get("randomness", {})
 		var nursery: Array = state.get("nursery", [])
+		var maturity = state.get("maturity", {})
 		randomness_label.text = "Variability: %.0f%% - %s" % [
 			float(randomness.get("noise", 0.12)) * 100.0,
 			str(randomness.get("latest", "No recent ecosystem surprises."))
+		]
+		randomness_label.text += " - seasoned %.0f%% / mulm %.0f%% / old risk %.0f%%" % [
+			float(maturity.get("seasoning", 0.0)) * 100.0,
+			float(maturity.get("mulm", 0.0)) * 100.0,
+			float(maturity.get("old_tank_risk", 0.0)) * 100.0
 		]
 		if nursery.size() > 0:
 			randomness_label.text += " - nursery: %d brood(s)" % nursery.size()
