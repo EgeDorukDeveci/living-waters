@@ -214,8 +214,13 @@ func _client_position_valid(category: String, item_type: String, normalized: Vec
 func _valid_release_point(normalized: Vector2) -> bool:
 	return normalized.y > 0.10 and normalized.y < 0.86
 
-func _add_action_effect(kind: String) -> void:
-	action_effects.append({"kind": kind, "age": 0.0, "duration": _effect_duration(kind), "seed": Time.get_ticks_msec() % 1000})
+func _add_action_effect(kind: String, command: Dictionary = {}) -> void:
+	var effect := command.duplicate(true)
+	effect["kind"] = kind
+	effect["age"] = 0.0
+	effect["duration"] = _effect_duration(kind)
+	effect["seed"] = Time.get_ticks_msec() % 1000
+	action_effects.append(effect)
 
 func _effect_duration(kind: String) -> float:
 	match kind:
@@ -226,18 +231,30 @@ func _effect_duration(kind: String) -> float:
 		"weekly_maintenance":
 			return 3.4
 		"remove_uneaten_food", "scrape_algae", "trim_plants":
-			return 2.4
-		"top_off", "empty_skimmer_cup":
-			return 2.2
-		"service_filter":
 			return 2.7
+		"top_off", "empty_skimmer_cup":
+			return 2.6
+		"service_filter":
+			return 3.0
 		"test_water":
 			return 2.3
 		"dose_ammonia", "dose_minerals":
 			return 2.5
 		"set_substrate":
 			return 2.8
-	return 1.8
+		"add_animal", "remove_animal":
+			return 2.6
+		"place_scape_item", "move_scape_item", "remove_scape_item":
+			return 2.4
+		"reset_scape", "clear_scape":
+			return 2.7
+		"set_equipment":
+			return 2.0
+		"switch_system":
+			return 2.8
+		"create_aquarium", "select_aquarium":
+			return 1.8
+	return 1.6
 
 func _update_action_effects(delta: float) -> void:
 	var alive: Array[Dictionary] = []
@@ -1537,7 +1554,7 @@ func _remove_selected_scape() -> void:
 
 func _write_command(command: Dictionary) -> void:
 	var action := str(command.get("action", "command"))
-	_add_action_effect(action)
+	_add_action_effect(action, command)
 	command["timestamp"] = Time.get_datetime_string_from_system()
 	DirAccess.make_dir_recursive_absolute(root_dir.path_join("runtime"))
 	DirAccess.make_dir_recursive_absolute(commands_dir)
@@ -2144,86 +2161,334 @@ func _draw_action_effects() -> void:
 				_draw_vacuum_effect(progress)
 			"service_filter":
 				_draw_filter_service_effect(progress)
+			"remove_uneaten_food":
+				_draw_remove_food_effect(progress)
+			"scrape_algae":
+				_draw_scrape_algae_effect(progress)
+			"trim_plants":
+				_draw_trim_plants_effect(progress)
 			"top_off":
-				_draw_water_change_effect(progress)
+				_draw_top_off_effect(progress)
 			"empty_skimmer_cup":
-				_draw_filter_service_effect(progress)
+				_draw_empty_skimmer_effect(progress)
 			"test_water":
 				_draw_test_water_effect(progress)
 			"dose_ammonia", "dose_minerals":
-				_draw_dosing_effect(progress)
+				_draw_dosing_effect(progress, kind)
 			"set_substrate":
 				_draw_substrate_settle_effect(progress)
+			"add_animal":
+				_draw_net_effect(progress, true, effect)
+			"remove_animal":
+				_draw_net_effect(progress, false, effect)
+			"place_scape_item", "move_scape_item", "remove_scape_item":
+				_draw_scape_tool_effect(progress, kind, effect)
+			"reset_scape", "clear_scape":
+				_draw_scape_reset_effect(progress, kind)
+			"set_equipment":
+				_draw_equipment_adjust_effect(progress, effect)
+			"switch_system":
+				_draw_system_switch_effect(progress, effect)
+			"create_aquarium", "select_aquarium":
+				_draw_aquarium_card_effect(progress, kind, effect)
+
+func _ease_out_cubic(value: float) -> float:
+	var t: float = clamp(value, 0.0, 1.0)
+	return 1.0 - pow(1.0 - t, 3.0)
+
+func _ease_in_out_sine(value: float) -> float:
+	var t: float = clamp(value, 0.0, 1.0)
+	return -(cos(PI * t) - 1.0) * 0.5
+
+func _effect_fade(progress: float) -> float:
+	return clamp(min(progress / 0.16, (1.0 - progress) / 0.18), 0.0, 1.0)
+
+func _effect_point(effect: Dictionary, fallback: Vector2) -> Vector2:
+	var inner := _tank_inner()
+	var x: float = clamp(float(effect.get("x", fallback.x)), 0.04, 0.96)
+	var y: float = clamp(float(effect.get("y", fallback.y)), 0.04, 0.94)
+	return inner.position + Vector2(inner.size.x * x, inner.size.y * y)
+
+func _draw_tool_handle(from_pos: Vector2, to_pos: Vector2, color: Color, width: float = 5.0) -> void:
+	draw_line(from_pos, to_pos, Color(0.06, 0.08, 0.08, color.a * 0.45), width + 3.0, true)
+	draw_line(from_pos, to_pos, color, width, true)
 
 func _draw_feeding_effect(progress: float, seed: int) -> void:
 	var inner := _tank_inner()
-	for i in range(34):
-		var x := inner.position.x + inner.size.x * (0.22 + fposmod(float(i * 37 + seed) * 0.013, 0.52))
-		var fall := fposmod(progress * 1.25 + float(i % 9) * 0.07, 1.0)
-		var y := inner.position.y + 18.0 + fall * (inner.size.y * 0.46)
-		var alpha: float = 1.0 - max(0.0, progress - 0.72) / 0.28
-		draw_circle(Vector2(x, y), 2.0 + float(i % 3) * 0.7, Color(0.93, 0.62, 0.24, 0.70 * alpha))
-	draw_string(get_theme_default_font(), inner.position + Vector2(inner.size.x * 0.42, 28), "food drifting", HORIZONTAL_ALIGNMENT_CENTER, 180, 12, Color(0.98, 0.85, 0.58, 0.55))
+	var fade := _effect_fade(progress)
+	var drop_x := inner.position.x + inner.size.x * 0.36
+	var hand_y := inner.position.y - 8.0 + sin(progress * PI) * 12.0
+	draw_circle(Vector2(drop_x - 22.0, hand_y), 14.0, Color(0.86, 0.67, 0.48, 0.72 * fade))
+	draw_circle(Vector2(drop_x - 7.0, hand_y + 2.0), 8.0, Color(0.91, 0.72, 0.52, 0.78 * fade))
+	for r in range(3):
+		var radius := 22.0 + float(r) * 11.0 + progress * 18.0
+		draw_arc(Vector2(drop_x, inner.position.y + 15.0), radius, PI * 0.08, PI * 0.92, 26, Color(0.84, 0.95, 1.0, 0.13 * fade * (1.0 - float(r) * 0.24)), 1.4, true)
+	for i in range(30):
+		var jitter := sin(float(i * 17 + seed)) * 18.0
+		var x: float = drop_x + jitter + sin(progress * 6.0 + i) * 5.0
+		var delay := float(i % 7) * 0.055
+		var fall: float = clamp((progress - delay) / 0.78, 0.0, 1.0)
+		var y := inner.position.y + 18.0 + _ease_out_cubic(fall) * (inner.size.y * 0.52)
+		var alpha: float = fade * clamp(1.0 - fall * 0.42, 0.0, 1.0)
+		draw_circle(Vector2(x, y), 1.8 + float(i % 3) * 0.55, Color(0.94, 0.68, 0.30, 0.74 * alpha))
 
 func _draw_water_change_effect(progress: float) -> void:
 	var inner := _tank_inner()
-	var drain := sin(progress * PI)
-	var line_y := inner.position.y + 20.0 + drain * 46.0
-	draw_line(Vector2(inner.position.x + 20, line_y), Vector2(inner.end.x - 20, line_y), Color(0.88, 0.98, 1.0, 0.55), 3.0, true)
-	var hose_start := Vector2(inner.end.x - 88, inner.position.y + 18)
-	var hose_end := Vector2(inner.end.x - 38, inner.end.y - _substrate_height() - 18)
-	draw_line(hose_start, hose_end, Color(0.72, 0.82, 0.86, 0.82), 6.0, true)
-	for i in range(18):
-		var t := fposmod(progress * 2.5 + float(i) / 18.0, 1.0)
-		var pos := hose_start.lerp(hose_end, t)
-		draw_circle(pos, 2.2, Color(0.78, 0.95, 1.0, 0.56))
+	var fade := _effect_fade(progress)
+	var drain_phase: float = clamp(progress / 0.46, 0.0, 1.0)
+	var fill_phase: float = clamp((progress - 0.46) / 0.54, 0.0, 1.0)
+	var water_drop := sin(progress * PI) * 56.0
+	var line_y := inner.position.y + 18.0 + water_drop
+	draw_line(Vector2(inner.position.x + 18, line_y), Vector2(inner.end.x - 18, line_y), Color(0.88, 0.98, 1.0, 0.48 * fade), 3.0, true)
+	var siphon_start := Vector2(inner.end.x - 80, inner.position.y + 16)
+	var siphon_end := Vector2(inner.end.x - 34, inner.end.y - _substrate_height() - 22)
+	_draw_tool_handle(siphon_start, siphon_end, Color(0.74, 0.84, 0.88, 0.86 * fade), 6.0)
+	var bucket := Rect2(Vector2(inner.end.x + 14.0, inner.end.y - _substrate_height() - 84.0), Vector2(54, 48))
+	draw_rect(bucket, Color(0.12, 0.15, 0.15, 0.76 * fade), true)
+	draw_rect(bucket, Color(0.83, 0.92, 0.95, 0.45 * fade), false, 2.0, true)
+	draw_rect(Rect2(bucket.position + Vector2(8, 27 - 16 * fill_phase), Vector2(38, 13 + 16 * fill_phase)), Color(0.56, 0.82, 0.94, 0.46 * fade), true)
+	for i in range(22):
+		var t := fposmod((drain_phase + fill_phase) * 2.4 + float(i) / 22.0, 1.0)
+		var pos := siphon_start.lerp(siphon_end, t)
+		draw_circle(pos, 2.0, Color(0.78, 0.95, 1.0, 0.48 * fade))
+	if progress > 0.46:
+		var pour_start := Vector2(inner.position.x + 72.0, inner.position.y - 2.0)
+		var pour_end := Vector2(inner.position.x + 108.0, inner.position.y + 36.0)
+		_draw_tool_handle(pour_start, pour_end, Color(0.82, 0.93, 0.96, 0.78 * fade), 5.0)
+		for i in range(10):
+			draw_circle(pour_end + Vector2(sin(i) * 7.0, fposmod(fill_phase * 70.0 + i * 9.0, 54.0)), 2.0, Color(0.78, 0.94, 1.0, 0.42 * fade))
 
 func _draw_vacuum_effect(progress: float) -> void:
 	var inner := _tank_inner()
 	var bed_y := inner.end.y - _substrate_height()
-	var x: float = lerp(inner.position.x + 90.0, inner.end.x - 130.0, progress)
-	draw_line(Vector2(x, inner.position.y + inner.size.y * 0.44), Vector2(x + 36, bed_y + 10), Color(0.82, 0.87, 0.82, 0.76), 5.0, true)
-	draw_rect(Rect2(Vector2(x + 22, bed_y - 12), Vector2(36, 34)), Color(0.90, 0.96, 0.90, 0.25), false, 2.0, true)
+	var fade := _effect_fade(progress)
+	var sweep: float = _ease_in_out_sine(fposmod(progress * 1.25, 1.0))
+	var x: float = lerp(inner.position.x + 88.0, inner.end.x - 132.0, sweep)
+	_draw_tool_handle(Vector2(x, inner.position.y + inner.size.y * 0.38), Vector2(x + 36, bed_y + 10), Color(0.82, 0.87, 0.82, 0.78 * fade), 5.0)
+	draw_rect(Rect2(Vector2(x + 22, bed_y - 12), Vector2(36, 34)), Color(0.90, 0.96, 0.90, 0.20 * fade), false, 2.0, true)
 	for i in range(14):
 		var pos := Vector2(x + 18 + fposmod(i * 11.0, 54.0), bed_y - 8 - fposmod(progress * 90.0 + i * 17.0, 46.0))
-		draw_circle(pos, 1.7, Color(0.42, 0.31, 0.18, 0.35 * (1.0 - progress * 0.4)))
+		draw_circle(pos, 1.7, Color(0.42, 0.31, 0.18, 0.35 * fade * (1.0 - progress * 0.4)))
 
 func _draw_filter_service_effect(progress: float) -> void:
 	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
 	var pos := Vector2(inner.end.x - 164, inner.end.y - _substrate_height() - 110)
-	draw_rect(Rect2(pos, Vector2(74, 58)), Color(0.07, 0.11, 0.12, 0.82), true)
-	draw_rect(Rect2(pos, Vector2(74, 58)), Color(0.60, 0.82, 0.82, 0.36), false, 1.4, true)
+	draw_rect(Rect2(pos, Vector2(74, 58)), Color(0.07, 0.11, 0.12, 0.82 * fade), true)
+	draw_rect(Rect2(pos, Vector2(74, 58)), Color(0.60, 0.82, 0.82, 0.36 * fade), false, 1.4, true)
+	var lift := sin(progress * PI) * 34.0
+	draw_rect(Rect2(pos + Vector2(18, 18 - lift), Vector2(36, 28)), Color(0.25, 0.40, 0.36, 0.74 * fade), true)
+	draw_rect(Rect2(pos + Vector2(18, 18 - lift), Vector2(36, 28)), Color(0.78, 0.96, 0.88, 0.35 * fade), false, 1.2, true)
 	for i in range(6):
 		var y := pos.y + 12 + i * 8
 		var pulse := sin(progress * TAU * 3.0 + i) * 0.5 + 0.5
-		draw_line(Vector2(pos.x + 10, y), Vector2(pos.x + 58 + pulse * 8, y), Color(0.62, 0.92, 1.0, 0.55), 2.0, true)
-	draw_string(get_theme_default_font(), pos + Vector2(-6, -8), "filter rinse", HORIZONTAL_ALIGNMENT_CENTER, 88, 12, Color(0.82, 0.96, 0.96, 0.62))
+		draw_line(Vector2(pos.x + 10, y), Vector2(pos.x + 58 + pulse * 8, y), Color(0.62, 0.92, 1.0, 0.46 * fade), 2.0, true)
+
+func _draw_remove_food_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var bed_y := inner.end.y - _substrate_height()
+	var tip := Vector2(lerp(inner.position.x + inner.size.x * 0.28, inner.position.x + inner.size.x * 0.62, _ease_in_out_sine(progress)), bed_y - 24.0)
+	_draw_tool_handle(tip + Vector2(-44, -72), tip, Color(0.78, 0.88, 0.84, 0.78 * fade), 5.0)
+	draw_circle(tip + Vector2(-48, -80), 14.0, Color(0.45, 0.58, 0.52, 0.35 * fade), false, 3.0, true)
+	for i in range(12):
+		var crumb := Vector2(tip.x + sin(i * 2.1) * (26.0 - progress * 18.0), bed_y - 8.0 - float(i % 4) * 4.0)
+		var sucked := crumb.lerp(tip, clamp(progress * 1.4 - float(i) * 0.04, 0.0, 1.0))
+		draw_circle(sucked, 1.8, Color(0.76, 0.47, 0.20, 0.56 * fade * (1.0 - progress * 0.58)))
+
+func _draw_scrape_algae_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var x: float = lerp(inner.position.x + 36.0, inner.end.x - 96.0, _ease_in_out_sine(progress))
+	var top := inner.position.y + 68.0
+	var bottom := inner.end.y - _substrate_height() - 32.0
+	var blade := Rect2(Vector2(x, top + sin(progress * TAU) * 8.0), Vector2(18, 92))
+	draw_rect(Rect2(inner.position + Vector2(26, 54), Vector2(max(0.0, x - inner.position.x - 26.0), inner.size.y - _substrate_height() - 94)), Color(0.24, 0.55, 0.20, 0.035 * fade), true)
+	_draw_tool_handle(blade.position + Vector2(9, -44), blade.position + Vector2(9, 8), Color(0.72, 0.80, 0.76, 0.82 * fade), 4.0)
+	draw_rect(blade, Color(0.87, 0.94, 0.90, 0.72 * fade), true)
+	draw_line(Vector2(x + 18, top - 18), Vector2(x + 18, bottom), Color(0.96, 1.0, 0.96, 0.24 * fade), 2.0, true)
+	for i in range(8):
+		draw_circle(Vector2(x + 14 + sin(i) * 6.0, top + 24 + i * 14.0), 1.7, Color(0.36, 0.70, 0.28, 0.36 * fade))
+
+func _draw_trim_plants_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var bed_y := inner.end.y - _substrate_height()
+	var target := Vector2(inner.position.x + inner.size.x * 0.36, bed_y - 86.0)
+	var open_amount := sin(progress * TAU * 3.0) * 8.0
+	_draw_tool_handle(target + Vector2(-84, -54), target + Vector2(-8, -4), Color(0.72, 0.76, 0.78, 0.78 * fade), 4.0)
+	draw_line(target, target + Vector2(46, -18 - open_amount), Color(0.88, 0.92, 0.92, 0.72 * fade), 3.0, true)
+	draw_line(target, target + Vector2(45, 18 + open_amount), Color(0.88, 0.92, 0.92, 0.72 * fade), 3.0, true)
+	for i in range(12):
+		var leaf := target + Vector2(28 + sin(i) * 30.0, 12 + fposmod(progress * 46.0 + i * 11.0, 58.0))
+		draw_line(leaf, leaf + Vector2(8 + sin(i), 4 + cos(i)), Color(0.34, 0.76, 0.30, 0.48 * fade), 2.0, true)
+
+func _draw_top_off_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var cup_pos := Vector2(inner.position.x + 78.0, inner.position.y - 24.0 + sin(progress * PI) * 10.0)
+	draw_rect(Rect2(cup_pos, Vector2(48, 30)), Color(0.70, 0.86, 0.92, 0.30 * fade), true)
+	draw_rect(Rect2(cup_pos, Vector2(48, 30)), Color(0.92, 0.98, 1.0, 0.56 * fade), false, 1.4, true)
+	for i in range(12):
+		var y := inner.position.y + 12.0 + fposmod(progress * 90.0 + i * 9.0, 56.0)
+		draw_circle(Vector2(cup_pos.x + 52.0 + sin(i) * 4.0, y), 1.8, Color(0.75, 0.94, 1.0, 0.44 * fade))
+	draw_line(Vector2(inner.position.x + 22.0, inner.position.y + 20.0), Vector2(inner.end.x - 22.0, inner.position.y + 20.0 - sin(progress * PI) * 5.0), Color(0.85, 0.97, 1.0, 0.26 * fade), 2.0, true)
+
+func _draw_empty_skimmer_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var pos := Vector2(inner.end.x - 132.0, inner.position.y + 62.0)
+	draw_rect(Rect2(pos, Vector2(40, 64)), Color(0.16, 0.19, 0.20, 0.64 * fade), true)
+	draw_rect(Rect2(pos + Vector2(7, 8), Vector2(26, 26)), Color(0.38, 0.22, 0.11, 0.70 * fade * (1.0 - progress * 0.78)), true)
+	var tilt := sin(progress * PI)
+	draw_line(pos + Vector2(20, 8), pos + Vector2(56 + tilt * 22.0, -18 + tilt * 16.0), Color(0.52, 0.30, 0.14, 0.62 * fade), 4.0, true)
+	for i in range(8):
+		draw_circle(pos + Vector2(52 + float(i) * 5.0, -12.0 + float(i % 3) * 5.0 + progress * 20.0), 2.0, Color(0.42, 0.25, 0.13, 0.38 * fade))
 
 func _draw_test_water_effect(progress: float) -> void:
 	var inner := _tank_inner()
-	var pos := Vector2(inner.position.x + inner.size.x * 0.56, inner.position.y + 46)
-	draw_line(pos + Vector2(0, -28), pos + Vector2(0, 42), Color(0.92, 0.96, 0.92, 0.65), 3.0, true)
-	draw_rect(Rect2(pos + Vector2(-12, 18), Vector2(24, 42)), Color(0.36, 0.78, 0.74, 0.18 + 0.25 * sin(progress * PI)), true)
-	draw_rect(Rect2(pos + Vector2(-12, 18), Vector2(24, 42)), Color(0.90, 0.96, 0.92, 0.58), false, 1.2, true)
-	draw_circle(pos + Vector2(0, lerp(-12.0, 18.0, progress)), 4.0, Color(0.80, 0.94, 1.0, 0.68))
+	var fade := _effect_fade(progress)
+	var pos := Vector2(inner.position.x + inner.size.x * 0.58, inner.position.y + 50)
+	_draw_tool_handle(pos + Vector2(-26, -34), pos + Vector2(0, 22), Color(0.92, 0.96, 0.92, 0.66 * fade), 3.0)
+	var fill: float = clamp((progress - 0.2) / 0.45, 0.0, 1.0)
+	draw_rect(Rect2(pos + Vector2(-12, 18), Vector2(24, 42)), Color(0.36, 0.78, 0.74, (0.16 + 0.25 * fill) * fade), true)
+	draw_rect(Rect2(pos + Vector2(-12, 18), Vector2(24, 42)), Color(0.90, 0.96, 0.92, 0.58 * fade), false, 1.2, true)
+	draw_circle(pos + Vector2(0, lerp(-10.0, 20.0, progress)), 4.0, Color(0.80, 0.94, 1.0, 0.68 * fade))
+	var strip := Rect2(pos + Vector2(34, 18), Vector2(46, 10))
+	for i in range(4):
+		var swatch := Color.from_hsv(0.12 + float(i) * 0.16, 0.52, 0.86, 0.55 * fade)
+		draw_rect(Rect2(strip.position + Vector2(0, i * 12), strip.size), swatch, true)
 
-func _draw_dosing_effect(progress: float) -> void:
+func _draw_dosing_effect(progress: float, kind: String) -> void:
 	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
 	var dropper := Vector2(inner.position.x + inner.size.x * 0.50, inner.position.y + 28)
-	draw_line(dropper + Vector2(-22, -8), dropper + Vector2(22, -8), Color(0.86, 0.90, 0.88, 0.75), 5.0, true)
+	var dose_color := Color(0.93, 0.66, 0.26, 0.64)
+	if kind == "dose_minerals":
+		dose_color = Color(0.56, 0.84, 1.0, 0.60)
+	_draw_tool_handle(dropper + Vector2(-24, -10), dropper + Vector2(24, -10), Color(0.86, 0.90, 0.88, 0.75 * fade), 5.0)
+	draw_rect(Rect2(dropper + Vector2(-18, -34), Vector2(36, 20)), dose_color.darkened(0.25), true)
+	draw_rect(Rect2(dropper + Vector2(-18, -34), Vector2(36, 20)), Color(1, 1, 1, 0.32 * fade), false, 1.0, true)
 	for i in range(7):
 		var y := dropper.y + fposmod(progress * 160.0 + i * 23.0, inner.size.y * 0.45)
-		draw_circle(Vector2(dropper.x + sin(i) * 16.0, y), 3.0, Color(0.75, 0.64, 0.24, 0.64))
-	draw_string(get_theme_default_font(), dropper + Vector2(-60, 10), "cycle dose", HORIZONTAL_ALIGNMENT_CENTER, 120, 12, Color(0.95, 0.85, 0.42, 0.58))
+		draw_circle(Vector2(dropper.x + sin(i) * 16.0, y), 3.0, Color(dose_color.r, dose_color.g, dose_color.b, 0.56 * fade))
+	for r in range(4):
+		draw_circle(dropper + Vector2(sin(r) * 18.0, inner.size.y * 0.26 + r * 12.0), 18.0 + progress * 44.0 + r * 10.0, Color(dose_color.r, dose_color.g, dose_color.b, 0.035 * fade * (1.0 - r * 0.12)))
 
 func _draw_substrate_settle_effect(progress: float) -> void:
 	var inner := _tank_inner()
 	var bed_y := inner.end.y - _substrate_height()
+	var fade := _effect_fade(progress)
+	var rake_x: float = lerp(inner.position.x + 76.0, inner.end.x - 142.0, _ease_in_out_sine(progress))
+	_draw_tool_handle(Vector2(rake_x - 60.0, bed_y - 80.0), Vector2(rake_x, bed_y - 8.0), Color(0.72, 0.60, 0.42, 0.72 * fade), 4.0)
+	for tooth in range(5):
+		draw_line(Vector2(rake_x + tooth * 8.0, bed_y - 12.0), Vector2(rake_x + tooth * 8.0, bed_y + 6.0), Color(0.82, 0.68, 0.46, 0.58 * fade), 1.4, true)
 	for i in range(44):
 		var x := inner.position.x + fposmod(i * 31.0, inner.size.x)
 		var y := bed_y - fposmod((1.0 - progress) * 82.0 + i * 13.0, 78.0)
-		draw_circle(Vector2(x, y), 1.5 + float(i % 3), Color(0.72, 0.58, 0.36, 0.28 * (1.0 - progress)))
-	draw_line(Vector2(inner.position.x + 16, bed_y), Vector2(inner.end.x - 16, bed_y), Color(0.95, 0.86, 0.58, 0.28 * (1.0 - progress)), 3.0, true)
+		draw_circle(Vector2(x, y), 1.5 + float(i % 3), Color(0.72, 0.58, 0.36, 0.28 * fade * (1.0 - progress)))
+	draw_line(Vector2(inner.position.x + 16, bed_y), Vector2(inner.end.x - 16, bed_y), Color(0.95, 0.86, 0.58, 0.26 * fade * (1.0 - progress)), 3.0, true)
+
+func _draw_net_effect(progress: float, adding: bool, effect: Dictionary) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var target := _effect_point(effect, Vector2(0.52, 0.42))
+	var entry := Vector2(inner.end.x + 80.0, inner.position.y + 42.0)
+	var exit := Vector2(inner.position.x + 60.0, inner.position.y - 54.0)
+	var travel: float = _ease_in_out_sine(progress)
+	var net_pos := entry.lerp(target, min(travel * 1.5, 1.0)) if adding else target.lerp(exit, max(0.0, (travel - 0.18) / 0.82))
+	_draw_tool_handle(net_pos + Vector2(42.0, -46.0), net_pos + Vector2(6.0, -4.0), Color(0.72, 0.78, 0.75, 0.72 * fade), 4.0)
+	draw_arc(net_pos, 24.0, -PI * 0.22, PI * 1.22, 28, Color(0.86, 0.96, 0.94, 0.62 * fade), 2.0, true)
+	draw_line(net_pos + Vector2(-22, 0), net_pos + Vector2(22, 0), Color(0.86, 0.96, 0.94, 0.45 * fade), 1.4, true)
+	for i in range(5):
+		draw_line(net_pos + Vector2(-18 + i * 9.0, -16), net_pos + Vector2(-12 + i * 6.0, 16), Color(0.86, 0.96, 0.94, 0.20 * fade), 1.0, true)
+	var fish_t: float = clamp((progress - 0.34) / 0.42, 0.0, 1.0)
+	var fish_alpha: float = fade * (fish_t if adding else 1.0 - fish_t)
+	var fish_pos := target + Vector2(sin(progress * TAU * 2.0) * 12.0, cos(progress * TAU) * 4.0)
+	draw_ellipse(fish_pos, 13.0, 5.0, Color(0.96, 0.42, 0.32, 0.68 * fish_alpha), true)
+	draw_polygon([fish_pos + Vector2(-12, 0), fish_pos + Vector2(-22, -7), fish_pos + Vector2(-22, 7)], [Color(0.96, 0.42, 0.32, 0.62 * fish_alpha)])
+
+func _draw_scape_tool_effect(progress: float, kind: String, effect: Dictionary) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var target := _effect_point(effect, Vector2(0.50, 0.76))
+	var hand := target + Vector2(-58.0 + sin(progress * PI) * 18.0, -96.0)
+	_draw_tool_handle(hand, target + Vector2(-8, -6), Color(0.74, 0.68, 0.60, 0.72 * fade), 5.0)
+	var item_color := Color(0.46, 0.36, 0.26, 0.72 * fade)
+	if str(effect.get("category", "")) == "plants":
+		item_color = Color(0.25, 0.68, 0.28, 0.72 * fade)
+	elif str(effect.get("category", "")) == "rocks":
+		item_color = Color(0.50, 0.50, 0.46, 0.72 * fade)
+	elif str(effect.get("category", "")) == "corals":
+		item_color = Color(0.93, 0.54, 0.62, 0.72 * fade)
+	var lift := sin(progress * PI) * 28.0
+	var item_pos := target - Vector2(0, lift)
+	if kind == "remove_scape_item":
+		item_pos = target.lerp(hand, _ease_out_cubic(progress))
+		item_color.a *= 1.0 - progress * 0.55
+	draw_circle(item_pos, 18.0, item_color)
+	draw_circle(item_pos + Vector2(-5, -5), 6.0, item_color.lightened(0.22))
+	if kind == "move_scape_item":
+		draw_line(target + Vector2(-54, 24), target + Vector2(54, 24), Color(0.84, 0.95, 1.0, 0.26 * fade), 2.0, true)
+		draw_circle(target + Vector2(-54, 24), 5.0, Color(0.84, 0.95, 1.0, 0.30 * fade), false, 1.4, true)
+
+func _draw_scape_reset_effect(progress: float, kind: String) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var bed_y := inner.end.y - _substrate_height()
+	var sweep_x: float = lerp(inner.position.x - 40.0, inner.end.x + 40.0, _ease_in_out_sine(progress))
+	draw_rect(Rect2(Vector2(sweep_x - 46, inner.position.y + 34), Vector2(38, inner.size.y - _substrate_height() - 36)), Color(0.90, 0.96, 0.92, 0.13 * fade), true)
+	for i in range(14):
+		var pos := Vector2(sweep_x - 34.0 + sin(i) * 18.0, bed_y - 12.0 - fposmod(i * 15.0 + progress * 42.0, 88.0))
+		draw_circle(pos, 2.0 + float(i % 3), Color(0.50, 0.42, 0.32, 0.24 * fade))
+	if kind == "reset_scape":
+		draw_rect(Rect2(inner.position + Vector2(28, 38), Vector2(inner.size.x - 56, inner.size.y - _substrate_height() - 70)), Color(0.76, 0.90, 1.0, 0.055 * fade), false, 1.2, true)
+
+func _draw_equipment_adjust_effect(progress: float, effect: Dictionary) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var equipment := str(effect.get("equipment", effect.get("target", ""))).to_lower()
+	var pos := Vector2(inner.end.x - 98.0, inner.position.y + 72.0)
+	if "light" in equipment:
+		pos = Vector2(inner.position.x + inner.size.x * 0.5, inner.position.y + 12.0)
+	elif "heater" in equipment:
+		pos = Vector2(inner.end.x - 70.0, inner.end.y - _substrate_height() - 118.0)
+	elif "air" in equipment:
+		pos = Vector2(inner.position.x + 74.0, inner.end.y - _substrate_height() - 70.0)
+	_draw_tool_handle(pos + Vector2(58, -44), pos + Vector2(8, 4), Color(0.78, 0.80, 0.76, 0.74 * fade), 4.0)
+	draw_circle(pos, 24.0 + sin(progress * TAU * 2.0) * 4.0, Color(0.84, 0.95, 1.0, 0.10 * fade), false, 2.0, true)
+	for i in range(3):
+		draw_arc(pos, 34.0 + i * 10.0, -PI * 0.25, PI * 0.25, 18, Color(0.78, 0.94, 1.0, 0.16 * fade), 1.2, true)
+
+func _draw_system_switch_effect(progress: float, effect: Dictionary) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var system := str(effect.get("system", "")).to_lower()
+	var target_color := Color(0.44, 0.72, 0.88, 0.10 * fade)
+	if system == "freshwater":
+		target_color = Color(0.46, 0.78, 0.60, 0.10 * fade)
+	var wipe_width := inner.size.x * _ease_in_out_sine(progress)
+	draw_rect(Rect2(inner.position, Vector2(wipe_width, inner.size.y)), target_color, true)
+	for i in range(16):
+		var pos := Vector2(inner.position.x + fposmod(progress * inner.size.x * 1.4 + i * 58.0, inner.size.x), inner.position.y + 42.0 + fposmod(i * 31.0, inner.size.y - _substrate_height() - 72.0))
+		var color := Color(0.92, 0.92, 1.0, 0.18 * fade)
+		if system == "freshwater":
+			color = Color(0.74, 0.92, 0.72, 0.18 * fade)
+		draw_circle(pos, 2.0 + float(i % 4), color)
+
+func _draw_aquarium_card_effect(progress: float, kind: String, effect: Dictionary) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var scale := 0.86 + _ease_out_cubic(progress) * 0.14
+	var card_size := Vector2(130, 72) * scale
+	var pos := inner.position + Vector2(inner.size.x * 0.5 - card_size.x * 0.5, inner.size.y * 0.22 - card_size.y * 0.5)
+	draw_rect(Rect2(pos, card_size), Color(0.08, 0.11, 0.10, 0.74 * fade), true)
+	draw_rect(Rect2(pos, card_size), Color(0.76, 0.94, 1.0, 0.42 * fade), false, 1.4, true)
+	draw_rect(Rect2(pos + Vector2(12, 16), Vector2(card_size.x - 24, 28)), Color(0.40, 0.68, 0.76, 0.20 * fade), true)
+	draw_line(pos + Vector2(18, 52), pos + Vector2(card_size.x - 18, 52), Color(0.92, 0.96, 0.84, 0.32 * fade), 2.0, true)
+	if kind == "create_aquarium":
+		draw_line(pos + Vector2(card_size.x - 28, 18), pos + Vector2(card_size.x - 28, 38), Color(0.70, 0.94, 0.72, 0.72 * fade), 2.0, true)
+		draw_line(pos + Vector2(card_size.x - 38, 28), pos + Vector2(card_size.x - 18, 28), Color(0.70, 0.94, 0.72, 0.72 * fade), 2.0, true)
 
 func _draw_front_glass() -> void:
 	var inner := _tank_inner()
