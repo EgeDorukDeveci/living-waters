@@ -90,6 +90,29 @@ def test_plants_and_macroalgae_use_some_phosphate() -> None:
     assert state["water"]["phosphate_mg_l"] < before
 
 
+def test_leftover_food_mineralizes_slowly() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Slow Food Test", "freshwater", 80)
+    sim = AquariumSimulation(species, state)
+    sim.feed(0.6)
+    sim.advance(6 * 3600)
+    assert state["water"]["ammonia_mg_l"] < 0.04
+    assert state["food"]["available"] < 0.6
+    assert state["food"]["decaying"] > 0.0
+    sim.advance(42 * 3600)
+    assert state["water"]["ammonia_mg_l"] < 0.18
+
+
+def test_day_night_clock_fields_are_published() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    sim.advance(5)
+    assert_between(float(state["clock"]["local_hour"]), 0.0, 24.0, "local hour")
+    assert state["clock"]["day_phase"] in {"dawn", "day", "dusk", "night"}
+    assert isinstance(state["clock"]["lights_on"], bool)
+
+
 def test_tank_maturity_changes_with_time_and_neglect() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = clear_state(species, "Old Desk Tank", "freshwater", 60)
@@ -526,6 +549,8 @@ def main() -> int:
         test_water_change_shock_depends_on_replacement_water,
         test_phosphate_can_be_reduced_by_water_change_and_media,
         test_plants_and_macroalgae_use_some_phosphate,
+        test_leftover_food_mineralizes_slowly,
+        test_day_night_clock_fields_are_published,
         test_tank_maturity_changes_with_time_and_neglect,
         test_fish_routine_reflects_surface_stress,
         test_default_tank_starts_empty,

@@ -225,7 +225,7 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "equipment": {
             "filter": default_filter(),
             "heater": {"enabled": True, "health": 0.98, "target_c": 23.5, "placement_near_flow": True, "thermometer_present": True},
-            "light": {"enabled": True, "health": 0.99, "hours_per_day": 8.0, "timer_enabled": True, "plant_spectrum": 0.82},
+            "light": {"enabled": True, "health": 0.99, "hours_per_day": 8.0, "start_hour": 10.0, "timer_enabled": True, "plant_spectrum": 0.82},
             "air_pump": {"enabled": True, "health": 0.97, "output": 0.5},
             "checklist": {
                 "tank": True,
@@ -255,6 +255,9 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "last_real_timestamp": time.time(),
             "total_simulated_seconds": 0.0,
             "speed": 1.0,
+            "local_hour": datetime.now().hour + datetime.now().minute / 60.0,
+            "day_phase": "day",
+            "lights_on": True,
             "paused": False,
             "vacation_mode": False,
             "emergency_pause": False,
@@ -624,6 +627,7 @@ class AquariumSimulation:
         equipment.setdefault("light", {"enabled": True, "health": 0.99, "hours_per_day": 8.0, "timer_enabled": True, "plant_spectrum": 0.82})
         equipment["light"].setdefault("timer_enabled", True)
         equipment["light"].setdefault("plant_spectrum", 0.82)
+        equipment["light"].setdefault("start_hour", 10.0)
         equipment["light"].setdefault("failure_mode", "")
         equipment.setdefault("air_pump", {"enabled": True, "health": 0.97, "output": 0.5})
         equipment["air_pump"].setdefault("failure_mode", "")
@@ -641,6 +645,17 @@ class AquariumSimulation:
         randomness.setdefault("noise", 0.12)
         randomness.setdefault("latest", "No recent ecosystem surprises.")
         randomness.setdefault("latest_at", "")
+        clock = self.state.setdefault("clock", {})
+        clock.setdefault("simulated_at", now_iso())
+        clock.setdefault("last_real_timestamp", time.time())
+        clock.setdefault("total_simulated_seconds", 0.0)
+        clock.setdefault("speed", 1.0)
+        clock.setdefault("local_hour", datetime.now().hour + datetime.now().minute / 60.0)
+        clock.setdefault("day_phase", "day")
+        clock.setdefault("lights_on", False)
+        clock.setdefault("paused", False)
+        clock.setdefault("vacation_mode", False)
+        clock.setdefault("emergency_pause", False)
         self.state.setdefault("last_test_results", {})
         self.state.setdefault("nursery", [])
         animals = self.state.setdefault("animals", [])
@@ -1241,12 +1256,34 @@ class AquariumSimulation:
         maintenance["issues"] = issues
         return maintenance
 
-    def _lighting_window(self) -> tuple[bool, float]:
+    def _time_context(self) -> dict[str, Any]:
         light = self.state["equipment"]["light"]
         hours_per_day = clamp(float(light.get("hours_per_day", 8.0)), 0, 16)
         hour = datetime.now().hour + datetime.now().minute / 60.0
-        start = 12.0 - hours_per_day / 2.0
-        return bool(light.get("enabled", True)) and start <= hour < start + hours_per_day, hours_per_day
+        start = clamp(float(light.get("start_hour", 10.0)), 0.0, 23.75)
+        end = (start + hours_per_day) % 24.0
+        if hours_per_day <= 0.0 or not bool(light.get("enabled", True)):
+            lights_on = False
+        elif start + hours_per_day <= 24.0:
+            lights_on = start <= hour < start + hours_per_day
+        else:
+            lights_on = hour >= start or hour < end
+        phase = "night"
+        if lights_on:
+            phase = "day"
+        elif 5.5 <= hour < 8.0:
+            phase = "dawn"
+        elif 18.0 <= hour < 21.0:
+            phase = "dusk"
+        clock = self.state.setdefault("clock", {})
+        clock["local_hour"] = round(hour, 2)
+        clock["day_phase"] = phase
+        clock["lights_on"] = lights_on
+        return {"lights_on": lights_on, "light_hours": hours_per_day, "local_hour": hour, "day_phase": phase}
+
+    def _lighting_window(self) -> tuple[bool, float]:
+        context = self._time_context()
+        return bool(context["lights_on"]), float(context["light_hours"])
 
     def _add_animal_risk(self, animal_risks: dict[str, dict[str, Any]], animal: dict[str, Any], stress: float, damage_per_hour: float, reason: str) -> None:
         risk = animal_risks.setdefault(animal["id"], {"stress": 0.0, "damage_per_hour": 0.0, "injury_per_hour": 0.0, "reasons": []})
@@ -1443,21 +1480,32 @@ class AquariumSimulation:
         consumed = min(food["available"], appetite_demand * hours * 0.32 * self._noise_multiplier(variability * 0.65, "feeding"))
         feeding_shares = self._feeding_distribution(living, consumed)
         food["available"] -= consumed
-        food["decaying"] += max(0.0, food["available"] - 0.12) * hours * 0.06 * self._noise_multiplier(variability * 0.45, "food_decay")
+        leftover_decay = min(
+            food["available"],
+            max(0.0, food["available"] - 0.08) * hours * 0.018 * self._noise_multiplier(variability * 0.45, "food_decay"),
+        )
+        food["available"] = max(0.0, food["available"] - leftover_decay)
+        food["decaying"] += leftover_decay
+        mineralized_food = min(food["decaying"], food["decaying"] * hours * 0.010 * self._noise_multiplier(variability * 0.35, "food_mineralization"))
+        food["decaying"] = max(0.0, food["decaying"] - mineralized_food * 0.72)
         if food["available"] > 0.9 or food["decaying"] > 0.55:
             self._record_once("overfeeding", "warning", "Uneaten food is decaying", "Overfeeding is producing extra ammonia risk. Feed less and remove leftovers.")
         substrate_depth = float(self.state["aquarium"].get("substrate_depth_cm", 5.0))
         substrate_trap = clamp((substrate_depth - 3.0) / 5.0, 0.0, 0.55)
-        waste_input = (total_bioload * 0.0015 + food["decaying"] * 0.035) * hours * self._noise_multiplier(variability * 0.5, "waste_input")
-        water["organic_waste"] = clamp(water["organic_waste"] + waste_input * 0.7 + scape_metrics["maintenance_load"] * hours * 0.0015, 0, 5)
+        waste_input = (
+            total_bioload * 0.00055 * hours
+            + mineralized_food * 0.06
+            + water["organic_waste"] * hours * 0.00035
+        ) * self._noise_multiplier(variability * 0.5, "waste_input")
+        water["organic_waste"] = clamp(water["organic_waste"] + waste_input * 0.45 + leftover_decay * 0.35 + mineralized_food * 0.32 + scape_metrics["maintenance_load"] * hours * 0.0012, 0, 5)
         water["organic_waste"] = clamp(water["organic_waste"] + substrate_trap * water["organic_waste"] * hours * 0.001, 0, 5)
         water["ammonia_mg_l"] += waste_input
         maturity = self.state.get("maturity", {})
         water["phosphate_mg_l"] = clamp(
             water.get("phosphate_mg_l", 0.0)
-            + food["decaying"] * hours * 0.006
-            + water["organic_waste"] * hours * 0.00025
-            + float(maturity.get("mulm", 0.0)) * hours * 0.00035,
+            + mineralized_food * 0.010
+            + water["organic_waste"] * hours * 0.00012
+            + float(maturity.get("mulm", 0.0)) * hours * 0.00016,
             0,
             10,
         )

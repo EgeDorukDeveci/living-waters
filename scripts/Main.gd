@@ -1401,13 +1401,27 @@ func _zone_y(zone: String, ratio: float) -> float:
 	return lerp(inner.position.y + inner.size.y * 0.32, water_bottom - 62.0, ratio)
 
 func _draw_room() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), Color("#071013"))
+	var light_factor := _clock_light_factor()
+	draw_rect(Rect2(Vector2.ZERO, size), Color("#05090c").lerp(Color("#071013"), light_factor))
 	var aquarium := _aquarium_rect()
-	draw_rect(Rect2(0, 0, size.x, TOP_BAR + 22.0), Color("#0b1418"))
-	draw_rect(Rect2(aquarium.position + Vector2(-6, -6), aquarium.size + Vector2(12, 12)), Color("#0f1d21"))
+	draw_rect(Rect2(0, 0, size.x, TOP_BAR + 22.0), Color("#070c10").lerp(Color("#0b1418"), light_factor))
+	draw_rect(Rect2(aquarium.position + Vector2(-6, -6), aquarium.size + Vector2(12, 12)), Color("#0a1114").lerp(Color("#0f1d21"), light_factor))
 	draw_rect(Rect2(EDGE, 26, 15, 20), Color("#ff776a"))
 	draw_rect(Rect2(EDGE + 20, 18, 15, 28), Color("#5bc5dc"))
 	draw_rect(Rect2(EDGE + 40, 12, 15, 34), Color("#f2cf68"))
+
+func _clock_light_factor() -> float:
+	var clock = state.get("clock", {})
+	var phase := str(clock.get("day_phase", "day"))
+	if bool(clock.get("lights_on", true)):
+		return 1.0
+	match phase:
+		"dawn":
+			return 0.42
+		"dusk":
+			return 0.36
+		_:
+			return 0.16
 
 func _draw_aquarium() -> void:
 	var tank := _aquarium_rect()
@@ -1433,6 +1447,7 @@ func _draw_aquarium() -> void:
 		draw_rect(inner, Color(0.78, 0.70, 0.30, ammonia * 0.16), true)
 	if nitrate > 0.02:
 		draw_rect(inner, Color(0.22, 0.56, 0.22, nitrate * 0.14), true)
+	_draw_day_night_water_overlay(inner)
 	_draw_water_seasoning(inner)
 	for i in range(3):
 		var y := inner.position.y + 24.0 + i * 18.0 + sin(Time.get_ticks_msec() / 900.0 + i) * 3.0
@@ -1440,6 +1455,23 @@ func _draw_aquarium() -> void:
 	_draw_substrate(inner)
 	draw_rect(tank, Color("#416973"), false, 3.0)
 	draw_rect(inner, Color(1, 1, 1, 0.045), false, 1.0)
+
+func _draw_day_night_water_overlay(inner: Rect2) -> void:
+	var clock = state.get("clock", {})
+	var phase := str(clock.get("day_phase", "day"))
+	var lights_on := bool(clock.get("lights_on", true))
+	if lights_on:
+		draw_rect(Rect2(inner.position.x + 32, inner.position.y + 8, inner.size.x - 64, inner.size.y * 0.32), Color(0.90, 0.98, 1.0, 0.045), true)
+		return
+	if phase == "dawn":
+		draw_rect(inner, Color(0.86, 0.62, 0.36, 0.12), true)
+	elif phase == "dusk":
+		draw_rect(inner, Color(0.35, 0.22, 0.48, 0.16), true)
+	else:
+		draw_rect(inner, Color(0.01, 0.02, 0.07, 0.42), true)
+		for i in range(4):
+			var y := inner.position.y + 44.0 + i * 42.0 + sin(Time.get_ticks_msec() / 1400.0 + i) * 2.0
+			_draw_wave(Vector2(inner.position.x + 34.0, y), inner.size.x - 68.0, Color(0.48, 0.68, 0.92, 0.055), 1.4 + i * 0.4)
 
 func _substrate_height() -> float:
 	var aquarium = state.get("aquarium", {})
@@ -1931,7 +1963,8 @@ func _draw_equipment_inside_tank(inner: Rect2) -> void:
 			var rise := fposmod(Time.get_ticks_msec() / 900.0 + float(i) * 0.11, 1.0)
 			var pos := stone + Vector2(sin(i * 1.7) * 15.0, -rise * inner.size.y * 0.68)
 			draw_circle(pos, 1.3 + float(i % 3) * 0.4, Color(0.85, 0.97, 1.0, 0.12 + output * 0.26))
-	if bool(light.get("enabled", true)) and float(light.get("hours_per_day", 0.0)) > 0.0:
+	var clock = state.get("clock", {})
+	if bool(light.get("enabled", true)) and bool(clock.get("lights_on", true)) and float(light.get("hours_per_day", 0.0)) > 0.0:
 		var spectrum := float(light.get("plant_spectrum", 0.82))
 		var alpha: float = clamp(0.05 + spectrum * 0.10, 0.04, 0.18)
 		draw_rect(Rect2(inner.position.x + 32, inner.position.y + 8, inner.size.x - 64, 10), Color(0.88, 0.96, 1.0, alpha), true)
@@ -2322,10 +2355,16 @@ func _refresh_ui() -> void:
 			filter_label.text += " - wear: " + ", ".join(failure_bits)
 	if cycle_label:
 		var cycle = state.get("cycle", {})
-		cycle_label.text = "Cycle: %s - animals %s - day %.0f" % [
+		var clock = state.get("clock", {})
+		var local_hour := float(clock.get("local_hour", 0.0))
+		cycle_label.text = "Cycle: %s - animals %s - day %.0f - %s %.0f:%02d %s" % [
 			str(cycle.get("stage", "unknown")),
 			"ready" if bool(cycle.get("ready_for_animals", false)) else "not ready",
-			float(cycle.get("days_running", 0.0))
+			float(cycle.get("days_running", 0.0)),
+			str(clock.get("day_phase", "day")),
+			int(floor(local_hour)),
+			int(fposmod(local_hour, 1.0) * 60.0),
+			"lights on" if bool(clock.get("lights_on", false)) else "lights off"
 		]
 	if planning_label:
 		var planning = state.get("planning", {})
