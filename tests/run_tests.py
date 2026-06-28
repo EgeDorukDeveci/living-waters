@@ -693,6 +693,45 @@ def test_nursery_recruits_when_conditions_remain_stable() -> None:
     assert state["nursery"] == []
 
 
+def test_free_ammonia_depends_on_ph_and_temperature() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    low_state = default_state(species)
+    high_state = default_state(species)
+    low_state["water"]["ammonia_mg_l"] = 0.8
+    low_state["water"]["ph"] = 6.6
+    low_state["water"]["temperature_c"] = 22.0
+    high_state["water"]["ammonia_mg_l"] = 0.8
+    high_state["water"]["ph"] = 8.6
+    high_state["water"]["temperature_c"] = 28.0
+    AquariumSimulation(species, low_state).advance(1800)
+    AquariumSimulation(species, high_state).advance(1800)
+    assert high_state["water"]["free_ammonia_mg_l"] > low_state["water"]["free_ammonia_mg_l"] * 15
+    assert high_state["water"]["nitrogen_toxicity_index"] > low_state["water"]["nitrogen_toxicity_index"]
+
+
+def test_deep_dirty_substrate_builds_hypoxia_and_low_redox() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["aquarium"]["substrate"] = "fine_sand"
+    state["aquarium"]["substrate_depth_cm"] = 8.5
+    state["aquarium"]["flow_break"] = 0.35
+    state["water"]["detritus"] = 0.82
+    state["water"]["organic_waste"] = 2.4
+    state["water"]["dissolved_organics"] = 1.4
+    state["water"]["surface_film"] = 0.6
+    state["water"]["oxygen_mg_l"] = 5.2
+    state["water"]["redox_mv"] = 390.0
+    state["equipment"]["filter"]["flow"] = 0.08
+    state["equipment"]["filter"]["media"]["mechanical"]["clog"] = 0.9
+    sim = AquariumSimulation(species, state)
+    before_redox = state["water"]["redox_mv"]
+    sim.advance(96 * 3600)
+    assert state["maturity"]["substrate_hypoxia"] > 0.08
+    assert state["maturity"]["anaerobic_pocket_risk"] > 0.08
+    assert state["water"]["redox_mv"] < before_redox
+    assert state["chemistry"]["substrate_warning"] or state["symptoms"]["substrate_hypoxia"] > 0.08
+
+
 def main() -> int:
     tests = [
         test_nitrogen_cycle_and_water_change,
@@ -739,6 +778,8 @@ def main() -> int:
         test_equipment_failure_and_service_recovery,
         test_plants_melt_when_root_feeders_have_bad_substrate,
         test_nursery_recruits_when_conditions_remain_stable,
+        test_free_ammonia_depends_on_ph_and_temperature,
+        test_deep_dirty_substrate_builds_hypoxia_and_low_redox,
     ]
     for test in tests:
         test()

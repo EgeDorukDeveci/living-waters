@@ -214,6 +214,8 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "oxygen_mg_l": 7.4,
             "co2_mg_l": 4.0,
             "ammonia_mg_l": 0.0,
+            "free_ammonia_mg_l": 0.0,
+            "nitrogen_toxicity_index": 0.0,
             "nitrite_mg_l": 0.0,
             "nitrate_mg_l": 8.0,
             "phosphate_mg_l": 0.35,
@@ -223,6 +225,9 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "water_level": 1.0,
             "tannins": 0.08,
             "organic_waste": 0.12,
+            "dissolved_organics": 0.18,
+            "redox_mv": 310.0,
+            "hydrogen_sulfide_risk": 0.0,
             "turbidity": 0.08,
             "surface_film": 0.04,
             "detritus": 0.08,
@@ -337,6 +342,8 @@ def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium"
         "oxygen_mg_l": 7.1,
         "co2_mg_l": 3.0,
         "ammonia_mg_l": 0.0,
+        "free_ammonia_mg_l": 0.0,
+        "nitrogen_toxicity_index": 0.0,
         "nitrite_mg_l": 0.0,
         "nitrate_mg_l": 0.0,
         "phosphate_mg_l": 0.05,
@@ -346,6 +353,9 @@ def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium"
         "water_level": 1.0,
         "tannins": 0.0,
         "organic_waste": 0.02,
+        "dissolved_organics": 0.04,
+        "redox_mv": 330.0,
+        "hydrogen_sulfide_risk": 0.0,
         "turbidity": 0.02,
         "surface_film": 0.01,
         "detritus": 0.01,
@@ -373,6 +383,7 @@ def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium"
         "last_ammonia_dose_mg_l": 0.0,
     })
     state["maturity"] = default_maturity(0.0)
+    state["chemistry"] = default_chemistry()
     state["animals"] = []
     state["food"] = {"available": 0.0, "decaying": 0.0, "last_fed": now_iso(), "daily_amount_ewma": 0.0}
     state["events"] = [
@@ -513,8 +524,25 @@ def default_maturity(days_running: float = 0.0) -> dict[str, Any]:
         "substrate_compaction": clamp(0.05 + seasoning * 0.22, 0.0, 1.0),
         "diatom_film": clamp(0.03 + max(0.0, 0.35 - seasoning) * 0.18, 0.0, 1.0),
         "beneficial_film": clamp(0.08 + seasoning * 0.5, 0.0, 1.0),
+        "substrate_hypoxia": 0.0,
+        "anaerobic_pocket_risk": 0.0,
+        "denitrifying_biofilm": clamp(seasoning * 0.18, 0.0, 0.3),
         "last_disturbance": "",
         "last_water_change_shock": 0.0,
+    }
+
+
+def default_chemistry() -> dict[str, Any]:
+    return {
+        "free_ammonia_fraction": 0.0,
+        "unionized_ammonia_mg_l": 0.0,
+        "buffer_stability": 0.72,
+        "ph_swing_daily": 0.05,
+        "oxygen_debt": 0.0,
+        "redox_trend": "stable",
+        "substrate_warning": "",
+        "plant_limiting_factor": "balanced",
+        "coral_limiting_factor": "balanced",
     }
 
 
@@ -693,11 +721,21 @@ class AquariumSimulation:
         water.setdefault("tds_mg_l", 10200.0 if water["system"] == "saltwater" else 180.0)
         water.setdefault("water_level", 1.0)
         water.setdefault("phosphate_mg_l", 0.35)
+        water.setdefault("free_ammonia_mg_l", 0.0)
+        water.setdefault("nitrogen_toxicity_index", 0.0)
         water.setdefault("tannins", 0.08)
+        water.setdefault("dissolved_organics", 0.18)
+        water.setdefault("redox_mv", 310.0)
+        water.setdefault("hydrogen_sulfide_risk", 0.0)
         water.setdefault("surface_film", 0.0)
         water.setdefault("detritus", 0.0)
         water.setdefault("parasite_pressure", 0.025)
         water.setdefault("bacterial_pressure", 0.05)
+        self.state.setdefault("chemistry", default_chemistry())
+        chemistry_defaults = default_chemistry()
+        chemistry = self.state.setdefault("chemistry", chemistry_defaults.copy())
+        for key, value in chemistry_defaults.items():
+            chemistry.setdefault(key, value)
         scape = aquarium["scape"]
         scape.setdefault("rocks", [])
         scape.setdefault("wood", [])
@@ -910,7 +948,7 @@ class AquariumSimulation:
         source_trace = float(source.get("trace_elements", old_trace))
         source_silicate = float(source.get("silicate_mg_l", old_silicate))
         conditioner_dose = clamp(float(conditioner_dose), 0.0, 2.0)
-        for key in ("ammonia_mg_l", "nitrite_mg_l", "organic_waste", "turbidity", "surface_film", "detritus"):
+        for key in ("ammonia_mg_l", "free_ammonia_mg_l", "nitrite_mg_l", "organic_waste", "dissolved_organics", "turbidity", "surface_film", "detritus", "hydrogen_sulfide_risk"):
             water[key] *= 1.0 - fraction
         water["nitrate_mg_l"] = water["nitrate_mg_l"] * (1.0 - fraction) + source_nitrate * fraction
         water["phosphate_mg_l"] = water.get("phosphate_mg_l", 0.0) * (1.0 - fraction) + source_phosphate * fraction
@@ -955,6 +993,7 @@ class AquariumSimulation:
             water["turbidity"] = clamp(water["turbidity"] + 0.12 + float(maturity.get("mulm", 0.0)) * 0.18, 0, 1)
             maturity["mulm"] = clamp(float(maturity.get("mulm", 0.0)) * (1.0 - fraction * 0.65), 0, 1)
             maturity["substrate_compaction"] = clamp(float(maturity.get("substrate_compaction", 0.0)) * (1.0 - fraction * 0.55), 0, 1)
+            maturity["substrate_hypoxia"] = clamp(float(maturity.get("substrate_hypoxia", 0.0)) * (1.0 - fraction * 0.30), 0, 1)
             maturity["last_disturbance"] = "substrate disturbed during water change"
         if shock > 0.12:
             for animal in self.state.get("animals", []):
@@ -993,6 +1032,7 @@ class AquariumSimulation:
         food["available"] = clamp(float(food.get("available", 0.0)) - removed_visible, 0.0, 5.0)
         food["decaying"] = clamp(float(food.get("decaying", 0.0)) - removed_decaying, 0.0, 5.0)
         water["organic_waste"] = clamp(water.get("organic_waste", 0.0) * 0.92, 0, 5)
+        water["dissolved_organics"] = clamp(water.get("dissolved_organics", 0.0) * 0.93, 0, 2.5)
         water["surface_film"] = clamp(water.get("surface_film", 0.0) * 0.9, 0, 1)
         self._record("info", "Uneaten food removed", "Visible leftovers were siphoned out before they could mineralize into ammonia and phosphate.")
 
@@ -1096,6 +1136,7 @@ class AquariumSimulation:
         error = 0.06 if has_kit else 0.18
         readings = {
             "ammonia_mg_l": max(0.0, water["ammonia_mg_l"] * self._noise_multiplier(error, "test_ammonia") + self._rng("test_ammonia_floor").uniform(0.0, 0.015)),
+            "free_ammonia_mg_l": max(0.0, water.get("free_ammonia_mg_l", 0.0) * self._noise_multiplier(error, "test_free_ammonia")),
             "nitrite_mg_l": max(0.0, water["nitrite_mg_l"] * self._noise_multiplier(error, "test_nitrite") + self._rng("test_nitrite_floor").uniform(0.0, 0.012)),
             "nitrate_mg_l": max(0.0, water["nitrate_mg_l"] * self._noise_multiplier(error * 1.15, "test_nitrate")),
             "phosphate_mg_l": max(0.0, water.get("phosphate_mg_l", 0.0) * self._noise_multiplier(error * 1.25, "test_phosphate")),
@@ -1105,6 +1146,7 @@ class AquariumSimulation:
             "co2_mg_l": max(0.0, water.get("co2_mg_l", 4.0) * self._noise_multiplier(error * 1.4, "test_co2")),
             "chlorine_mg_l": max(0.0, (water.get("chlorine_mg_l", 0.0) + water.get("chloramine_mg_l", 0.0)) * self._noise_multiplier(error, "test_disinfectant")),
             "oxygen_mg_l": max(0.0, water["oxygen_mg_l"] * self._noise_multiplier(error * 0.65, "test_oxygen")),
+            "redox_mv": max(0.0, water.get("redox_mv", 310.0) * self._noise_multiplier(error * 0.45, "test_redox")),
             "taken_at": now_iso(),
             "confidence": "normal kit variance" if has_kit else "low confidence: no proper test kit",
         }
@@ -1698,6 +1740,37 @@ class AquariumSimulation:
             })
             for animal in living:
                 self._add_animal_risk(animal_risks, animal, 0.12 + severity * 0.22, severity * 0.002, "surface film reduced gas exchange")
+        if float(water.get("nitrogen_toxicity_index", 0.0)) > 0.75:
+            severity = clamp((float(water.get("nitrogen_toxicity_index", 0.0)) - 0.75) / 1.5, 0.0, 1.0)
+            issues.append({
+                "key": "free_ammonia_toxicity",
+                "severity": "critical" if severity > 0.35 else "warning",
+                "title": "Free ammonia toxicity is high",
+                "details": "pH and temperature shifted total ammonia toward toxic un-ionized NH3.",
+            })
+            for animal in living:
+                self._add_animal_risk(animal_risks, animal, 0.38 + severity * 0.45, severity * 0.026, "toxic free ammonia")
+        if float(water.get("redox_mv", 310.0)) < 230.0:
+            severity = clamp((230.0 - float(water.get("redox_mv", 310.0))) / 100.0, 0.0, 1.0)
+            issues.append({
+                "key": "low_redox",
+                "severity": "critical" if severity > 0.55 else "warning",
+                "title": "Water is biologically dirty",
+                "details": "Low redox means oxygen debt, dissolved organics, or stagnant zones are giving pathogens an advantage.",
+            })
+            for animal in living:
+                self._add_animal_risk(animal_risks, animal, 0.20 + severity * 0.28, severity * 0.006, "low redox and high dissolved organics")
+        substrate_risk = float(self.state.get("maturity", {}).get("anaerobic_pocket_risk", 0.0))
+        if substrate_risk > 0.42:
+            issues.append({
+                "key": "hypoxic_substrate",
+                "severity": "warning",
+                "title": "Substrate pockets are hypoxic",
+                "details": "Deep compacted substrate and trapped organics are creating low-flow pockets; disturb only gradually.",
+            })
+            for animal in living:
+                if self.species[animal["species_id"]].get("swim_zone") == "bottom":
+                    self._add_animal_risk(animal_risks, animal, 0.18 + substrate_risk * 0.24, substrate_risk * 0.004, "hypoxic substrate pockets")
         for issue in planning.get("issues", []):
             if issue["severity"] == "critical":
                 issues.append({"key": "planning_" + issue["title"].lower().replace(" ", "_"), **issue})
@@ -1816,6 +1889,105 @@ class AquariumSimulation:
         salinity = float(water.get("salinity_ppt", 0.2))
         base = 14.6 - temp * 0.25 + max(0.0, temp - 20.0) * -0.035
         return clamp(base - salinity * 0.018, 5.2, 10.8)
+
+    def _free_ammonia_fraction(self) -> float:
+        water = self.state["water"]
+        temp_k = 273.15 + float(water.get("temperature_c", 24.0))
+        ph = float(water.get("ph", 7.0))
+        salinity = float(water.get("salinity_ppt", 0.2))
+        # Emerson-style approximation: warmer, saltier, higher-pH water shifts more TAN into toxic NH3.
+        pka = 0.09018 + 2729.92 / temp_k - salinity * 0.00035
+        return clamp(1.0 / (1.0 + pow(10.0, pka - ph)), 0.0, 1.0)
+
+    def _update_derived_chemistry(self, hours: float, effective_flow: float, lights_on: bool, total_bioload: float) -> None:
+        water = self.state["water"]
+        aquarium = self.state["aquarium"]
+        maturity = self.state.setdefault("maturity", default_maturity(float(self.state.get("cycle", {}).get("days_running", 0.0))))
+        chemistry = self.state.setdefault("chemistry", default_chemistry())
+        alkalinity = float(water.get("alkalinity_dkh", water.get("kh_dkh", 4.0)))
+        buffer_stability = clamp(alkalinity / (8.0 if water.get("system") == "saltwater" else 4.0), 0.0, 1.35)
+        co2 = float(water.get("co2_mg_l", 4.0))
+        tannins = float(water.get("tannins", 0.0))
+        organic = float(water.get("organic_waste", 0.0))
+        doc = float(water.get("dissolved_organics", organic * 0.22))
+        doc_target = organic * 0.34 + float(self.state.get("food", {}).get("decaying", 0.0)) * 0.22 + tannins * 0.18 + float(water.get("surface_film", 0.0)) * 0.16
+        doc = clamp(doc + (doc_target - doc) * min(1.0, hours * 0.04), 0.0, 2.5)
+        water["dissolved_organics"] = doc
+
+        light_direction = -1.0 if lights_on else 1.0
+        daily_swing = clamp((co2 / 18.0 + max(0.0, 0.5 - buffer_stability)) * 0.22, 0.02, 0.85)
+        water["ph"] = clamp(float(water.get("ph", 7.0)) + light_direction * daily_swing * hours * 0.006, 4.5, 9.3)
+
+        fraction = self._free_ammonia_fraction()
+        free_ammonia = float(water.get("ammonia_mg_l", 0.0)) * fraction
+        nitrite_pressure = float(water.get("nitrite_mg_l", 0.0)) * (1.0 + max(0.0, 0.45 - float(water.get("chloride_mg_l", 0.0)) / 500.0))
+        toxicity = clamp(free_ammonia / 0.05 + nitrite_pressure / 0.5, 0.0, 4.0)
+        water["free_ammonia_mg_l"] = free_ammonia
+        water["nitrogen_toxicity_index"] = toxicity
+        chemistry["free_ammonia_fraction"] = fraction
+        chemistry["unionized_ammonia_mg_l"] = free_ammonia
+        chemistry["buffer_stability"] = buffer_stability
+        chemistry["ph_swing_daily"] = daily_swing
+
+        depth = float(aquarium.get("substrate_depth_cm", 5.0))
+        fine_substrate = 1.0 if str(aquarium.get("substrate", "fine_sand")) in {"fine_sand", "planted_soil", "reef_sand"} else 0.35
+        pocket_pressure = (
+            max(0.0, depth - 4.5) * 0.12
+            + float(maturity.get("substrate_compaction", 0.0)) * 0.55
+            + float(water.get("detritus", 0.0)) * 0.35
+            + float(aquarium.get("flow_break", 0.0)) * 0.28
+            + max(0.0, 5.8 - float(water.get("oxygen_mg_l", 7.0))) * 0.08
+        ) * fine_substrate
+        relieved = effective_flow * hours * 0.0012 + (0.004 * hours if depth <= 3.0 else 0.0)
+        maturity["substrate_hypoxia"] = clamp(float(maturity.get("substrate_hypoxia", 0.0)) + pocket_pressure * hours * 0.0014 - relieved, 0.0, 1.0)
+        maturity["anaerobic_pocket_risk"] = clamp(float(maturity.get("substrate_hypoxia", 0.0)) * 0.72 + float(maturity.get("mulm", 0.0)) * 0.18, 0.0, 1.0)
+        denitrifying = clamp(float(maturity.get("denitrifying_biofilm", 0.0)) + float(maturity.get("substrate_hypoxia", 0.0)) * hours * 0.00022 - float(maturity.get("last_water_change_shock", 0.0)) * hours * 0.0003, 0.0, 0.55)
+        maturity["denitrifying_biofilm"] = denitrifying
+        denitrification = min(float(water.get("nitrate_mg_l", 0.0)), denitrifying * float(maturity.get("substrate_hypoxia", 0.0)) * hours * 0.004)
+        water["nitrate_mg_l"] = clamp(float(water.get("nitrate_mg_l", 0.0)) - denitrification, 0.0, 200.0)
+        water["hydrogen_sulfide_risk"] = clamp(float(maturity.get("anaerobic_pocket_risk", 0.0)) * max(0.0, doc - 0.5) * 0.45, 0.0, 1.0)
+        if water["hydrogen_sulfide_risk"] > 0.45:
+            water["oxygen_mg_l"] = clamp(float(water.get("oxygen_mg_l", 7.0)) - water["hydrogen_sulfide_risk"] * hours * 0.006, 0.0, 10.0)
+            water["bacterial_pressure"] = clamp(float(water.get("bacterial_pressure", 0.0)) + water["hydrogen_sulfide_risk"] * hours * 0.004, 0.0, 1.0)
+
+        oxygen_debt = clamp(max(0.0, 7.0 - float(water.get("oxygen_mg_l", 7.0))) / 4.0 + doc * 0.12 + float(maturity.get("substrate_hypoxia", 0.0)) * 0.45, 0.0, 1.5)
+        redox_target = 360.0 + float(water.get("oxygen_mg_l", 7.0)) * 14.0 + effective_flow * 26.0 - doc * 62.0 - float(water.get("surface_film", 0.0)) * 45.0 - float(maturity.get("substrate_hypoxia", 0.0)) * 95.0 - float(water.get("bacterial_pressure", 0.0)) * 55.0
+        current_redox = float(water.get("redox_mv", 310.0))
+        next_redox = clamp(current_redox + (redox_target - current_redox) * min(1.0, hours * 0.035), 80.0, 470.0)
+        water["redox_mv"] = next_redox
+        chemistry["oxygen_debt"] = oxygen_debt
+        chemistry["redox_trend"] = "falling" if next_redox < current_redox - 0.4 else "rising" if next_redox > current_redox + 0.4 else "stable"
+        chemistry["substrate_warning"] = "deep pockets may turn hypoxic" if float(maturity.get("anaerobic_pocket_risk", 0.0)) > 0.38 else ""
+        if float(water.get("nitrate_mg_l", 0.0)) < 2.0:
+            chemistry["plant_limiting_factor"] = "nitrate"
+        elif float(water.get("phosphate_mg_l", 0.0)) < 0.04:
+            chemistry["plant_limiting_factor"] = "phosphate"
+        elif float(water.get("co2_mg_l", 4.0)) < 2.5 and lights_on:
+            chemistry["plant_limiting_factor"] = "CO2"
+        elif float(water.get("trace_elements", 0.8)) < 0.35:
+            chemistry["plant_limiting_factor"] = "trace elements"
+        else:
+            chemistry["plant_limiting_factor"] = "balanced"
+        if water.get("system") == "saltwater":
+            if not 33.0 <= float(water.get("salinity_ppt", 35.0)) <= 37.0:
+                chemistry["coral_limiting_factor"] = "salinity"
+            elif float(water.get("alkalinity_dkh", 8.2)) < 7.0:
+                chemistry["coral_limiting_factor"] = "alkalinity"
+            elif float(water.get("calcium_mg_l", 420.0)) < 380.0:
+                chemistry["coral_limiting_factor"] = "calcium"
+            elif float(water.get("magnesium_mg_l", 1280.0)) < 1180.0:
+                chemistry["coral_limiting_factor"] = "magnesium"
+            elif float(water.get("phosphate_mg_l", 0.0)) > 0.25:
+                chemistry["coral_limiting_factor"] = "phosphate"
+            else:
+                chemistry["coral_limiting_factor"] = "balanced"
+
+        if toxicity > 1.0:
+            self._record_once("free_ammonia_toxicity", "critical", "Free ammonia is toxic", "Warm or alkaline water converted more total ammonia into toxic NH3. Lower feeding pressure, improve biofiltration, and change water carefully.")
+        if water["redox_mv"] < 220.0:
+            self._record_once("low_redox", "warning", "Water is losing oxidizing power", "High organics, low oxygen, or stagnant pockets lowered redox. Improve flow, remove waste, and avoid overfeeding.")
+        if water["hydrogen_sulfide_risk"] > 0.45:
+            self._record_once("substrate_hypoxia", "warning", "Substrate pockets are becoming hypoxic", "Deep compacted substrate with trapped organics can create low-oxygen pockets. Clean gently over multiple sessions, not all at once.")
 
     def _update_minerals_pathogens_and_film(self, hours: float, lights_on: bool, total_bioload: float, scape_metrics: dict[str, Any]) -> None:
         water = self.state["water"]
@@ -1974,6 +2146,7 @@ class AquariumSimulation:
         if carbon > 0:
             polish = min(water["organic_waste"], carbon * effective_flow * hours * 0.0025)
             water["organic_waste"] -= polish
+            water["dissolved_organics"] = clamp(float(water.get("dissolved_organics", 0.0)) - polish * 0.38, 0, 2.5)
             water["turbidity"] = clamp(water["turbidity"] - carbon * effective_flow * hours * 0.002, 0, 1)
             chemical["carbon_remaining"] = clamp(carbon - (polish * 0.04 + hours * 0.00025), 0, 1)
         phosphate_media = clamp(float(chemical.get("phosphate_remover_remaining", 0.0)), 0, 1)
@@ -2030,6 +2203,7 @@ class AquariumSimulation:
         kh = float(water.get("kh_dkh", water.get("alkalinity_dkh", 4.0)))
         co2_pressure = max(0.0, water.get("co2_mg_l", 4.0) - 5.0) / max(2.0, kh + 1.0)
         water["ph"] = clamp(water["ph"] - water["organic_waste"] * hours * 0.00025 - scape_metrics.get("soft_water", 0.0) * hours * 0.0009 - water.get("tannins", 0.0) * hours * 0.00025 - co2_pressure * hours * 0.00055 + (kh - 4) * hours * 0.0001 + scape_metrics.get("kh_release", 0.0) * hours * 0.0005, 4.5, 9)
+        self._update_derived_chemistry(hours, effective_flow, lights_on, total_bioload)
         light_excess = max(0.0, light_hours + sunlight_hours - 8.0)
         light_shortage = max(0.0, 5.0 - light_hours)
         bio["algae"] = clamp(
@@ -2198,6 +2372,7 @@ class AquariumSimulation:
             output = clamp(float(skimmer.get("output", 0.55)) * float(skimmer.get("health", 1.0)) * (1.0 - float(skimmer.get("cup_fullness", 0.0)) * 0.55), 0, 1)
             export = min(float(water.get("organic_waste", 0.0)), output * hours * 0.006)
             water["organic_waste"] = clamp(float(water.get("organic_waste", 0.0)) - export, 0, 5)
+            water["dissolved_organics"] = clamp(float(water.get("dissolved_organics", 0.0)) - export * 0.42, 0, 2.5)
             water["surface_film"] = clamp(float(water.get("surface_film", 0.0)) - output * hours * 0.004, 0, 1)
             water["turbidity"] = clamp(float(water.get("turbidity", 0.0)) - output * hours * 0.002, 0, 1)
             skimmer["cup_fullness"] = clamp(float(skimmer.get("cup_fullness", 0.0)) + export * 0.22 + hours * 0.00035, 0, 1)
@@ -2405,8 +2580,15 @@ class AquariumSimulation:
         immune_gap = max(0.0, 0.78 - float(animal.get("immune_condition", 1.0)))
         chronic = float(animal.get("chronic_stress", 0.0))
         pathogen = float(animal.get("latent_pathogen_load", 0.02)) + float(animal.get("parasite_load", 0.0)) * 0.55 + float(water.get("parasite_pressure", 0.0)) * 0.35
-        nitrogen_pressure = clamp(water.get("ammonia_mg_l", 0.0) * 1.6 + water.get("nitrite_mg_l", 0.0) * 1.2, 0, 1.0)
-        dirty_pressure = max(0.0, water.get("organic_waste", 0.0) - 0.8) * 0.18 + max(0.0, water.get("turbidity", 0.0) - 0.35) * 0.25 + float(water.get("bacterial_pressure", 0.0)) * 0.24
+        nitrogen_pressure = clamp(water.get("free_ammonia_mg_l", 0.0) * 18.0 + water.get("ammonia_mg_l", 0.0) * 1.2 + water.get("nitrite_mg_l", 0.0) * 1.2, 0, 1.0)
+        dirty_pressure = (
+            max(0.0, water.get("organic_waste", 0.0) - 0.8) * 0.18
+            + max(0.0, water.get("turbidity", 0.0) - 0.35) * 0.25
+            + float(water.get("bacterial_pressure", 0.0)) * 0.24
+            + max(0.0, 240.0 - float(water.get("redox_mv", 310.0))) / 360.0
+            + float(water.get("dissolved_organics", 0.0)) * 0.08
+            + float(water.get("hydrogen_sulfide_risk", 0.0)) * 0.18
+        )
         salinity_pressure = 0.0
         spec = self.species.get(animal.get("species_id", ""), {})
         if water.get("system") == "saltwater":
@@ -2478,7 +2660,15 @@ class AquariumSimulation:
         system_stress = 1.0 if spec.get("water_type", "freshwater") != water.get("system", "freshwater") else 0.0
         oxygen_stress = clamp((spec["oxygen_min_mg_l"] - water["oxygen_mg_l"]) / max(1, spec["oxygen_min_mg_l"]), 0, 1)
         co2_stress = clamp((water.get("co2_mg_l", 4.0) - 18.0) / 18.0 + water.get("surface_film", 0.0) * 0.18, 0, 1)
-        nitrogen_stress = clamp(water["ammonia_mg_l"] * 4 + water["nitrite_mg_l"] * 3 + max(0, water["nitrate_mg_l"] - spec["nitrate_warning_mg_l"]) / 40, 0, 1)
+        nitrogen_stress = clamp(
+            float(water.get("free_ammonia_mg_l", 0.0)) * 28.0
+            + water["ammonia_mg_l"] * 0.65
+            + water["nitrite_mg_l"] * 3.0
+            + float(water.get("nitrogen_toxicity_index", 0.0)) * 0.22
+            + max(0, water["nitrate_mg_l"] - spec["nitrate_warning_mg_l"]) / 40,
+            0,
+            1,
+        )
         volume_stress = clamp((spec["minimum_litres"] - aquarium["effective_litres"]) / spec["minimum_litres"], 0, 1)
         length_stress = clamp((spec["minimum_tank_length_cm"] - aquarium["length_cm"]) / spec["minimum_tank_length_cm"], 0, 1)
         group = groups[animal["species_id"]]
@@ -2497,7 +2687,8 @@ class AquariumSimulation:
         overfed_water = max(0.0, float(self.state.get("food", {}).get("daily_amount_ewma", 0.0)) - 0.65) * 0.018
         animal["body_condition"] = clamp(float(animal.get("body_condition", 0.9)) - underfed * hours * 0.004 - animal["chronic_stress"] * hours * 0.0009, 0.0, 1.15)
         animal["gill_condition"] = clamp(float(animal.get("gill_condition", 0.95)) - (nitrogen_stress * 0.014 + oxygen_stress * 0.008 + co2_stress * 0.004) * hours + hours * 0.0006, 0.0, 1.0)
-        animal["fin_condition"] = clamp(float(animal.get("fin_condition", 0.95)) - (float(animal.get("injury", 0.0)) * 0.010 + dirty_pressure if (dirty_pressure := clamp(water.get("bacterial_pressure", 0.0), 0.0, 1.0)) else 0.0) * hours * 0.35 + hours * 0.0007, 0.0, 1.0)
+        dirty_pressure = clamp(water.get("bacterial_pressure", 0.0) + max(0.0, 240.0 - water.get("redox_mv", 310.0)) / 300.0 + water.get("dissolved_organics", 0.0) * 0.08, 0.0, 1.0)
+        animal["fin_condition"] = clamp(float(animal.get("fin_condition", 0.95)) - (float(animal.get("injury", 0.0)) * 0.010 + dirty_pressure) * hours * 0.35 + hours * 0.0007, 0.0, 1.0)
         damage = max(0, nitrogen_stress - 0.35) * hours * 0.05 + max(0, oxygen_stress - 0.45) * hours * 0.06 + max(0, co2_stress - 0.55) * hours * 0.035
         damage += float(welfare_risk.get("damage_per_hour", 0.0)) * hours
         injury_pressure = float(welfare_risk.get("injury_per_hour", 0.0))
@@ -2623,6 +2814,8 @@ class AquariumSimulation:
         water = self.state["water"]
         if water["ammonia_mg_l"] > 0.25:
             self._record_once("ammonia", "critical", "Ammonia is dangerous", f"Ammonia reached {water['ammonia_mg_l']:.2f} mg/L. Stop feeding, test the filter, and perform an appropriate partial water change.")
+        if water.get("free_ammonia_mg_l", 0.0) > 0.03:
+            self._record_once("free_ammonia", "critical", "Un-ionized ammonia is dangerous", f"Free NH3 reached {water.get('free_ammonia_mg_l', 0.0):.3f} mg/L. High pH or temperature can make total ammonia far more toxic.")
         if water["nitrite_mg_l"] > 0.25:
             self._record_once("nitrite", "critical", "Nitrite is dangerous", f"Nitrite reached {water['nitrite_mg_l']:.2f} mg/L and is impairing oxygen transport.")
         if water["oxygen_mg_l"] < 4.5:
@@ -2649,6 +2842,10 @@ class AquariumSimulation:
             self._record_once("parasite_pressure", "warning", "Parasite pressure is high", "Stress, crowding, or existing carriers have raised parasite pressure in the aquarium.")
         if water.get("bacterial_pressure", 0.0) > 0.55:
             self._record_once("bacterial_pressure", "warning", "Bacterial pressure is high", "Dirty water, detritus, or decaying matter is increasing infection risk.")
+        if water.get("redox_mv", 310.0) < 220.0:
+            self._record_once("redox_low", "warning", "Redox is low", "The tank is carrying high oxygen demand or dissolved organics. Increase flow/aeration and remove waste gradually.")
+        if self.state.get("maturity", {}).get("anaerobic_pocket_risk", 0.0) > 0.45:
+            self._record_once("anaerobic_pockets", "warning", "Deep substrate is turning stagnant", "Compacted substrate pockets can produce low-oxygen chemistry. Vacuum in sections instead of tearing up the whole bed.")
         skimmer = self.state.get("equipment", {}).get("protein_skimmer", {})
         if water.get("system") == "saltwater" and skimmer.get("enabled", False) and float(skimmer.get("cup_fullness", 0.0)) > 0.88:
             self._record_once("skimmer_cup", "warning", "Skimmer cup needs emptying", "The protein skimmer is losing export efficiency.")
@@ -2686,6 +2883,9 @@ class AquariumSimulation:
             "diatom_dust": clamp(float(maturity.get("diatom_film", 0.0)) + water.get("silicate_mg_l", 0.0) * 0.04, 0.0, 1.0),
             "biofilm_sheen": clamp(float(maturity.get("beneficial_film", 0.0)) * 0.55 + water.get("surface_film", 0.0) * 0.35, 0.0, 1.0),
             "pathogen_pressure": clamp(max(water.get("parasite_pressure", 0.0), water.get("bacterial_pressure", 0.0)), 0.0, 1.0),
+            "redox_stress": clamp(max(0.0, 260.0 - float(water.get("redox_mv", 310.0))) / 180.0, 0.0, 1.0),
+            "substrate_hypoxia": clamp(float(maturity.get("substrate_hypoxia", 0.0)), 0.0, 1.0),
+            "free_ammonia_toxicity": clamp(float(water.get("free_ammonia_mg_l", 0.0)) / 0.05, 0.0, 1.0),
             "plant_melt": clamp(plant_melt, 0.0, 1.0),
             "coral_bleach": clamp(coral_stress, 0.0, 1.0),
             "gasping_animals": gasping,
@@ -2718,6 +2918,8 @@ class AquariumSimulation:
         risks = []
         if water["ammonia_mg_l"] > 0.1:
             risks.append("ammonia")
+        if water.get("free_ammonia_mg_l", 0.0) > 0.02:
+            risks.append("free ammonia")
         if water["nitrite_mg_l"] > 0.1:
             risks.append("nitrite")
         if water["oxygen_mg_l"] < 5:
@@ -2744,6 +2946,10 @@ class AquariumSimulation:
             risks.append("parasite pressure")
         if water.get("bacterial_pressure", 0.0) > 0.55:
             risks.append("bacterial pressure")
+        if water.get("redox_mv", 310.0) < 230.0:
+            risks.append("low redox")
+        if self.state.get("maturity", {}).get("anaerobic_pocket_risk", 0.0) > 0.45:
+            risks.append("stagnant substrate")
         if self.state["biology"].get("algae", 0.0) > 0.55:
             risks.append("algae pressure")
         if not self.state.get("cycle", {}).get("ready_for_animals", True):
