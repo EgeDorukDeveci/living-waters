@@ -343,6 +343,10 @@ class Daemon:
             sim.scrape_algae()
         elif action == "trim_plants":
             sim.trim_plants()
+        elif action == "top_off":
+            sim.top_off(None if "amount" not in command else float(command.get("amount", 0.05)))
+        elif action == "empty_skimmer_cup":
+            sim.empty_skimmer_cup()
         elif action == "service_filter":
             sim.service_filter(bool(command.get("replace_carbon", True)), bool(command.get("overclean", False)))
         elif action == "dose_ammonia":

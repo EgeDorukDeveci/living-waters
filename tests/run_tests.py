@@ -502,8 +502,58 @@ def test_disease_risk_depends_on_stress_and_dirty_water() -> None:
     state["water"]["turbidity"] = 0.8
     sim = AquariumSimulation(species, state)
     sim._maybe_update_disease(sick, 72)
-    assert sick["disease"] == "opportunistic infection"
-    assert state["randomness"]["latest"].endswith("opportunistic infection")
+    assert sick["disease"] == "gill inflammation"
+    assert state["randomness"]["latest"].endswith("gill inflammation")
+
+
+def test_named_disease_selection_uses_cause() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    fish = animal(species, "fancy_guppy", "Nipped", 2)
+    fish["injury"] = 0.5
+    disease, _details = sim._select_disease(fish, 0.0, 0.2, 0.0, fish["injury"], 0.0)
+    assert disease == "fin rot"
+    fish["injury"] = 0.0
+    fish["latent_pathogen_load"] = 0.08
+    disease, _details = sim._select_disease(fish, 0.0, 0.0, 0.0, 0.0, 0.35)
+    assert disease == "ich outbreak"
+
+
+def test_evaporation_top_off_and_skimmer_change_reef_water() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Reef Evap", "saltwater", 120)
+    sim = AquariumSimulation(species, state)
+    state["equipment"]["protein_skimmer"]["enabled"] = True
+    state["equipment"]["protein_skimmer"]["output"] = 0.8
+    state["water"]["organic_waste"] = 1.4
+    before_level = state["water"]["water_level"]
+    before_salinity = state["water"]["salinity_ppt"]
+    before_waste = state["water"]["organic_waste"]
+    sim.advance(48 * 3600)
+    assert state["water"]["water_level"] < before_level
+    assert state["water"]["salinity_ppt"] > before_salinity
+    assert state["water"]["organic_waste"] < before_waste
+    assert state["equipment"]["protein_skimmer"]["cup_fullness"] > 0
+    sim.top_off()
+    assert state["water"]["water_level"] > 0.98
+    assert state["water"]["salinity_ppt"] < 36.5
+
+
+def test_animal_personality_fields_drive_routines() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    fish = animal(species, "honey_gourami", "Curious", 5)
+    fish["curiosity"] = 0.95
+    fish["acute_stress"] = 0.03
+    fish["hunger"] = 0.1
+    state["animals"].append(fish)
+    sim = AquariumSimulation(species, state)
+    sim.advance(3600)
+    assert "curiosity" in fish
+    assert "sleep_x" in fish
+    assert fish["routine"] not in {"", None}
+    assert fish["behavior"] not in {"", None}
 
 
 def test_saltwater_switch_species_and_reefscape_rules() -> None:
@@ -641,6 +691,9 @@ def main() -> int:
         test_animals_have_individual_variation,
         test_water_test_readings_have_realistic_variance,
         test_disease_risk_depends_on_stress_and_dirty_water,
+        test_named_disease_selection_uses_cause,
+        test_evaporation_top_off_and_skimmer_change_reef_water,
+        test_animal_personality_fields_drive_routines,
         test_saltwater_switch_species_and_reefscape_rules,
         test_scape_placement_rules_and_relocation,
         test_feeding_competition_can_leave_shy_fish_hungry,

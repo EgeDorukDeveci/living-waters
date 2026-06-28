@@ -11,6 +11,8 @@ const COMMAND_WEEKLY_MAINTENANCE := {"action": "weekly_maintenance"}
 const COMMAND_REMOVE_FOOD := {"action": "remove_uneaten_food"}
 const COMMAND_SCRAPE_ALGAE := {"action": "scrape_algae"}
 const COMMAND_TRIM_PLANTS := {"action": "trim_plants"}
+const COMMAND_TOP_OFF := {"action": "top_off"}
+const COMMAND_EMPTY_SKIMMER := {"action": "empty_skimmer_cup"}
 const COMMAND_DOSE_AMMONIA := {"action": "dose_ammonia", "amount": 1.0}
 const COMMAND_TEST_WATER := {"action": "test_water"}
 
@@ -214,6 +216,8 @@ func _effect_duration(kind: String) -> float:
 			return 3.4
 		"remove_uneaten_food", "scrape_algae", "trim_plants":
 			return 2.4
+		"top_off", "empty_skimmer_cup":
+			return 2.2
 		"service_filter":
 			return 2.7
 		"test_water":
@@ -734,6 +738,21 @@ func _build_ui() -> void:
 	_style_button(trim_plants)
 	trim_plants.pressed.connect(func(): _write_command(COMMAND_TRIM_PLANTS.duplicate()))
 	small_care_row.add_child(trim_plants)
+	var reef_care_row := HBoxContainer.new()
+	reef_care_row.add_theme_constant_override("separation", 8)
+	quick_box.add_child(reef_care_row)
+	var top_off := Button.new()
+	top_off.text = "Top off"
+	top_off.custom_minimum_size = Vector2(154, 34)
+	_style_button(top_off)
+	top_off.pressed.connect(func(): _write_command(COMMAND_TOP_OFF.duplicate()))
+	reef_care_row.add_child(top_off)
+	var empty_skimmer := Button.new()
+	empty_skimmer.text = "Empty skimmer"
+	empty_skimmer.custom_minimum_size = Vector2(154, 34)
+	_style_button(empty_skimmer)
+	empty_skimmer.pressed.connect(func(): _write_command(COMMAND_EMPTY_SKIMMER.duplicate()))
+	reef_care_row.add_child(empty_skimmer)
 
 	var water_box := _make_section(care_tab, "Water change", "Match temperature, pH, and hardness. Disturbing substrate can release old waste.")
 	var water_change_grid := GridContainer.new()
@@ -948,7 +967,7 @@ func _build_ui() -> void:
 	var journal_tab := _add_tab(tabs, "Journal")
 	var readings_box := _make_section(journal_tab, "Readings", "The same information appears as sensors on the tank, but this gives exact values.")
 	water_labels.clear()
-	for key in ["temperature_c", "ph", "kh_dkh", "tds_mg_l", "oxygen_mg_l", "co2_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l", "phosphate_mg_l", "chlorine_mg_l", "chloramine_mg_l", "surface_film", "detritus"]:
+	for key in ["temperature_c", "ph", "kh_dkh", "tds_mg_l", "salinity_ppt", "water_level", "oxygen_mg_l", "co2_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l", "phosphate_mg_l", "chlorine_mg_l", "chloramine_mg_l", "surface_film", "detritus"]:
 		var label := _make_label(key, 12, Color("#d8eee9"))
 		water_labels[key] = label
 		readings_box.add_child(label)
@@ -1370,8 +1389,11 @@ func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, s
 	var zone := str(spec.get("swim_zone", "middle"))
 	var routine := str(animal.get("routine", "explore"))
 	var home := inner.position + Vector2(float(animal.get("home_x", 0.5)) * inner.size.x, float(animal.get("home_y", 0.5)) * inner.size.y)
+	var sleep := inner.position + Vector2(float(animal.get("sleep_x", animal.get("home_x", 0.5))) * inner.size.x, float(animal.get("sleep_y", animal.get("home_y", 0.5))) * inner.size.y)
 	match routine:
-		"rest", "hide":
+		"rest":
+			return Vector2(clamp(sleep.x, inner.position.x + 34, inner.end.x - 34), clamp(sleep.y, inner.position.y + 48, inner.end.y - 42))
+		"hide":
 			return Vector2(clamp(home.x, inner.position.x + 34, inner.end.x - 34), clamp(max(home.y, inner.end.y - _substrate_height() - 120), inner.position.y + 48, inner.end.y - 42))
 		"surface":
 			return Vector2(inner.position.x + 60.0 + fposmod(seed * 37.0 + Time.get_ticks_msec() / 20.0, inner.size.x - 120.0), inner.position.y + 46.0)
@@ -1385,6 +1407,9 @@ func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, s
 			return Vector2(inner.position.x + 42.0 + fposmod(seed * 91.0, inner.size.x - 84.0), inner.position.y + inner.size.y * 0.72)
 		"display", "patrol":
 			return _moving_target(seed + int(Time.get_ticks_msec() / 900), zone)
+		"inspect":
+			var curiosity := float(animal.get("curiosity", 0.5))
+			return Vector2(inner.position.x + 52.0 + fposmod(seed * 43.0 + Time.get_ticks_msec() / lerp(34.0, 15.0, curiosity), inner.size.x - 104.0), _zone_y(zone, fposmod(sin(Time.get_ticks_msec() / 1100.0 + seed) * 0.5 + 0.5, 1.0)))
 	return _moving_target(seed, zone)
 
 func _aquarium_rect() -> Rect2:
@@ -1482,6 +1507,11 @@ func _draw_aquarium() -> void:
 	if film > 0.03:
 		draw_rect(Rect2(inner.position + Vector2(24, 20), Vector2(inner.size.x - 48, 7 + film * 9.0)), Color(0.92, 0.96, 0.82, 0.08 + film * 0.18), true)
 	_draw_day_night_water_overlay(inner)
+	var water_level: float = clamp(float(water.get("water_level", 1.0)), 0.55, 1.0)
+	if water_level < 0.995:
+		var gap_h := (1.0 - water_level) * inner.size.y * 0.72
+		draw_rect(Rect2(inner.position, Vector2(inner.size.x, gap_h)), Color("#071013", 0.72), true)
+		draw_line(inner.position + Vector2(18, gap_h), inner.position + Vector2(inner.size.x - 18, gap_h), Color(0.84, 0.96, 1.0, 0.34), 2.0, true)
 	_draw_water_seasoning(inner)
 	for i in range(3):
 		var y := inner.position.y + 24.0 + i * 18.0 + sin(Time.get_ticks_msec() / 900.0 + i) * 3.0
@@ -1868,6 +1898,10 @@ func _draw_action_effects() -> void:
 				_draw_water_change_effect(progress)
 				_draw_vacuum_effect(progress)
 			"service_filter":
+				_draw_filter_service_effect(progress)
+			"top_off":
+				_draw_water_change_effect(progress)
+			"empty_skimmer_cup":
 				_draw_filter_service_effect(progress)
 			"test_water":
 				_draw_test_water_effect(progress)
@@ -2374,19 +2408,25 @@ func _refresh_ui() -> void:
 		var heater = equipment.get("heater", {})
 		var light = equipment.get("light", {})
 		var air = equipment.get("air_pump", {})
+		var skimmer = equipment.get("protein_skimmer", {})
+		var ato = equipment.get("auto_top_off", {})
 		var failure_bits := []
 		for item in [filter, heater, light, air]:
 			var mode := str(item.get("failure_mode", ""))
 			if mode != "":
 				failure_bits.append(mode)
-		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / carbon %.0f%% / PO4 media %.0f%% - heater %.1f C - light %.1fh - air %.0f%%" % [
+		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / carbon %.0f%% / PO4 media %.0f%% - heater %.1f C - light %.1fh - air %.0f%% - skimmer %.0f%% cup %.0f%% - ATO %s %.1fL" % [
 			float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0,
 			float(mechanical.get("clog", 0.0)) * 100.0,
 			float(chemical.get("carbon_remaining", 0.0)) * 100.0,
 			float(chemical.get("phosphate_remover_remaining", 0.0)) * 100.0,
 			float(heater.get("target_c", water.get("temperature_c", 24.0))),
 			float(light.get("hours_per_day", 8.0)) if bool(light.get("enabled", true)) else 0.0,
-			float(air.get("output", 0.0)) * 100.0 if bool(air.get("enabled", true)) else 0.0
+			float(air.get("output", 0.0)) * 100.0 if bool(air.get("enabled", true)) else 0.0,
+			float(skimmer.get("output", 0.0)) * 100.0 if bool(skimmer.get("enabled", false)) else 0.0,
+			float(skimmer.get("cup_fullness", 0.0)) * 100.0,
+			"on" if bool(ato.get("enabled", false)) else "off",
+			float(ato.get("reservoir_litres", 0.0))
 		]
 		if failure_bits.size() > 0:
 			filter_label.text += " - wear: " + ", ".join(failure_bits)
@@ -2483,6 +2523,10 @@ func _format_water(key: String, value: float) -> String:
 			return "KH / alkalinity: %.1f dKH" % value
 		"tds_mg_l":
 			return "TDS: %.0f mg/L" % value
+		"salinity_ppt":
+			return "Salinity: %.1f ppt" % value
+		"water_level":
+			return "Water level: %.0f%%" % (value * 100.0)
 		"chlorine_mg_l":
 			return "Chlorine: %.3f mg/L" % value
 		"chloramine_mg_l":

@@ -215,6 +215,7 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "chlorine_mg_l": 0.0,
             "chloramine_mg_l": 0.0,
             "tds_mg_l": 180.0,
+            "water_level": 1.0,
             "tannins": 0.08,
             "organic_waste": 0.12,
             "turbidity": 0.08,
@@ -232,6 +233,8 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "heater": {"enabled": True, "health": 0.98, "target_c": 23.5, "placement_near_flow": True, "thermometer_present": True},
             "light": {"enabled": True, "health": 0.99, "hours_per_day": 8.0, "start_hour": 10.0, "timer_enabled": True, "plant_spectrum": 0.82},
             "air_pump": {"enabled": True, "health": 0.97, "output": 0.5},
+            "protein_skimmer": {"enabled": False, "health": 0.95, "output": 0.0, "cup_fullness": 0.0},
+            "auto_top_off": {"enabled": False, "health": 0.96, "reservoir_litres": 5.0},
             "checklist": {
                 "tank": True,
                 "filter": True,
@@ -245,6 +248,8 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
                 "dedicated_stand": True,
                 "co2_system": False,
                 "auto_feeder": False,
+                "protein_skimmer": False,
+                "auto_top_off": False,
             },
         },
         "planning": default_planning(162.0),
@@ -328,6 +333,7 @@ def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium"
         "chlorine_mg_l": 0.0,
         "chloramine_mg_l": 0.0,
         "tds_mg_l": 10200.0 if system == "saltwater" else 170.0,
+        "water_level": 1.0,
         "tannins": 0.0,
         "organic_waste": 0.02,
         "turbidity": 0.02,
@@ -430,6 +436,8 @@ def default_maintenance() -> dict[str, Any]:
         "last_water_test": stamp,
         "last_algae_scrape": stamp,
         "last_plant_trim": stamp,
+        "last_top_off": stamp,
+        "last_skimmer_cup_empty": stamp,
         "water_conditioner_used": True,
         "last_conditioner_dose": 1.0,
         "last_filter_overcleaned": False,
@@ -528,6 +536,9 @@ def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
         "disease_resistance": rng.uniform(0.76, 1.2),
         "appetite_bias": rng.uniform(0.72, 1.28),
         "boldness": rng.uniform(0.18, 0.92),
+        "curiosity": rng.uniform(0.12, 0.94),
+        "sociability": rng.uniform(0.35, 1.0) if "school" in str(spec.get("social", "")) or "shoal" in str(spec.get("social", "")) else rng.uniform(0.08, 0.72),
+        "fear_memory": 0.0,
         "microbiome_stability": rng.uniform(0.72, 1.0),
         "latent_pathogen_load": rng.uniform(0.0, 0.08),
         "feeding_rank": rng.uniform(0.2, 1.0),
@@ -537,6 +548,8 @@ def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
         "circadian_offset": rng.uniform(-1.5, 1.5),
         "home_x": rng.uniform(0.12, 0.88),
         "home_y": rng.uniform(0.18, 0.82),
+        "sleep_x": rng.uniform(0.10, 0.90),
+        "sleep_y": rng.uniform(0.58, 0.86) if spec.get("swim_zone") == "bottom" else rng.uniform(0.22, 0.72),
         "routine": "explore",
         "social_satisfaction": 1.0,
         "injury": 0.0,
@@ -648,6 +661,7 @@ class AquariumSimulation:
         water.setdefault("chloramine_mg_l", 0.0)
         water.setdefault("co2_mg_l", 4.0)
         water.setdefault("tds_mg_l", 10200.0 if water["system"] == "saltwater" else 180.0)
+        water.setdefault("water_level", 1.0)
         water.setdefault("phosphate_mg_l", 0.35)
         water.setdefault("tannins", 0.08)
         water.setdefault("surface_film", 0.0)
@@ -684,6 +698,12 @@ class AquariumSimulation:
         equipment["light"].setdefault("failure_mode", "")
         equipment.setdefault("air_pump", {"enabled": True, "health": 0.97, "output": 0.5})
         equipment["air_pump"].setdefault("failure_mode", "")
+        equipment.setdefault("protein_skimmer", {"enabled": water["system"] == "saltwater", "health": 0.95, "output": 0.55 if water["system"] == "saltwater" else 0.0, "cup_fullness": 0.0})
+        equipment["protein_skimmer"].setdefault("cup_fullness", 0.0)
+        equipment["protein_skimmer"].setdefault("failure_mode", "")
+        equipment.setdefault("auto_top_off", {"enabled": False, "health": 0.96, "reservoir_litres": 5.0})
+        equipment["auto_top_off"].setdefault("reservoir_litres", 5.0)
+        equipment["auto_top_off"].setdefault("failure_mode", "")
         equipment.setdefault("checklist", default_state(self.species)["equipment"]["checklist"])
         self.state.setdefault("planning", default_planning(float(aquarium.get("gross_litres", 60.0))))
         source_defaults = default_source_water(str(water.get("system", "freshwater")))
@@ -737,6 +757,9 @@ class AquariumSimulation:
             animal.setdefault("disease_resistance", 1.0)
             animal.setdefault("appetite_bias", 1.0)
             animal.setdefault("boldness", 0.5)
+            animal.setdefault("curiosity", 0.5)
+            animal.setdefault("sociability", 0.65)
+            animal.setdefault("fear_memory", 0.0)
             animal.setdefault("microbiome_stability", 0.9)
             animal.setdefault("latent_pathogen_load", 0.03)
             animal.setdefault("feeding_rank", 0.6)
@@ -746,6 +769,8 @@ class AquariumSimulation:
             animal.setdefault("circadian_offset", 0.0)
             animal.setdefault("home_x", 0.5)
             animal.setdefault("home_y", 0.5)
+            animal.setdefault("sleep_x", animal.get("home_x", 0.5))
+            animal.setdefault("sleep_y", animal.get("home_y", 0.5))
             animal.setdefault("routine", "explore")
             animal.setdefault("injury", 0.0)
             animal.setdefault("last_random_event", "")
@@ -943,6 +968,33 @@ class AquariumSimulation:
             self._record("info", "Plants inspected", "No major trimming was needed.")
         self.state.setdefault("maintenance", default_maintenance())["last_plant_trim"] = now_iso()
 
+    def top_off(self, amount: float | None = None, quiet: bool = False) -> None:
+        water = self.state["water"]
+        missing = clamp(1.0 - float(water.get("water_level", 1.0)), 0.0, 0.35)
+        if amount is not None:
+            missing = min(missing, clamp(float(amount), 0.0, 0.35))
+        if missing <= 0.002:
+            if not quiet:
+                self._record("info", "Top-off checked", "Water level is already near full.")
+            return
+        old_level = max(0.55, float(water.get("water_level", 1.0)))
+        new_level = clamp(old_level + missing, 0.55, 1.0)
+        dilution = old_level / max(new_level, 0.55)
+        water["water_level"] = new_level
+        water["tds_mg_l"] = clamp(float(water.get("tds_mg_l", 180.0)) * dilution, 0, 45000)
+        if water.get("system") == "saltwater":
+            water["salinity_ppt"] = clamp(float(water.get("salinity_ppt", 35.0)) * dilution, 0, 45)
+        water["surface_film"] = clamp(float(water.get("surface_film", 0.0)) * 0.92, 0, 1)
+        self.state.setdefault("maintenance", default_maintenance())["last_top_off"] = now_iso()
+        if not quiet:
+            self._record("info", "Evaporation topped off", "Fresh top-off water restored level and reduced salinity/TDS concentration from evaporation.")
+
+    def empty_skimmer_cup(self) -> None:
+        skimmer = self.state["equipment"].setdefault("protein_skimmer", {"enabled": self.state["water"].get("system") == "saltwater", "health": 0.95, "output": 0.55, "cup_fullness": 0.0})
+        skimmer["cup_fullness"] = 0.0
+        self.state.setdefault("maintenance", default_maintenance())["last_skimmer_cup_empty"] = now_iso()
+        self._record("info", "Skimmer cup emptied", "Protein skimmer export is back to normal.")
+
     def dose_ammonia(self, amount: float = 1.0) -> None:
         amount = clamp(amount, 0.1, 3.0)
         living = [a for a in self.state.get("animals", []) if a.get("alive", True)]
@@ -1038,6 +1090,20 @@ class AquariumSimulation:
             if value is not None:
                 pump["output"] = clamp(float(value), 0.0, 1.0)
             self._record("info", "Air pump adjusted", f"Air pump is {'on' if pump.get('enabled', True) else 'off'} at {float(pump.get('output', 0.5)) * 100:.0f}% output.")
+        elif equipment == "protein_skimmer":
+            skimmer = gear.setdefault("protein_skimmer", {"enabled": self.state["water"].get("system") == "saltwater", "health": 0.95, "output": 0.55, "cup_fullness": 0.0})
+            if enabled is not None:
+                skimmer["enabled"] = bool(enabled)
+            if value is not None:
+                skimmer["output"] = clamp(float(value), 0.0, 1.0)
+            self._record("info", "Protein skimmer adjusted", f"Skimmer is {'on' if skimmer.get('enabled', True) else 'off'} at {float(skimmer.get('output', 0.55)) * 100:.0f}% output.")
+        elif equipment == "auto_top_off":
+            ato = gear.setdefault("auto_top_off", {"enabled": False, "health": 0.96, "reservoir_litres": 5.0})
+            if enabled is not None:
+                ato["enabled"] = bool(enabled)
+            if value is not None:
+                ato["reservoir_litres"] = clamp(float(value), 0.0, 40.0)
+            self._record("info", "Auto top-off adjusted", f"ATO is {'on' if ato.get('enabled', False) else 'off'} with {float(ato.get('reservoir_litres', 0.0)):.1f} L in the reservoir.")
         self._summarize()
 
     def set_substrate(self, substrate: str = "fine_sand", depth_cm: float = 5.0) -> None:
@@ -1095,7 +1161,13 @@ class AquariumSimulation:
                 "nitrate_mg_l": 5.0,
                 "organic_waste": 0.08,
                 "turbidity": 0.03,
+                "water_level": 1.0,
             })
+            self.state["source_water"] = default_source_water("saltwater")
+            self.state["equipment"]["protein_skimmer"] = {"enabled": True, "health": 0.95, "output": 0.58, "cup_fullness": 0.0}
+            self.state["equipment"]["auto_top_off"] = {"enabled": False, "health": 0.96, "reservoir_litres": 8.0}
+            self.state["equipment"]["checklist"]["protein_skimmer"] = True
+            self.state["equipment"]["checklist"]["auto_top_off"] = False
             self._record("info", "Saltwater reef started", "The tank was converted to a conservative starter reef. Add marine animals when you are ready to acclimate them.")
         else:
             fresh = default_state(self.species)
@@ -1404,6 +1476,11 @@ class AquariumSimulation:
             issues.append({"severity": "warning", "title": "Surface film needs removal", "details": "Skim or disturb the surface to restore gas exchange."})
         if water.get("detritus", 0.0) > 0.58:
             issues.append({"severity": "warning", "title": "Substrate debris is high", "details": "Gentle vacuuming will reduce long-term nitrate and phosphate pressure."})
+        if water.get("water_level", 1.0) < 0.95:
+            issues.append({"severity": "warning", "title": "Top-off needed", "details": "Evaporation lowered the water level and concentrated dissolved minerals."})
+        skimmer = self.state.get("equipment", {}).get("protein_skimmer", {})
+        if water.get("system") == "saltwater" and bool(skimmer.get("enabled", False)) and float(skimmer.get("cup_fullness", 0.0)) > 0.75:
+            issues.append({"severity": "warning", "title": "Skimmer cup filling", "details": "Empty the collection cup before export efficiency drops."})
         maintenance["issues"] = issues
         return maintenance
 
@@ -1761,6 +1838,7 @@ class AquariumSimulation:
         water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) - phosphate_uptake, 0, 10)
 
         lights_on, light_hours = self._lighting_window()
+        self._update_evaporation_and_skimmer(hours, lights_on)
         sunlight_hours = float(planning.get("direct_sunlight_hours", 0.0))
         if sunlight_hours > 0:
             water["temperature_c"] += sunlight_hours * hours * 0.004
@@ -1927,6 +2005,44 @@ class AquariumSimulation:
             pump["failure_mode"] = "diaphragm wear"
             pump["output"] = clamp(float(pump.get("output", 0.5)) * 0.65, 0, 1)
             self._record_once("air_pump_wear", "warning", "Air pump output is weak", "Aging air pump output reduced gas exchange.")
+
+    def _update_evaporation_and_skimmer(self, hours: float, lights_on: bool) -> None:
+        equipment = self.state["equipment"]
+        water = self.state["water"]
+        aquarium = self.state["aquarium"]
+        surface_factor = clamp(float(aquarium.get("surface_agitation", 0.5)) + float(equipment.get("air_pump", {}).get("output", 0.0)) * 0.25, 0.25, 1.4)
+        heat_factor = clamp((float(water.get("temperature_c", 24.0)) - 18.0) / 12.0, 0.2, 1.5)
+        light_factor = 1.18 if lights_on else 0.86
+        evaporation = hours * 0.00028 * surface_factor * heat_factor * light_factor
+        old_level = max(0.55, float(water.get("water_level", 1.0)))
+        new_level = clamp(old_level - evaporation, 0.55, 1.0)
+        if new_level < old_level:
+            concentration = old_level / max(new_level, 0.55)
+            water["water_level"] = new_level
+            water["tds_mg_l"] = clamp(float(water.get("tds_mg_l", 180.0)) * concentration, 0, 45000)
+            if water.get("system") == "saltwater":
+                water["salinity_ppt"] = clamp(float(water.get("salinity_ppt", 35.0)) * concentration, 0, 45)
+        ato = equipment.setdefault("auto_top_off", {"enabled": False, "health": 0.96, "reservoir_litres": 5.0})
+        if bool(ato.get("enabled", False)) and float(ato.get("health", 1.0)) > 0.2 and water.get("water_level", 1.0) < 0.985:
+            needed = 1.0 - float(water.get("water_level", 1.0))
+            litres_needed = needed * float(aquarium.get("gross_litres", 60.0))
+            available = max(0.0, float(ato.get("reservoir_litres", 0.0)))
+            refill_fraction = min(needed, available / max(1.0, float(aquarium.get("gross_litres", 60.0))))
+            if refill_fraction > 0:
+                self.top_off(refill_fraction, quiet=True)
+                ato["reservoir_litres"] = max(0.0, available - min(available, litres_needed))
+            else:
+                self._record_once("ato_empty", "warning", "Top-off reservoir is empty", "Evaporation is concentrating minerals and salinity because the ATO reservoir ran dry.")
+        skimmer = equipment.setdefault("protein_skimmer", {"enabled": water.get("system") == "saltwater", "health": 0.95, "output": 0.55, "cup_fullness": 0.0})
+        if water.get("system") == "saltwater" and bool(skimmer.get("enabled", True)) and float(skimmer.get("health", 1.0)) > 0.1:
+            output = clamp(float(skimmer.get("output", 0.55)) * float(skimmer.get("health", 1.0)) * (1.0 - float(skimmer.get("cup_fullness", 0.0)) * 0.55), 0, 1)
+            export = min(float(water.get("organic_waste", 0.0)), output * hours * 0.006)
+            water["organic_waste"] = clamp(float(water.get("organic_waste", 0.0)) - export, 0, 5)
+            water["surface_film"] = clamp(float(water.get("surface_film", 0.0)) - output * hours * 0.004, 0, 1)
+            water["turbidity"] = clamp(float(water.get("turbidity", 0.0)) - output * hours * 0.002, 0, 1)
+            skimmer["cup_fullness"] = clamp(float(skimmer.get("cup_fullness", 0.0)) + export * 0.22 + hours * 0.00035, 0, 1)
+            if float(skimmer.get("cup_fullness", 0.0)) > 0.88:
+                self._record_once("skimmer_cup_full", "warning", "Skimmer cup is full", "Protein skimmer export is weakening because the collection cup needs emptying.")
 
     def _decompose_dead_animals(self, hours: float) -> None:
         water = self.state["water"]
@@ -2118,10 +2234,21 @@ class AquariumSimulation:
         immune_gap = max(0.0, 0.78 - float(animal.get("immune_condition", 1.0)))
         chronic = float(animal.get("chronic_stress", 0.0))
         pathogen = float(animal.get("latent_pathogen_load", 0.02))
+        nitrogen_pressure = clamp(water.get("ammonia_mg_l", 0.0) * 1.6 + water.get("nitrite_mg_l", 0.0) * 1.2, 0, 1.0)
+        dirty_pressure = max(0.0, water.get("organic_waste", 0.0) - 0.8) * 0.18 + max(0.0, water.get("turbidity", 0.0) - 0.35) * 0.25
+        salinity_pressure = 0.0
+        spec = self.species.get(animal.get("species_id", ""), {})
+        if water.get("system") == "saltwater":
+            ideal = spec.get("salinity_ppt", {"ideal": [34.0, 36.0]}).get("ideal", [34.0, 36.0])
+            salinity_pressure = range_stress(water.get("salinity_ppt", 35.0), ideal, [30.0, 39.0])
+        injury_pressure = float(animal.get("injury", 0.0))
+        acclimation_pressure = 0.35 if not animal.get("acclimated", True) else 0.0
         water_pressure = (
-            clamp(water.get("ammonia_mg_l", 0.0) * 1.6 + water.get("nitrite_mg_l", 0.0) * 1.2, 0, 1.0)
-            + max(0.0, water.get("organic_waste", 0.0) - 0.8) * 0.18
-            + max(0.0, water.get("turbidity", 0.0) - 0.35) * 0.25
+            nitrogen_pressure
+            + dirty_pressure
+            + salinity_pressure * 0.35
+            + acclimation_pressure
+            + max(0.0, injury_pressure - 0.15) * 0.25
         )
         disease_resistance = max(0.2, float(animal.get("disease_resistance", 1.0)))
         if animal.get("disease"):
@@ -2135,10 +2262,27 @@ class AquariumSimulation:
 
         disease_rate = (immune_gap * 0.04 + max(0.0, chronic - 0.25) * 0.035 + water_pressure * 0.018 + pathogen * 0.025) / disease_resistance
         if self._chance(disease_rate, hours, f"disease_start_{animal['id']}"):
-            animal["disease"] = "opportunistic infection"
-            animal["last_random_event"] = "opportunistic infection"
-            self._random_note(f"{animal['name']} developed an opportunistic infection")
-            self._record("warning", f"{animal['name']} looks ill", "Chronic stress, immune weakness, or dirty water allowed an opportunistic infection to appear.", animal["id"])
+            disease, details = self._select_disease(animal, nitrogen_pressure, dirty_pressure, salinity_pressure, injury_pressure, acclimation_pressure)
+            animal["disease"] = disease
+            animal["last_random_event"] = disease
+            self._random_note(f"{animal['name']} developed {disease}")
+            self._record("warning", f"{animal['name']} looks ill", details, animal["id"])
+
+    def _select_disease(self, animal: dict[str, Any], nitrogen_pressure: float, dirty_pressure: float, salinity_pressure: float, injury_pressure: float, acclimation_pressure: float) -> tuple[str, str]:
+        water = self.state["water"]
+        if nitrogen_pressure > 0.5 or water.get("chlorine_mg_l", 0.0) + water.get("chloramine_mg_l", 0.0) > 0.03:
+            return "gill inflammation", "Poor nitrogen control or disinfectant exposure irritated the gills and opened the door to infection."
+        if injury_pressure > 0.28 and dirty_pressure > 0.12:
+            return "fin rot", "Damaged fins plus dirty water allowed bacterial fin rot to start."
+        if injury_pressure > 0.22 and water.get("turbidity", 0.0) > 0.45:
+            return "fungal wound infection", "A wound stayed dirty long enough for a cottony fungal infection to take hold."
+        if water.get("system") == "saltwater" and (salinity_pressure > 0.32 or acclimation_pressure > 0.0):
+            return "marine parasite outbreak", "Salinity or transfer stress allowed a marine parasite outbreak to appear."
+        if acclimation_pressure > 0.0 or float(animal.get("latent_pathogen_load", 0.0)) > 0.06:
+            return "ich outbreak", "Transport or acclimation stress allowed latent white-spot style parasites to break out."
+        if dirty_pressure > 0.18:
+            return "bacterial infection", "Organic waste and cloudy water created conditions for a bacterial infection."
+        return "opportunistic infection", "Chronic stress, immune weakness, or dirty water allowed an opportunistic infection to appear."
 
     def _update_animal(self, animal: dict[str, Any], groups: dict[str, int], welfare: dict[str, Any], consumed: float, hours: float) -> None:
         spec = self.species[animal["species_id"]]
@@ -2171,6 +2315,7 @@ class AquariumSimulation:
         stress_target = clamp(stress_target * float(animal.get("stress_sensitivity", 1.0)), 0, 1)
         animal["acute_stress"] = clamp(animal["acute_stress"] + (stress_target - animal["acute_stress"]) * min(1, hours * 0.3), 0, 1)
         animal["chronic_stress"] = clamp(animal["chronic_stress"] + (animal["acute_stress"] - 0.2) * hours * 0.012, 0, 1)
+        animal["fear_memory"] = clamp(float(animal.get("fear_memory", 0.0)) + max(0.0, animal["acute_stress"] - 0.42) * hours * 0.02 - hours * 0.004 * float(animal.get("boldness", 0.5)), 0, 1)
         animal["immune_condition"] = clamp(animal["immune_condition"] - animal["chronic_stress"] * hours * 0.004 / max(0.35, float(animal.get("disease_resistance", 1.0))) + hours * 0.0004, 0, 1)
         damage = max(0, nitrogen_stress - 0.35) * hours * 0.05 + max(0, oxygen_stress - 0.45) * hours * 0.06 + max(0, co2_stress - 0.55) * hours * 0.035
         damage += float(welfare_risk.get("damage_per_hour", 0.0)) * hours
@@ -2206,6 +2351,9 @@ class AquariumSimulation:
             animal["routine"] = "hide"
         elif float(animal.get("injury", 0.0)) > 0.25:
             animal["behavior"] = "keeping distance with minor injuries"
+            animal["routine"] = "hide"
+        elif float(animal.get("fear_memory", 0.0)) > 0.62 and float(animal.get("boldness", 0.5)) < 0.62:
+            animal["behavior"] = "hesitating near a trusted hiding route"
             animal["routine"] = "hide"
         elif welfare_risk.get("reasons"):
             reason = str(welfare_risk["reasons"][0])
@@ -2245,6 +2393,9 @@ class AquariumSimulation:
         elif spec["social"] == "schooling":
             animal["behavior"] = "schooling"
             animal["routine"] = "school"
+        elif float(animal.get("curiosity", 0.5)) > 0.72 and animal["acute_stress"] < 0.16:
+            animal["behavior"] = "curiously inspecting the scape"
+            animal["routine"] = "inspect"
         else:
             animal["behavior"] = "patrolling planted cover"
             animal["routine"] = "patrol"
@@ -2289,6 +2440,13 @@ class AquariumSimulation:
             self._record_once("surface_film", "warning", "Surface film is building", "Protein/oil film is reducing gas exchange. Remove film and increase surface movement.")
         if water.get("detritus", 0.0) > 0.65:
             self._record_once("detritus", "warning", "Detritus is building up", "Mulm and debris in the substrate are feeding long-term nitrate, phosphate, and oxygen demand.")
+        if water.get("water_level", 1.0) < 0.93:
+            self._record_once("low_water_level", "warning", "Water level has dropped", "Evaporation is concentrating minerals. Top off with fresh water, especially in saltwater.")
+        if water.get("system") == "saltwater" and not (33.0 <= water.get("salinity_ppt", 35.0) <= 37.0):
+            self._record_once("salinity_drift", "warning", "Salinity is drifting", f"Salinity is {water.get('salinity_ppt', 35.0):.1f} ppt. Correct slowly with top-off or properly mixed saltwater.")
+        skimmer = self.state.get("equipment", {}).get("protein_skimmer", {})
+        if water.get("system") == "saltwater" and skimmer.get("enabled", False) and float(skimmer.get("cup_fullness", 0.0)) > 0.88:
+            self._record_once("skimmer_cup", "warning", "Skimmer cup needs emptying", "The protein skimmer is losing export efficiency.")
         if self.state["biology"].get("algae", 0.0) > 0.55:
             self._record_once("algae", "warning", "Algae pressure is high", "Reduce light, avoid direct sun, control phosphate/nitrate, and avoid overfeeding.")
         if not self.state.get("cycle", {}).get("ready_for_animals", True):
@@ -2366,6 +2524,10 @@ class AquariumSimulation:
             risks.append("surface film")
         if water.get("detritus", 0.0) > 0.6:
             risks.append("dirty substrate")
+        if water.get("water_level", 1.0) < 0.95:
+            risks.append("evaporation")
+        if water.get("system") == "saltwater" and not (33.0 <= water.get("salinity_ppt", 35.0) <= 37.0):
+            risks.append("salinity drift")
         if self.state["biology"].get("algae", 0.0) > 0.55:
             risks.append("algae pressure")
         if not self.state.get("cycle", {}).get("ready_for_animals", True):
