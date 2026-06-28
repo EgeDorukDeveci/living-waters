@@ -32,6 +32,8 @@ def test_nitrogen_cycle_and_water_change() -> None:
     assert state["water"]["ammonia_mg_l"] < 0.7
     assert state["water"]["nitrite_mg_l"] > 0.0 or state["water"]["nitrate_mg_l"] > 0.0
     before = state["water"]["nitrate_mg_l"]
+    state["source_water"]["nitrate_mg_l"] = 0.0
+    state["source_water"]["phosphate_mg_l"] = 0.0
     sim.water_change(0.5)
     assert state["water"]["nitrate_mg_l"] < before * 0.65
 
@@ -111,6 +113,67 @@ def test_day_night_clock_fields_are_published() -> None:
     assert_between(float(state["clock"]["local_hour"]), 0.0, 24.0, "local hour")
     assert state["clock"]["day_phase"] in {"dawn", "day", "dusk", "night"}
     assert isinstance(state["clock"]["lights_on"], bool)
+
+
+def test_source_water_and_conditioner_affect_water_changes() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Tap Test", "freshwater", 90)
+    state["source_water"]["nitrate_mg_l"] = 12.0
+    state["source_water"]["phosphate_mg_l"] = 0.4
+    state["source_water"]["chlorine_mg_l"] = 0.3
+    state["source_water"]["chloramine_mg_l"] = 0.12
+    sim = AquariumSimulation(species, state)
+    sim.water_change(0.5, conditioner_used=False)
+    assert state["water"]["nitrate_mg_l"] > 5.0
+    assert state["water"]["phosphate_mg_l"] > 0.15
+    assert state["water"]["chlorine_mg_l"] > 0.1
+    assert state["water"]["chloramine_mg_l"] > 0.04
+    before_bacteria = state["biology"]["ammonia_bacteria"]
+    sim.advance(2 * 3600)
+    assert state["biology"]["ammonia_bacteria"] < before_bacteria
+
+
+def test_small_maintenance_actions_reduce_visible_pressure() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    state["food"]["available"] = 0.8
+    state["food"]["decaying"] = 0.5
+    state["biology"]["algae"] = 0.7
+    state["maturity"]["glass_algae"] = 0.8
+    state["aquarium"]["scape"]["plants"] = [{"type": "hornwort", "quantity": 30, "health": 0.65}]
+    sim.remove_uneaten_food()
+    assert state["food"]["available"] < 0.3
+    sim.scrape_algae()
+    assert state["maturity"]["glass_algae"] < 0.25
+    sim.trim_plants()
+    assert state["aquarium"]["scape"]["plants"][0]["quantity"] < 30
+
+
+def test_overcleaned_filter_disturbs_biofilter() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    before = state["biology"]["ammonia_bacteria"]
+    sim.service_filter(overclean=True)
+    assert state["biology"]["ammonia_bacteria"] < before * 0.7
+    assert state["maintenance"]["last_filter_overcleaned"] is True
+    assert any("over-cleaned" in event["title"] for event in state["events"])
+
+
+def test_symptoms_publish_visible_tank_state() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    state["water"]["turbidity"] = 0.6
+    state["water"]["surface_film"] = 0.7
+    state["water"]["detritus"] = 0.7
+    state["biology"]["algae"] = 0.75
+    sim.advance(5)
+    assert state["symptoms"]["cloudiness"] > 0.5
+    assert state["symptoms"]["surface_film"] > 0.5
+    assert state["symptoms"]["dirty_substrate"] > 0.5
+    assert state["symptoms"]["green_water"] > 0.5
 
 
 def test_tank_maturity_changes_with_time_and_neglect() -> None:
@@ -551,6 +614,10 @@ def main() -> int:
         test_plants_and_macroalgae_use_some_phosphate,
         test_leftover_food_mineralizes_slowly,
         test_day_night_clock_fields_are_published,
+        test_source_water_and_conditioner_affect_water_changes,
+        test_small_maintenance_actions_reduce_visible_pressure,
+        test_overcleaned_filter_disturbs_biofilter,
+        test_symptoms_publish_visible_tank_state,
         test_tank_maturity_changes_with_time_and_neglect,
         test_fish_routine_reflects_surface_stress,
         test_default_tank_starts_empty,

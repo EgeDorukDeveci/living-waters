@@ -8,6 +8,9 @@ const COMMAND_FEED := {"action": "feed", "amount": 0.42}
 const COMMAND_WATER_CHANGE := {"action": "water_change", "fraction": 0.25}
 const COMMAND_SERVICE_FILTER := {"action": "service_filter", "replace_carbon": true}
 const COMMAND_WEEKLY_MAINTENANCE := {"action": "weekly_maintenance"}
+const COMMAND_REMOVE_FOOD := {"action": "remove_uneaten_food"}
+const COMMAND_SCRAPE_ALGAE := {"action": "scrape_algae"}
+const COMMAND_TRIM_PLANTS := {"action": "trim_plants"}
 const COMMAND_DOSE_AMMONIA := {"action": "dose_ammonia", "amount": 1.0}
 const COMMAND_TEST_WATER := {"action": "test_water"}
 
@@ -209,6 +212,8 @@ func _effect_duration(kind: String) -> float:
 			return 3.2
 		"weekly_maintenance":
 			return 3.4
+		"remove_uneaten_food", "scrape_algae", "trim_plants":
+			return 2.4
 		"service_filter":
 			return 2.7
 		"test_water":
@@ -708,6 +713,27 @@ func _build_ui() -> void:
 	_style_button(maintenance_button)
 	maintenance_button.pressed.connect(func(): _write_command(COMMAND_WEEKLY_MAINTENANCE.duplicate()))
 	quick_row.add_child(maintenance_button)
+	var small_care_row := HBoxContainer.new()
+	small_care_row.add_theme_constant_override("separation", 8)
+	quick_box.add_child(small_care_row)
+	var remove_food := Button.new()
+	remove_food.text = "Leftovers"
+	remove_food.custom_minimum_size = Vector2(101, 34)
+	_style_button(remove_food)
+	remove_food.pressed.connect(func(): _write_command(COMMAND_REMOVE_FOOD.duplicate()))
+	small_care_row.add_child(remove_food)
+	var scrape_algae := Button.new()
+	scrape_algae.text = "Scrape"
+	scrape_algae.custom_minimum_size = Vector2(101, 34)
+	_style_button(scrape_algae)
+	scrape_algae.pressed.connect(func(): _write_command(COMMAND_SCRAPE_ALGAE.duplicate()))
+	small_care_row.add_child(scrape_algae)
+	var trim_plants := Button.new()
+	trim_plants.text = "Trim"
+	trim_plants.custom_minimum_size = Vector2(101, 34)
+	_style_button(trim_plants)
+	trim_plants.pressed.connect(func(): _write_command(COMMAND_TRIM_PLANTS.duplicate()))
+	small_care_row.add_child(trim_plants)
 
 	var water_box := _make_section(care_tab, "Water change", "Match temperature, pH, and hardness. Disturbing substrate can release old waste.")
 	var water_change_grid := GridContainer.new()
@@ -922,7 +948,7 @@ func _build_ui() -> void:
 	var journal_tab := _add_tab(tabs, "Journal")
 	var readings_box := _make_section(journal_tab, "Readings", "The same information appears as sensors on the tank, but this gives exact values.")
 	water_labels.clear()
-	for key in ["temperature_c", "ph", "oxygen_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l", "phosphate_mg_l"]:
+	for key in ["temperature_c", "ph", "kh_dkh", "tds_mg_l", "oxygen_mg_l", "co2_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l", "phosphate_mg_l", "chlorine_mg_l", "chloramine_mg_l", "surface_film", "detritus"]:
 		var label := _make_label(key, 12, Color("#d8eee9"))
 		water_labels[key] = label
 		readings_box.add_child(label)
@@ -990,6 +1016,7 @@ func _water_change_command() -> Dictionary:
 		command["replacement_gh_dgh"] = float(replacement_gh_spin.value)
 	if disturb_substrate_check:
 		command["disturbed_substrate"] = bool(disturb_substrate_check.button_pressed)
+	command["conditioner_dose"] = 1.0
 	return command
 
 func _apply_equipment() -> void:
@@ -1438,15 +1465,22 @@ func _draw_aquarium() -> void:
 		color.a = 0.96
 		draw_rect(band, color, true)
 	var water = state.get("water", {})
+	var symptoms = state.get("symptoms", {})
 	var turbidity: float = clamp(float(water.get("turbidity", 0.0)), 0.0, 1.0)
 	var ammonia: float = clamp(float(water.get("ammonia_mg_l", 0.0)) * 2.0, 0.0, 1.0)
 	var nitrate: float = clamp(max(0.0, float(water.get("nitrate_mg_l", 0.0)) - 20.0) / 40.0, 0.0, 1.0)
+	var green_water: float = clamp(float(symptoms.get("green_water", 0.0)), 0.0, 1.0)
+	var film: float = clamp(float(symptoms.get("surface_film", water.get("surface_film", 0.0))), 0.0, 1.0)
 	if turbidity > 0.02:
 		draw_rect(inner, Color(0.46, 0.36, 0.18, turbidity * 0.18), true)
+	if green_water > 0.02:
+		draw_rect(inner, Color(0.18, 0.48, 0.18, green_water * 0.16), true)
 	if ammonia > 0.02:
 		draw_rect(inner, Color(0.78, 0.70, 0.30, ammonia * 0.16), true)
 	if nitrate > 0.02:
 		draw_rect(inner, Color(0.22, 0.56, 0.22, nitrate * 0.14), true)
+	if film > 0.03:
+		draw_rect(Rect2(inner.position + Vector2(24, 20), Vector2(inner.size.x - 48, 7 + film * 9.0)), Color(0.92, 0.96, 0.82, 0.08 + film * 0.18), true)
 	_draw_day_night_water_overlay(inner)
 	_draw_water_seasoning(inner)
 	for i in range(3):
@@ -1516,11 +1550,13 @@ func _draw_substrate(inner: Rect2) -> void:
 	draw_line(Vector2(bed.position.x, bed.position.y), Vector2(bed.end.x, bed.position.y), Color(0.95, 0.90, 0.72, 0.18), 1.0, true)
 	var maturity = state.get("maturity", {})
 	var mulm := float(maturity.get("mulm", 0.0))
-	if mulm > 0.04:
-		for i in range(int(18 + mulm * 80.0)):
+	var symptoms = state.get("symptoms", {})
+	var detritus: float = clamp(float(symptoms.get("dirty_substrate", 0.0)), mulm, 1.0)
+	if detritus > 0.04:
+		for i in range(int(18 + detritus * 92.0)):
 			var x := inner.position.x + fposmod(i * 53.0 + sin(i * 1.7) * 29.0, inner.size.x)
 			var y := bed.position.y + 5.0 + fposmod(i * 23.0, max(5.0, bed.size.y * 0.45))
-			draw_circle(Vector2(x, y), 1.2 + float(i % 4) * 0.6, Color(0.12, 0.095, 0.055, 0.10 + mulm * 0.22))
+			draw_circle(Vector2(x, y), 1.2 + float(i % 4) * 0.6, Color(0.12, 0.095, 0.055, 0.10 + detritus * 0.22))
 
 func _draw_water_seasoning(inner: Rect2) -> void:
 	var maturity = state.get("maturity", {})
@@ -1977,7 +2013,7 @@ func _draw_tank_sensors() -> void:
 	var font := get_theme_default_font()
 	var small := 12
 	var normal := 15
-	var board := Rect2(inner.position + Vector2(18, 18), Vector2(188, 138))
+	var board := Rect2(inner.position + Vector2(18, 18), Vector2(198, 168))
 	draw_rect(board, Color(0.03, 0.045, 0.045, 0.72), true)
 	draw_rect(board, Color(0.74, 0.92, 0.89, 0.24), false, 1.4, true)
 	draw_string(font, board.position + Vector2(12, 22), "WATER PROBE", HORIZONTAL_ALIGNMENT_LEFT, -1, small, Color("#c9e7df"))
@@ -1985,6 +2021,7 @@ func _draw_tank_sensors() -> void:
 	_draw_sensor_line(board.position + Vector2(12, 72), "O2", "%.1f mg/L" % float(water.get("oxygen_mg_l", 0.0)), _range_color(float(water.get("oxygen_mg_l", 0.0)), 6.0, 9.0, 4.8, 10.0), normal)
 	_draw_sensor_line(board.position + Vector2(12, 98), "NH3", "%.3f" % float(water.get("ammonia_mg_l", 0.0)), _max_color(float(water.get("ammonia_mg_l", 0.0)), 0.02, 0.15), normal)
 	_draw_sensor_line(board.position + Vector2(12, 124), "NO2", "%.3f" % float(water.get("nitrite_mg_l", 0.0)), _max_color(float(water.get("nitrite_mg_l", 0.0)), 0.05, 0.3), normal)
+	_draw_sensor_line(board.position + Vector2(12, 150), "CO2", "%.1f" % float(water.get("co2_mg_l", 0.0)), _max_color(float(water.get("co2_mg_l", 0.0)), 15.0, 25.0), normal)
 
 	var strip := Rect2(Vector2(inner.end.x - 70, inner.position.y + 86), Vector2(34, inner.size.y - SAND_HEIGHT - 132))
 	draw_rect(strip, Color(0.92, 0.88, 0.72, 0.24), true)
@@ -2432,6 +2469,8 @@ func _format_water(key: String, value: float) -> String:
 			return "pH: %.2f" % value
 		"oxygen_mg_l":
 			return "Oxygen: %.1f mg/L" % value
+		"co2_mg_l":
+			return "CO2: %.1f mg/L" % value
 		"ammonia_mg_l":
 			return "Ammonia: %.3f mg/L" % value
 		"nitrite_mg_l":
@@ -2440,4 +2479,16 @@ func _format_water(key: String, value: float) -> String:
 			return "Nitrate: %.1f mg/L" % value
 		"phosphate_mg_l":
 			return "Phosphate: %.2f mg/L" % value
+		"kh_dkh":
+			return "KH / alkalinity: %.1f dKH" % value
+		"tds_mg_l":
+			return "TDS: %.0f mg/L" % value
+		"chlorine_mg_l":
+			return "Chlorine: %.3f mg/L" % value
+		"chloramine_mg_l":
+			return "Chloramine: %.3f mg/L" % value
+		"surface_film":
+			return "Surface film: %.0f%%" % (value * 100.0)
+		"detritus":
+			return "Detritus: %.0f%%" % (value * 100.0)
 	return "%s: %.2f" % [key, value]

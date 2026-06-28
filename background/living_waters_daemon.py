@@ -333,11 +333,18 @@ class Daemon:
                 None if "replacement_ph" not in command else float(command.get("replacement_ph", 7.0)),
                 None if "replacement_gh_dgh" not in command else float(command.get("replacement_gh_dgh", 7.0)),
                 bool(command.get("disturbed_substrate", False)),
+                float(command.get("conditioner_dose", 1.0)),
             )
         elif action == "weekly_maintenance":
             sim.weekly_maintenance()
+        elif action == "remove_uneaten_food":
+            sim.remove_uneaten_food()
+        elif action == "scrape_algae":
+            sim.scrape_algae()
+        elif action == "trim_plants":
+            sim.trim_plants()
         elif action == "service_filter":
-            sim.service_filter(bool(command.get("replace_carbon", True)))
+            sim.service_filter(bool(command.get("replace_carbon", True)), bool(command.get("overclean", False)))
         elif action == "dose_ammonia":
             sim.dose_ammonia(float(command.get("amount", 1.0)))
         elif action == "test_water":
