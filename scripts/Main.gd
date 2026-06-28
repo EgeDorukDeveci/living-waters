@@ -59,6 +59,10 @@ var status_label: Label
 var summary_label: Label
 var research_label: Label
 var notebook_right_label: Label
+var notebook_left_page_label: Label
+var notebook_right_page_label: Label
+var notebook_prev_button: Button
+var notebook_next_button: Button
 var notebook_panel: PanelContainer
 var notebook_button: Button
 var scape_label: Label
@@ -79,6 +83,8 @@ var last_command_note := ""
 var last_command_until := 0.0
 var notebook_open := false
 var notebook_amount := 0.0
+var notebook_pages: Array = []
+var notebook_page_index := 0
 
 func _ready() -> void:
 	root_dir = _project_root()
@@ -870,7 +876,7 @@ func _build_ui() -> void:
 	var species_box := _make_section(life_tab, "Livestock bench", "Choose an animal here, then use the full keeper journal for research before acclimation.")
 	species_select = OptionButton.new()
 	_style_field(species_select, Vector2(322, 32))
-	species_select.item_selected.connect(func(_index): _refresh_research_card())
+	species_select.item_selected.connect(func(_index): notebook_page_index = 0; _refresh_research_card())
 	species_box.add_child(species_select)
 	notebook_button = Button.new()
 	notebook_button.text = "Open keeper journal"
@@ -1003,59 +1009,86 @@ func _build_notebook_overlay() -> void:
 	notebook_panel.visible = false
 	notebook_panel.modulate.a = 0.0
 	notebook_panel.clip_contents = true
-	notebook_panel.add_theme_stylebox_override("panel", _panel_style(Color("#5d4a34"), Color("#2b2118"), 22, 3))
+	notebook_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.02, 0.018, 0.015, 0.62), Color(0, 0, 0, 0), 0, 0))
 	add_child(notebook_panel)
 
 	var outer := VBoxContainer.new()
-	outer.add_theme_constant_override("separation", 10)
-	outer.offset_left = 24
-	outer.offset_top = 18
-	outer.offset_right = -24
-	outer.offset_bottom = -20
+	outer.add_theme_constant_override("separation", 8)
+	outer.offset_left = 26
+	outer.offset_top = 20
+	outer.offset_right = -26
+	outer.offset_bottom = -18
 	notebook_panel.add_child(outer)
 
-	var top_row := HBoxContainer.new()
-	top_row.add_theme_constant_override("separation", 12)
-	outer.add_child(top_row)
-	var title := _make_label("Keeper Journal", 24, Color("#f6e7c2"))
-	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top_row.add_child(title)
-	var close := Button.new()
-	close.text = "Close"
-	close.custom_minimum_size = Vector2(112, 34)
-	_style_button(close)
-	close.pressed.connect(func(): _toggle_notebook(false))
-	top_row.add_child(close)
-
 	var spread := HBoxContainer.new()
-	spread.add_theme_constant_override("separation", 14)
+	spread.add_theme_constant_override("separation", 0)
+	spread.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	spread.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	outer.add_child(spread)
 	var left_page := _notebook_page()
 	var right_page := _notebook_page()
 	spread.add_child(left_page)
+	var spine := PanelContainer.new()
+	spine.custom_minimum_size = Vector2(24, 0)
+	spine.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	spine.add_theme_stylebox_override("panel", _panel_style(Color("#7c5f38"), Color("#5b4022"), 0, 0))
+	spread.add_child(spine)
 	spread.add_child(right_page)
-	research_label = left_page.get_node("PageScroll/PageText") as Label
-	notebook_right_label = right_page.get_node("PageScroll/PageText") as Label
-	_set_notebook_pages("Choose a species to begin the journal.", "The journal will combine species research with your current tank chemistry, scape, equipment, and recent risks.")
+	notebook_left_page_label = left_page.get_node("PageBox/PageNumber") as Label
+	notebook_right_page_label = right_page.get_node("PageBox/PageNumber") as Label
+	research_label = left_page.get_node("PageBox/PageScroll/PageText") as Label
+	notebook_right_label = right_page.get_node("PageBox/PageScroll/PageText") as Label
+
+	var controls := HBoxContainer.new()
+	controls.alignment = BoxContainer.ALIGNMENT_CENTER
+	controls.add_theme_constant_override("separation", 10)
+	outer.add_child(controls)
+	notebook_prev_button = Button.new()
+	notebook_prev_button.text = "<"
+	notebook_prev_button.custom_minimum_size = Vector2(52, 34)
+	_style_button(notebook_prev_button)
+	notebook_prev_button.pressed.connect(func(): _turn_notebook(-2))
+	controls.add_child(notebook_prev_button)
+	var done := Button.new()
+	done.text = "Done"
+	done.custom_minimum_size = Vector2(176, 36)
+	_style_button(done)
+	done.pressed.connect(func(): _toggle_notebook(false))
+	controls.add_child(done)
+	notebook_next_button = Button.new()
+	notebook_next_button.text = ">"
+	notebook_next_button.custom_minimum_size = Vector2(52, 34)
+	_style_button(notebook_next_button)
+	notebook_next_button.pressed.connect(func(): _turn_notebook(2))
+	controls.add_child(notebook_next_button)
+	_set_notebook_entries(["Choose a species to begin the journal.", "The journal will combine species research with your current tank chemistry, scape, equipment, and recent risks."])
 
 func _notebook_page() -> PanelContainer:
 	var page := PanelContainer.new()
 	page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	page.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	page.add_theme_stylebox_override("panel", _panel_style(Color("#e4d2a8"), Color("#8b7049"), 12, 2))
+	page.add_theme_stylebox_override("panel", _panel_style(Color("#e7d7ad"), Color("#8d7046"), 4, 2))
+	var page_box := VBoxContainer.new()
+	page_box.name = "PageBox"
+	page_box.offset_left = 18
+	page_box.offset_top = 12
+	page_box.offset_right = -18
+	page_box.offset_bottom = -14
+	page.add_child(page_box)
+	var page_number := _make_label("Page", 13, Color("#735d3a"))
+	page_number.name = "PageNumber"
+	page_number.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	page_box.add_child(page_number)
 	var scroll := ScrollContainer.new()
 	scroll.name = "PageScroll"
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	scroll.offset_left = 18
-	scroll.offset_top = 16
-	scroll.offset_right = -18
-	scroll.offset_bottom = -16
-	page.add_child(scroll)
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	page_box.add_child(scroll)
 	var text := _make_label("", 15, Color("#2d2418"), true)
 	text.name = "PageText"
-	text.add_theme_constant_override("line_spacing", 5)
+	text.add_theme_constant_override("line_spacing", 4)
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(text)
 	return page
@@ -1246,6 +1279,7 @@ func _refresh_research_card() -> void:
 	var water = state.get("water", {})
 	var equipment = state.get("equipment", {})
 	var maturity = state.get("maturity", {})
+	var maintenance = state.get("maintenance", {})
 	var symptoms = state.get("symptoms", {})
 	var summary = state.get("summary", {})
 	var current_litres := float(aquarium.get("effective_litres", 0.0))
@@ -1359,13 +1393,68 @@ func _refresh_research_card() -> void:
 		float(water.get("parasite_pressure", 0.0)) * 100.0,
 		float(water.get("bacterial_pressure", 0.0)) * 100.0
 	])
-	_set_notebook_pages("\n".join(left), "\n".join(right))
+	var pages: Array = ["\n".join(left), "\n".join(right)]
+	pages.append("COMPATIBILITY CHECKLIST\nSame water type matters first. Then compare adult size, minimum group, preferred group, swim layer, territoriality, fin nipping, predator mouth size, activity level, hiding needs, and nitrate tolerance.\n\nSchooling fish are not decoration: they need their group before mixed community ideas matter. Territorial fish need broken sight lines and space. Bottom fish need substrate and hiding routes. Long-finned fish dislike strong current and fin nippers.")
+	pages.append("NITROGEN CYCLE\nFish waste and uneaten food become ammonia. Mature bacteria convert ammonia to nitrite, then nitrite to nitrate.\n\nAmmonia should be 0. Nitrite should be 0. Nitrate is tolerated but becomes chronic stress when it builds.\n\nThe simulation uses filter maturity, media oxygen access, pH, KH, chlorine damage, flow, channeling, plant uptake, dead animals, food decay, and mulm to change the cycle over time.")
+	pages.append("WATER CHANGES\nA water change dilutes ammonia, nitrite, nitrate, phosphate, organics, turbidity, surface film, and detritus.\n\nIt can also add whatever is in the source water: nitrate, phosphate, chlorine, chloramine, silicate, KH, GH, TDS, calcium, magnesium, salinity, and trace elements.\n\nLarge, fast, cold, hot, untreated, pH-mismatched, hardness-mismatched, or substrate-disturbing changes cause shock. Disturbing the bed can remove compacted waste, but it can also release mulm and organics.")
+	pages.append("WOOD AND ROCKS\nWood does not make water alkaline. Driftwood releases tannins, darkens the water, and usually softens or acidifies slowly. Root driftwood is stronger; branch wood is moderate; manzanita is milder.\n\nReef/live rock and mineral stones can raise KH, calcium, hardness, and pH slowly. Lava rock and dragon stone can add silicate, which can feed brown diatom dust.\n\nCurrent tannins %.0f%%, soft-water pressure %.0f%%, KH release %.0f%%, silicate %.2f." % [float(water.get("tannins", 0.0)) * 100.0, float(aquarium.get("soft_water", 0.0)) * 100.0, float(aquarium.get("kh_release", 0.0)) * 100.0, float(water.get("silicate_mg_l", 0.0))])
+	pages.append("SUBSTRATE\nFine sand looks natural and lets bottom fish forage, but deep sand can compact if neglected. Gravel is easy to clean but traps food. Planted soil feeds roots and can grow plants better, but adds maintenance load. Bare bottom is clean but bad for rooted plants.\n\nRoot feeders need depth and nutrients. Disturbed substrate can release organics, phosphate, turbidity, and old mulm.\n\nCurrent substrate: %s, %.1f cm. Compaction %.0f%%, dirty bed %.0f%%." % [str(aquarium.get("substrate", "unknown")).replace("_", " "), float(aquarium.get("substrate_depth_cm", 0.0)), float(maturity.get("substrate_compaction", 0.0)) * 100.0, float(symptoms.get("dirty_substrate", 0.0)) * 100.0])
+	pages.append("PLANTS\nPlants use nitrate, phosphate, light, CO2, trace elements, and sometimes root nutrients. They add oxygen in the light and use oxygen at night.\n\nIf light, trace elements, nutrients, algae pressure, or substrate conditions are wrong, plants melt. Melt adds organics, ammonia, and phosphate.\n\nCurrent plant cover %.0f%%, shade %.0f%%, algae control %.0f%%, plant health %.0f%%." % [float(aquarium.get("plant_cover", 0.0)) * 100.0, float(aquarium.get("surface_shade", 0.0)) * 100.0, float(aquarium.get("algae_control", 0.0)) * 100.0, float(state.get("biology", {}).get("plant_health", 0.0)) * 100.0])
+	pages.append("CORALS AND REEF CHEMISTRY\nSaltwater stability depends on salinity, alkalinity, calcium, magnesium, temperature, flow, light, nitrate, phosphate, and trace elements.\n\nCoral growth consumes alkalinity, calcium, magnesium, and trace reserves. Evaporation raises salinity because water leaves but salt stays. Top-off restores level; mineral dosing restores depleted reserves.\n\nCurrent salinity %.1f ppt, alkalinity %.1f dKH, calcium %.0f, magnesium %.0f, trace %.0f%%." % [float(water.get("salinity_ppt", 0.0)), float(water.get("alkalinity_dkh", water.get("kh_dkh", 0.0))), float(water.get("calcium_mg_l", 0.0)), float(water.get("magnesium_mg_l", 0.0)), float(water.get("trace_elements", 0.0)) * 100.0])
+	pages.append("FEEDING AND WASTE\nFood helps body condition, energy, breeding condition, and confidence. Too much food becomes leftovers, then decay, then ammonia, phosphate, organics, detritus, surface film, and bacterial pressure.\n\nDominant fish can outcompete shy fish. Long-term hunger lowers body condition; dirty water and stress lower immune condition.\n\nCurrent available food %.2f, decaying food %.2f." % [float(state.get("food", {}).get("available", 0.0)), float(state.get("food", {}).get("decaying", 0.0))])
+	var filter_state = equipment.get("filter", {})
+	var media_state = filter_state.get("media", {})
+	var mechanical_state = media_state.get("mechanical", {})
+	var chemical_state = media_state.get("chemical", {})
+	pages.append("EQUIPMENT\nThe filter handles mechanical trapping, biological conversion, and optional chemical polishing. Clogging reduces flow. Channeling means water bypasses media, so the filter can run while filtering badly.\n\nCarbon removes organics and tint. Phosphate media reduces phosphate but depletes. Air and surface movement improve oxygen and CO2 exchange.\n\nCurrent flow %.0f%%, clog %.0f%%, channeling %.0f%%, carbon %.0f%%, PO4 media %.0f%%." % [float(filter_state.get("effective_flow", filter_state.get("flow", 0.0))) * 100.0, float(mechanical_state.get("clog", 0.0)) * 100.0, float(mechanical_state.get("channeling", 0.0)) * 100.0, float(chemical_state.get("carbon_remaining", 0.0)) * 100.0, float(chemical_state.get("phosphate_remover_remaining", 0.0)) * 100.0])
+	pages.append("GAS, LIGHT, TEMPERATURE\nOxygen depends on surface agitation, air output, plant day/night rhythm, temperature, salinity, bioload, organics, and surface film. Warm or salty water holds less oxygen.\n\nCO2 rises from respiration and decay, lowers pH, and can crowd oxygen. Too much light feeds algae; too little light weakens plants and corals.\n\nCurrent O2 %.1f, CO2 %.1f, surface film %.0f%%, light %.1f h." % [float(water.get("oxygen_mg_l", 0.0)), float(water.get("co2_mg_l", 0.0)), float(water.get("surface_film", 0.0)) * 100.0, float(equipment.get("light", {}).get("hours_per_day", 0.0))])
+	pages.append("DISEASE AND STRESS\nDisease follows conditions. Stress, injury, dirty water, bad acclimation, ammonia, nitrite, low oxygen, high CO2, salinity drift, parasite pressure, bacterial pressure, and weak immunity all matter.\n\nFish track body condition, gill condition, fin condition, parasite load, immune condition, fear memory, hunger, social satisfaction, and stress.\n\nCurrent parasite pressure %.0f%%, bacterial pressure %.0f%%, stressed animals %d." % [float(water.get("parasite_pressure", 0.0)) * 100.0, float(water.get("bacterial_pressure", 0.0)) * 100.0, int(summary.get("stressed_animals", 0))])
+	pages.append("TANK MATURITY\nA new tank is fragile. A mature tank develops biofilm, microfauna, rooted plants, mulm, stable bacteria, and small visual aging. A very old or neglected tank can develop low KH, nitrate buildup, compacted substrate, and old-tank pressure.\n\nCurrent seasoning %.0f%%, biofilm %.0f%%, microfauna %.0f%%, mulm %.0f%%, old-tank risk %.0f%%." % [float(maturity.get("seasoning", 0.0)) * 100.0, float(maturity.get("biofilm", 0.0)) * 100.0, float(maturity.get("microfauna", 0.0)) * 100.0, float(maturity.get("mulm", 0.0)) * 100.0, float(maturity.get("old_tank_risk", 0.0)) * 100.0])
+	pages.append("MAINTENANCE ACTIONS\nTest water: produces realistic kit readings.\nFeed: helps animals but can become waste.\nRemove leftovers: stops food before it mineralizes.\nScrape: clears glass but releases some film.\nTrim: prevents overgrowth and melt.\nTop off: restores evaporated water and lowers concentrated TDS/salinity.\nRefresh media: restores flow and reduces clog/channeling.\nDose minerals: replenishes KH/GH or reef alkalinity/calcium/magnesium/trace reserves.")
+	var event_lines: Array[String] = ["CURRENT OBSERVATIONS", "Cloudiness %.0f%%, green water %.0f%%, glass algae %.0f%%, diatom dust %.0f%%." % [float(symptoms.get("cloudiness", 0.0)) * 100.0, float(symptoms.get("green_water", 0.0)) * 100.0, float(symptoms.get("glass_algae", 0.0)) * 100.0, float(symptoms.get("diatom_dust", 0.0)) * 100.0], "Maintenance: %s." % ("ok" if maintenance.get("issues", []).is_empty() else str(maintenance.get("issues", [])[0].get("title", "attention needed"))), "", "Recent events:"]
+	for event_item in state.get("events", []).slice(0, 5):
+		event_lines.append("- %s: %s" % [str(event_item.get("severity", "info")), str(event_item.get("title", "event"))])
+	pages.append("\n".join(event_lines))
+	if spec.has("sources"):
+		pages.append("SOURCE BOOKMARKS\n%s" % _source_summary(spec.get("sources", [])))
+	_set_notebook_entries(pages)
 
 func _set_notebook_pages(left: String, right: String) -> void:
+	_set_notebook_entries([left, right])
+
+func _set_notebook_entries(pages: Array) -> void:
+	notebook_pages = pages.duplicate()
+	if notebook_pages.is_empty():
+		notebook_pages = ["No journal pages available."]
+	if notebook_page_index >= notebook_pages.size():
+		notebook_page_index = max(0, notebook_pages.size() - 1)
+	if notebook_page_index % 2 != 0:
+		notebook_page_index -= 1
+	_render_notebook_pages()
+
+func _turn_notebook(delta: int) -> void:
+	if notebook_pages.is_empty():
+		return
+	notebook_page_index = clamp(notebook_page_index + delta, 0, max(0, notebook_pages.size() - 1))
+	if notebook_page_index % 2 != 0:
+		notebook_page_index -= 1
+	_render_notebook_pages()
+
+func _render_notebook_pages() -> void:
+	var left_index := notebook_page_index
+	var right_index := notebook_page_index + 1
 	if research_label:
-		research_label.text = left
+		research_label.text = str(notebook_pages[left_index]) if left_index < notebook_pages.size() else ""
 	if notebook_right_label:
-		notebook_right_label.text = right
+		notebook_right_label.text = str(notebook_pages[right_index]) if right_index < notebook_pages.size() else ""
+	if notebook_left_page_label:
+		notebook_left_page_label.text = "Page %d of %d" % [left_index + 1, notebook_pages.size()]
+	if notebook_right_page_label:
+		notebook_right_page_label.text = "Page %d of %d" % [right_index + 1, notebook_pages.size()] if right_index < notebook_pages.size() else ""
+	if notebook_prev_button:
+		notebook_prev_button.disabled = left_index <= 0
+	if notebook_next_button:
+		notebook_next_button.disabled = right_index >= notebook_pages.size() - 1
 
 func _compatibility_hint(species_id: String, spec: Dictionary) -> String:
 	var system := str(spec.get("water_type", "freshwater"))
