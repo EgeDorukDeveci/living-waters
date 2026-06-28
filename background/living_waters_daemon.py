@@ -347,6 +347,8 @@ class Daemon:
             sim.top_off(None if "amount" not in command else float(command.get("amount", 0.05)))
         elif action == "empty_skimmer_cup":
             sim.empty_skimmer_cup()
+        elif action == "dose_minerals":
+            sim.dose_minerals(float(command.get("strength", 1.0)))
         elif action == "service_filter":
             sim.service_filter(bool(command.get("replace_carbon", True)), bool(command.get("overclean", False)))
         elif action == "dose_ammonia":

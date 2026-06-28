@@ -13,6 +13,7 @@ const COMMAND_SCRAPE_ALGAE := {"action": "scrape_algae"}
 const COMMAND_TRIM_PLANTS := {"action": "trim_plants"}
 const COMMAND_TOP_OFF := {"action": "top_off"}
 const COMMAND_EMPTY_SKIMMER := {"action": "empty_skimmer_cup"}
+const COMMAND_DOSE_MINERALS := {"action": "dose_minerals", "strength": 1.0}
 const COMMAND_DOSE_AMMONIA := {"action": "dose_ammonia", "amount": 1.0}
 const COMMAND_TEST_WATER := {"action": "test_water"}
 
@@ -57,6 +58,7 @@ var species_select: OptionButton
 var status_label: Label
 var summary_label: Label
 var research_label: Label
+var notebook_right_label: Label
 var notebook_panel: PanelContainer
 var notebook_button: Button
 var scape_label: Label
@@ -135,6 +137,9 @@ func _gui_input(event: InputEvent) -> void:
 			_handle_opening_click(event.position)
 		elif event is InputEventKey and event.pressed and event.keycode in [KEY_ENTER, KEY_SPACE, KEY_ESCAPE]:
 			_set_opening_mode(false)
+		return
+	if notebook_open and event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		_toggle_notebook(false)
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		var mouse: Vector2 = event.position
@@ -222,7 +227,7 @@ func _effect_duration(kind: String) -> float:
 			return 2.7
 		"test_water":
 			return 2.3
-		"dose_ammonia":
+		"dose_ammonia", "dose_minerals":
 			return 2.5
 		"set_substrate":
 			return 2.8
@@ -753,6 +758,12 @@ func _build_ui() -> void:
 	_style_button(empty_skimmer)
 	empty_skimmer.pressed.connect(func(): _write_command(COMMAND_EMPTY_SKIMMER.duplicate()))
 	reef_care_row.add_child(empty_skimmer)
+	var minerals := Button.new()
+	minerals.text = "Dose minerals"
+	minerals.custom_minimum_size = Vector2(322, 34)
+	_style_button(minerals, "ghost")
+	minerals.pressed.connect(func(): _write_command(COMMAND_DOSE_MINERALS.duplicate()))
+	quick_box.add_child(minerals)
 
 	var water_box := _make_section(care_tab, "Water change", "Match temperature, pH, and hardness. Disturbing substrate can release old waste.")
 	var water_change_grid := GridContainer.new()
@@ -856,31 +867,17 @@ func _build_ui() -> void:
 	equipment_box.add_child(dose_ammonia)
 
 	var life_tab := _add_tab(tabs, "Life")
-	var species_box := _make_section(life_tab, "Species notebook", "Read first, acclimate second, release by clicking open water.")
+	var species_box := _make_section(life_tab, "Livestock bench", "Choose an animal here, then use the full keeper journal for research before acclimation.")
 	species_select = OptionButton.new()
 	_style_field(species_select, Vector2(322, 32))
 	species_select.item_selected.connect(func(_index): _refresh_research_card())
 	species_box.add_child(species_select)
 	notebook_button = Button.new()
-	notebook_button.text = "Open field notebook"
+	notebook_button.text = "Open keeper journal"
 	notebook_button.custom_minimum_size = Vector2(322, 34)
 	_style_button(notebook_button)
 	notebook_button.pressed.connect(func(): _toggle_notebook())
 	species_box.add_child(notebook_button)
-	notebook_panel = PanelContainer.new()
-	notebook_panel.custom_minimum_size = Vector2(322, 0)
-	notebook_panel.clip_contents = true
-	notebook_panel.visible = false
-	notebook_panel.modulate.a = 0.0
-	notebook_panel.add_theme_stylebox_override("panel", _panel_style(Color("#d8c697"), Color("#6f5737"), 10, 2))
-	species_box.add_child(notebook_panel)
-	research_label = _make_label("Notebook closed.", 13, Color("#312719"), true)
-	research_label.add_theme_constant_override("line_spacing", 3)
-	research_label.offset_left = 12
-	research_label.offset_top = 10
-	research_label.offset_right = -12
-	research_label.offset_bottom = -10
-	notebook_panel.add_child(research_label)
 	var add_row := HBoxContainer.new()
 	add_row.add_theme_constant_override("separation", 8)
 	species_box.add_child(add_row)
@@ -967,7 +964,7 @@ func _build_ui() -> void:
 	var journal_tab := _add_tab(tabs, "Journal")
 	var readings_box := _make_section(journal_tab, "Readings", "The same information appears as sensors on the tank, but this gives exact values.")
 	water_labels.clear()
-	for key in ["temperature_c", "ph", "kh_dkh", "tds_mg_l", "salinity_ppt", "water_level", "oxygen_mg_l", "co2_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l", "phosphate_mg_l", "chlorine_mg_l", "chloramine_mg_l", "surface_film", "detritus"]:
+	for key in ["temperature_c", "ph", "kh_dkh", "alkalinity_dkh", "calcium_mg_l", "magnesium_mg_l", "trace_elements", "silicate_mg_l", "tds_mg_l", "salinity_ppt", "water_level", "oxygen_mg_l", "co2_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l", "phosphate_mg_l", "chlorine_mg_l", "chloramine_mg_l", "surface_film", "detritus", "parasite_pressure", "bacterial_pressure"]:
 		var label := _make_label(key, 12, Color("#d8eee9"))
 		water_labels[key] = label
 		readings_box.add_child(label)
@@ -986,6 +983,7 @@ func _build_ui() -> void:
 	event_list.custom_minimum_size = Vector2(322, 188)
 	event_box.add_child(event_list)
 
+	_build_notebook_overlay()
 	_refresh_species_options()
 	_layout_ui()
 	_set_opening_mode(true)
@@ -999,11 +997,79 @@ func _add_scape_button(parent: Container, text: String, category: String, item_t
 	button.pressed.connect(func(): _choose_scape_tool(category, item_type, text))
 	parent.add_child(button)
 
+func _build_notebook_overlay() -> void:
+	notebook_panel = PanelContainer.new()
+	notebook_panel.name = "KeeperJournal"
+	notebook_panel.visible = false
+	notebook_panel.modulate.a = 0.0
+	notebook_panel.clip_contents = true
+	notebook_panel.add_theme_stylebox_override("panel", _panel_style(Color("#5d4a34"), Color("#2b2118"), 22, 3))
+	add_child(notebook_panel)
+
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 10)
+	outer.offset_left = 24
+	outer.offset_top = 18
+	outer.offset_right = -24
+	outer.offset_bottom = -20
+	notebook_panel.add_child(outer)
+
+	var top_row := HBoxContainer.new()
+	top_row.add_theme_constant_override("separation", 12)
+	outer.add_child(top_row)
+	var title := _make_label("Keeper Journal", 24, Color("#f6e7c2"))
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_row.add_child(title)
+	var close := Button.new()
+	close.text = "Close"
+	close.custom_minimum_size = Vector2(112, 34)
+	_style_button(close)
+	close.pressed.connect(func(): _toggle_notebook(false))
+	top_row.add_child(close)
+
+	var spread := HBoxContainer.new()
+	spread.add_theme_constant_override("separation", 14)
+	spread.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	outer.add_child(spread)
+	var left_page := _notebook_page()
+	var right_page := _notebook_page()
+	spread.add_child(left_page)
+	spread.add_child(right_page)
+	research_label = left_page.get_node("PageScroll/PageText") as Label
+	notebook_right_label = right_page.get_node("PageScroll/PageText") as Label
+	_set_notebook_pages("Choose a species to begin the journal.", "The journal will combine species research with your current tank chemistry, scape, equipment, and recent risks.")
+
+func _notebook_page() -> PanelContainer:
+	var page := PanelContainer.new()
+	page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	page.add_theme_stylebox_override("panel", _panel_style(Color("#e4d2a8"), Color("#8b7049"), 12, 2))
+	var scroll := ScrollContainer.new()
+	scroll.name = "PageScroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.offset_left = 18
+	scroll.offset_top = 16
+	scroll.offset_right = -18
+	scroll.offset_bottom = -16
+	page.add_child(scroll)
+	var text := _make_label("", 15, Color("#2d2418"), true)
+	text.name = "PageText"
+	text.add_theme_constant_override("line_spacing", 5)
+	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(text)
+	return page
+
 func _layout_ui() -> void:
 	var side_panel := get_node_or_null("SidePanel") as PanelContainer
 	if side_panel:
 		side_panel.position = Vector2(size.x - PANEL_WIDTH - EDGE, TOP_BAR)
 		side_panel.size = Vector2(PANEL_WIDTH, max(560.0, size.y - TOP_BAR - EDGE))
+	if notebook_panel:
+		var margin := Vector2(max(38.0, size.x * 0.055), max(34.0, size.y * 0.055))
+		notebook_panel.position = margin
+		notebook_panel.size = Vector2(max(640.0, size.x - margin.x * 2.0), max(430.0, size.y - margin.y * 2.0))
+		notebook_panel.pivot_offset = notebook_panel.size * 0.5
 		var scroll := side_panel.get_node_or_null("SideScroll") as ScrollContainer
 		if scroll:
 			scroll.size = side_panel.size
@@ -1077,10 +1143,12 @@ func _sync_equipment_controls() -> void:
 	if air_output_spin:
 		air_output_spin.value = float(air.get("output", 0.5)) * 100.0 if bool(air.get("enabled", true)) else 0.0
 
-func _toggle_notebook() -> void:
-	notebook_open = not notebook_open
+func _toggle_notebook(force_open = null) -> void:
+	notebook_open = (not notebook_open) if force_open == null else bool(force_open)
 	if notebook_button:
-		notebook_button.text = "Close field notebook" if notebook_open else "Open field notebook"
+		notebook_button.text = "Close keeper journal" if notebook_open else "Open keeper journal"
+	if notebook_open:
+		_refresh_research_card()
 
 func _update_notebook_animation(delta: float) -> void:
 	if not notebook_panel:
@@ -1091,8 +1159,8 @@ func _update_notebook_animation(delta: float) -> void:
 	var target := 1.0 if notebook_open else 0.0
 	notebook_amount = move_toward(notebook_amount, target, delta * 5.5)
 	var eased := 1.0 - pow(1.0 - notebook_amount, 3.0)
-	notebook_panel.custom_minimum_size = Vector2(300, lerp(0.0, 208.0, eased))
 	notebook_panel.modulate.a = lerp(0.0, 1.0, eased)
+	notebook_panel.scale = Vector2(lerp(0.965, 1.0, eased), lerp(0.92, 1.0, eased))
 	notebook_panel.visible = notebook_amount > 0.02 or notebook_open
 
 func _active_aquarium_id() -> String:
@@ -1164,18 +1232,22 @@ func _refresh_species_options() -> void:
 	_refresh_research_card()
 
 func _refresh_research_card() -> void:
-	if not research_label:
+	if not research_label or not notebook_right_label:
 		return
 	if not species_select or species_select.item_count <= 0 or species_select.selected < 0:
-		research_label.text = "No compatible species available for this water system."
+		_set_notebook_pages("No compatible species available for this water system.", "Switch aquarium type or add more species data later.")
 		return
 	var id := str(species_select.get_item_metadata(species_select.selected))
 	var spec: Dictionary = species.get(id, {})
 	if spec.is_empty():
-		research_label.text = "Select an animal to see care research."
+		_set_notebook_pages("Select an animal to see care research.", "The journal updates from the current aquarium state.")
 		return
 	var aquarium = state.get("aquarium", {})
 	var water = state.get("water", {})
+	var equipment = state.get("equipment", {})
+	var maturity = state.get("maturity", {})
+	var symptoms = state.get("symptoms", {})
+	var summary = state.get("summary", {})
 	var current_litres := float(aquarium.get("effective_litres", 0.0))
 	var min_litres := float(spec.get("minimum_litres", 0.0))
 	var min_length := float(spec.get("minimum_tank_length_cm", 0.0))
@@ -1183,33 +1255,117 @@ func _refresh_research_card() -> void:
 	var group := int(spec.get("minimum_group", 1))
 	var preferred := int(spec.get("preferred_group", group))
 	var status := "Tank fit looks possible" if current_litres >= min_litres and length >= min_length else "This tank is probably too small"
-	var notes: Array[String] = []
-	notes.append("FIELD NOTE - %s" % str(spec.get("common_name", id)).to_upper())
-	notes.append("%s" % spec.get("scientific_name", "unknown"))
-	notes.append("")
-	notes.append("First impression: %s." % status)
-	notes.append("Needs roughly %.0f L usable water, %.0f cm swimming length, and a group of %d+; a calmer keeper would aim closer to %d." % [min_litres, min_length, group, preferred])
-	notes.append("Comfort water: %.0f-%.0f C, pH %.1f-%.1f, GH %.0f-%.0f dGH." % [
+	var left: Array[String] = []
+	var right: Array[String] = []
+	left.append("FIELD NOTE - %s" % str(spec.get("common_name", id)).to_upper())
+	left.append("%s" % spec.get("scientific_name", "unknown"))
+	left.append("")
+	left.append("Tank verdict: %s." % status)
+	left.append("Needs: %.0f L usable water, %.0f cm swimming length, minimum group %d, preferred group %d." % [min_litres, min_length, group, preferred])
+	left.append("Adult size %.1f cm, lifespan about %.0f years, main layer: %s." % [
+		float(spec.get("adult_cm", 0.0)),
+		float(spec.get("lifespan_years", 0.0)),
+		str(spec.get("swim_zone", "middle"))
+	])
+	left.append("")
+	left.append("Comfort window")
+	left.append("Temperature %.0f-%.0f C, pH %.1f-%.1f, GH %.0f-%.0f dGH. Nitrate starts worrying near %.0f mg/L." % [
 		float(spec.get("temperature_c", {}).get("ideal", [0, 0])[0]),
 		float(spec.get("temperature_c", {}).get("ideal", [0, 0])[1]),
 		float(spec.get("ph", {}).get("ideal", [0, 0])[0]),
 		float(spec.get("ph", {}).get("ideal", [0, 0])[1]),
 		float(spec.get("gh_dgh", {}).get("ideal", [0, 0])[0]),
-		float(spec.get("gh_dgh", {}).get("ideal", [0, 0])[1])
-	])
-	notes.append("Behavior clues: %s, mostly %s water, nitrate gets worrying near %.0f mg/L." % [
-		str(spec.get("social", "community")).replace("_", " "),
-		str(spec.get("swim_zone", "middle")),
+		float(spec.get("gh_dgh", {}).get("ideal", [0, 0])[1]),
 		float(spec.get("nitrate_warning_mg_l", 20.0))
 	])
+	left.append("Needs oxygen above %.1f mg/L. Social style: %s." % [
+		float(spec.get("oxygen_min_mg_l", 5.0)),
+		str(spec.get("social", "community")).replace("_", " ")
+	])
+	left.append("")
 	if str(water.get("system", "freshwater")) != str(spec.get("water_type", "freshwater")):
-		notes.append("Margin note: wrong water system for this aquarium.")
-	notes.append(_compatibility_hint(id, spec))
+		left.append("Margin warning: wrong water system for this animal.")
+	left.append(_compatibility_hint(id, spec))
 	if spec.has("care_notes"):
-		notes.append("Keeper note: %s" % str(spec["care_notes"]))
+		left.append("Keeper note: %s" % str(spec["care_notes"]))
 	if spec.has("sources"):
-		notes.append("Source bookmarks: %s" % _source_summary(spec.get("sources", [])))
-	research_label.text = "\n".join(notes)
+		left.append("Source bookmarks: %s" % _source_summary(spec.get("sources", [])))
+	left.append("")
+	left.append("Current fit")
+	left.append("This aquarium has %.0f L usable water and %.0f cm swimming length." % [current_litres, length])
+	left.append("Current water: %.1f C, pH %.2f, GH %.1f, KH %.1f, O2 %.1f, NO3 %.1f, PO4 %.2f." % [
+		float(water.get("temperature_c", 0.0)),
+		float(water.get("ph", 0.0)),
+		float(water.get("gh_dgh", 0.0)),
+		float(water.get("kh_dkh", water.get("alkalinity_dkh", 0.0))),
+		float(water.get("oxygen_mg_l", 0.0)),
+		float(water.get("nitrate_mg_l", 0.0)),
+		float(water.get("phosphate_mg_l", 0.0))
+	])
+
+	right.append("AQUARIUM SYSTEM NOTES")
+	right.append("Overall status: %s. Risks: %s." % [str(summary.get("status", "unknown")), ", ".join(summary.get("risks", [])) if summary.get("risks", []).size() > 0 else "none visible"])
+	right.append("")
+	right.append("Nitrogen cycle")
+	right.append("Ammonia and nitrite should stay at 0. Nitrate is the end product and is reduced by water changes, plant uptake, macroalgae, and low feeding waste.")
+	right.append("Current NH3 %.3f, NO2 %.3f, NO3 %.1f mg/L." % [
+		float(water.get("ammonia_mg_l", 0.0)),
+		float(water.get("nitrite_mg_l", 0.0)),
+		float(water.get("nitrate_mg_l", 0.0))
+	])
+	right.append("")
+	right.append("Phosphate, silicate, algae")
+	right.append("Food, decay, source water, and mulm raise phosphate. Silicate feeds brown diatom dust, especially in young tanks or with silicate-leaching rocks.")
+	right.append("Current PO4 %.2f, silicate %.2f, green water %.0f%%, diatom dust %.0f%%." % [
+		float(water.get("phosphate_mg_l", 0.0)),
+		float(water.get("silicate_mg_l", 0.0)),
+		float(symptoms.get("green_water", 0.0)) * 100.0,
+		float(symptoms.get("diatom_dust", 0.0)) * 100.0
+	])
+	right.append("")
+	right.append("Scape effects")
+	right.append("Wood releases tannins and usually softens/acidifies. Reef rock and some stones raise KH, GH, calcium, and pH slowly. Lava or dragon stone can add silicate. Plants pull nitrate/phosphate, add oxygen in light, consume oxygen at night, and add decay if they melt.")
+	right.append("Cover %.0f%%, shade %.0f%%, tannins %.0f%%, soft-water pressure %.0f%%, KH release %.0f%%." % [
+		float(aquarium.get("hiding_cover", 0.0)) * 100.0,
+		float(aquarium.get("surface_shade", 0.0)) * 100.0,
+		float(water.get("tannins", 0.0)) * 100.0,
+		float(aquarium.get("soft_water", 0.0)) * 100.0,
+		float(aquarium.get("kh_release", 0.0)) * 100.0
+	])
+	right.append("")
+	right.append("Reef chemistry")
+	right.append("Saltwater coral growth consumes alkalinity, calcium, magnesium, and trace elements. Dosing helps, but water changes are the gentler reset.")
+	right.append("Alk %.1f dKH, calcium %.0f, magnesium %.0f, trace %.0f%%, salinity %.1f ppt." % [
+		float(water.get("alkalinity_dkh", water.get("kh_dkh", 0.0))),
+		float(water.get("calcium_mg_l", 0.0)),
+		float(water.get("magnesium_mg_l", 0.0)),
+		float(water.get("trace_elements", 0.0)) * 100.0,
+		float(water.get("salinity_ppt", 0.0))
+	])
+	right.append("")
+	right.append("Equipment and maturity")
+	var filter = equipment.get("filter", {})
+	var media = filter.get("media", {})
+	var mechanical = media.get("mechanical", {})
+	right.append("Filter flow %.0f%%, clog %.0f%%, channeling %.0f%%. Mature biofilm %.0f%%, microfauna %.0f%%, mulm %.0f%%." % [
+		float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0,
+		float(mechanical.get("clog", 0.0)) * 100.0,
+		float(mechanical.get("channeling", 0.0)) * 100.0,
+		float(maturity.get("biofilm", 0.0)) * 100.0,
+		float(maturity.get("microfauna", 0.0)) * 100.0,
+		float(maturity.get("mulm", 0.0)) * 100.0
+	])
+	right.append("Pathogen pressure: parasite %.0f%%, bacterial %.0f%%. These rise with stress, decay, crowding, dirty substrate, and dead animals." % [
+		float(water.get("parasite_pressure", 0.0)) * 100.0,
+		float(water.get("bacterial_pressure", 0.0)) * 100.0
+	])
+	_set_notebook_pages("\n".join(left), "\n".join(right))
+
+func _set_notebook_pages(left: String, right: String) -> void:
+	if research_label:
+		research_label.text = left
+	if notebook_right_label:
+		notebook_right_label.text = right
 
 func _compatibility_hint(species_id: String, spec: Dictionary) -> String:
 	var system := str(spec.get("water_type", "freshwater"))
@@ -1905,7 +2061,7 @@ func _draw_action_effects() -> void:
 				_draw_filter_service_effect(progress)
 			"test_water":
 				_draw_test_water_effect(progress)
-			"dose_ammonia":
+			"dose_ammonia", "dose_minerals":
 				_draw_dosing_effect(progress)
 			"set_substrate":
 				_draw_substrate_settle_effect(progress)
@@ -1991,10 +2147,22 @@ func _draw_front_glass() -> void:
 
 func _draw_glass_age(inner: Rect2) -> void:
 	var maturity = state.get("maturity", {})
+	var symptoms = state.get("symptoms", {})
 	var glass_algae := float(maturity.get("glass_algae", 0.0))
 	var biofilm := float(maturity.get("biofilm", 0.0))
+	var diatom := float(symptoms.get("diatom_dust", maturity.get("diatom_film", 0.0)))
+	var pathogen := float(symptoms.get("pathogen_pressure", 0.0))
 	if biofilm > 0.12:
 		draw_rect(inner, Color(0.85, 0.96, 0.82, biofilm * 0.025), true)
+	if diatom > 0.04:
+		for d in range(int(8 + diatom * 55.0)):
+			var dust := Vector2(
+				inner.position.x + 20.0 + fposmod(d * 71.0, inner.size.x - 40.0),
+				inner.position.y + 46.0 + fposmod(d * 29.0, inner.size.y - 116.0)
+			)
+			draw_circle(dust, 2.0 + float(d % 4), Color(0.64, 0.43, 0.21, 0.026 + diatom * 0.055))
+	if pathogen > 0.18:
+		draw_rect(inner, Color(0.72, 0.78, 0.65, pathogen * 0.035), true)
 	if glass_algae <= 0.04:
 		return
 	for i in range(int(10 + glass_algae * 70.0)):
@@ -2415,9 +2583,10 @@ func _refresh_ui() -> void:
 			var mode := str(item.get("failure_mode", ""))
 			if mode != "":
 				failure_bits.append(mode)
-		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / carbon %.0f%% / PO4 media %.0f%% - heater %.1f C - light %.1fh - air %.0f%% - skimmer %.0f%% cup %.0f%% - ATO %s %.1fL" % [
+		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / channel %.0f%% / carbon %.0f%% / PO4 media %.0f%% - heater %.1f C - light %.1fh - air %.0f%% - skimmer %.0f%% cup %.0f%% - ATO %s %.1fL" % [
 			float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0,
 			float(mechanical.get("clog", 0.0)) * 100.0,
+			float(mechanical.get("channeling", 0.0)) * 100.0,
 			float(chemical.get("carbon_remaining", 0.0)) * 100.0,
 			float(chemical.get("phosphate_remover_remaining", 0.0)) * 100.0,
 			float(heater.get("target_c", water.get("temperature_c", 24.0))),
@@ -2486,6 +2655,14 @@ func _refresh_ui() -> void:
 		]
 		if float(animal.get("injury", 0.0)) > 0.05:
 			line += " - injury %.0f%%" % (float(animal.get("injury", 0.0)) * 100.0)
+		if float(animal.get("body_condition", 1.0)) < 0.62:
+			line += " - thin %.0f%%" % (float(animal.get("body_condition", 1.0)) * 100.0)
+		if float(animal.get("gill_condition", 1.0)) < 0.68:
+			line += " - gills %.0f%%" % (float(animal.get("gill_condition", 1.0)) * 100.0)
+		if float(animal.get("fin_condition", 1.0)) < 0.68:
+			line += " - fins %.0f%%" % (float(animal.get("fin_condition", 1.0)) * 100.0)
+		if float(animal.get("parasite_load", 0.0)) > 0.25:
+			line += " - parasite %.0f%%" % (float(animal.get("parasite_load", 0.0)) * 100.0)
 		if float(animal.get("breeding_condition", 0.0)) > 0.6:
 			line += " - breeding"
 		var welfare_reasons: Array = animal.get("welfare_reasons", [])
@@ -2521,6 +2698,16 @@ func _format_water(key: String, value: float) -> String:
 			return "Phosphate: %.2f mg/L" % value
 		"kh_dkh":
 			return "KH / alkalinity: %.1f dKH" % value
+		"alkalinity_dkh":
+			return "Alkalinity: %.1f dKH" % value
+		"calcium_mg_l":
+			return "Calcium: %.0f mg/L" % value
+		"magnesium_mg_l":
+			return "Magnesium: %.0f mg/L" % value
+		"trace_elements":
+			return "Trace reserves: %.0f%%" % (value * 100.0)
+		"silicate_mg_l":
+			return "Silicate: %.2f mg/L" % value
 		"tds_mg_l":
 			return "TDS: %.0f mg/L" % value
 		"salinity_ppt":
@@ -2535,4 +2722,8 @@ func _format_water(key: String, value: float) -> String:
 			return "Surface film: %.0f%%" % (value * 100.0)
 		"detritus":
 			return "Detritus: %.0f%%" % (value * 100.0)
+		"parasite_pressure":
+			return "Parasite pressure: %.0f%%" % (value * 100.0)
+		"bacterial_pressure":
+			return "Bacterial pressure: %.0f%%" % (value * 100.0)
 	return "%s: %.2f" % [key, value]

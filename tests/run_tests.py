@@ -540,6 +540,43 @@ def test_evaporation_top_off_and_skimmer_change_reef_water() -> None:
     assert state["water"]["salinity_ppt"] < 36.5
 
 
+def test_hardscape_materials_change_water_chemistry() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Wood Chemistry", "freshwater", 80)
+    sim = AquariumSimulation(species, state)
+    state["aquarium"]["scape"]["wood"] = [{"type": "root_driftwood", "quantity": 10, "scale": 1.0}]
+    before_tannins = state["water"]["tannins"]
+    before_ph = state["water"]["ph"]
+    sim._tick(48 * 3600)
+    assert state["water"]["tannins"] > before_tannins
+    assert state["water"]["ph"] < before_ph
+    assert state["aquarium"]["soft_water"] > 0.2
+
+    reef = clear_state(species, "Rock Chemistry", "saltwater", 120)
+    reef_sim = AquariumSimulation(species, reef)
+    reef["aquarium"]["scape"]["rocks"] = [{"type": "live_rock", "quantity": 8, "scale": 1.0}]
+    before_alk = reef["water"]["alkalinity_dkh"]
+    before_calcium = reef["water"]["calcium_mg_l"]
+    reef_sim._tick(48 * 3600)
+    assert reef["water"]["alkalinity_dkh"] > before_alk
+    assert reef["water"]["calcium_mg_l"] > before_calcium
+
+
+def test_mineral_dosing_replenishes_reef_reserves() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Dose Reef", "saltwater", 120)
+    sim = AquariumSimulation(species, state)
+    state["water"]["alkalinity_dkh"] = 5.0
+    state["water"]["calcium_mg_l"] = 330.0
+    state["water"]["magnesium_mg_l"] = 1000.0
+    state["water"]["trace_elements"] = 0.2
+    sim.dose_minerals()
+    assert state["water"]["alkalinity_dkh"] > 5.0
+    assert state["water"]["calcium_mg_l"] > 330.0
+    assert state["water"]["magnesium_mg_l"] > 1000.0
+    assert state["water"]["trace_elements"] > 0.2
+
+
 def test_animal_personality_fields_drive_routines() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -693,6 +730,8 @@ def main() -> int:
         test_disease_risk_depends_on_stress_and_dirty_water,
         test_named_disease_selection_uses_cause,
         test_evaporation_top_off_and_skimmer_change_reef_water,
+        test_hardscape_materials_change_water_chemistry,
+        test_mineral_dosing_replenishes_reef_reserves,
         test_animal_personality_fields_drive_routines,
         test_saltwater_switch_species_and_reefscape_rules,
         test_scape_placement_rules_and_relocation,
