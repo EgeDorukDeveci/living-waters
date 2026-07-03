@@ -629,6 +629,10 @@ def default_maturity(days_running: float = 0.0) -> dict[str, Any]:
         "substrate_compaction": clamp(0.05 + seasoning * 0.22, 0.0, 1.0),
         "diatom_film": clamp(0.03 + max(0.0, 0.35 - seasoning) * 0.18, 0.0, 1.0),
         "beneficial_film": clamp(0.08 + seasoning * 0.5, 0.0, 1.0),
+        "infusoria": clamp(0.02 + seasoning * 0.42, 0.0, 1.0),
+        "copepods": clamp(seasoning * 0.36, 0.0, 1.0),
+        "pest_snails": 0.0,
+        "microfauna_bloom": 0.0,
         "substrate_hypoxia": 0.0,
         "anaerobic_pocket_risk": 0.0,
         "denitrifying_biofilm": clamp(seasoning * 0.18, 0.0, 0.3),
@@ -2719,6 +2723,59 @@ class AquariumSimulation:
         maturity["seasoning"] = clamp(cycle_days / 180.0, 0.0, 1.0)
         maturity["biofilm"] = clamp(float(maturity.get("biofilm", 0.0)) + hours * 0.0013 * stability - water.get("chlorine_mg_l", 0.0) * hours * 0.01, 0.0, 1.0)
         maturity["microfauna"] = clamp(float(maturity.get("microfauna", 0.0)) + hours * 0.0009 * stability * float(maturity.get("biofilm", 0.0)) - float(maturity.get("last_water_change_shock", 0.0)) * hours * 0.002, 0.0, 1.0)
+        food = self.state.get("food", default_food())
+        scape = self.state.get("aquarium", {})
+        plant_cover = float(scape.get("plant_cover", 0.0))
+        animal_count = len([a for a in self.state.get("animals", []) if a.get("alive", True)])
+        food_fines = clamp(float(food.get("available", 0.0)) * 0.24 + float(food.get("decaying", 0.0)) * 0.58 + water.get("organic_waste", 0.0) * 0.16, 0.0, 1.4)
+        shock = float(maturity.get("last_water_change_shock", 0.0)) + water.get("chlorine_mg_l", 0.0) * 1.8 + water.get("chloramine_mg_l", 0.0) * 1.4
+        infusoria = float(maturity.get("infusoria", maturity.get("microfauna", 0.0) * 0.55))
+        copepods = float(maturity.get("copepods", maturity.get("microfauna", 0.0) * 0.35))
+        snail_pressure = float(maturity.get("pest_snails", 0.0))
+        infusoria = clamp(
+            infusoria
+            + (float(maturity.get("biofilm", 0.0)) * 0.0009 + food_fines * 0.0016 + water.get("bacterial_pressure", 0.0) * 0.0008) * hours * stability
+            - (shock * 0.0035 + max(0.0, 0.7 - water.get("oxygen_mg_l", 7.0) / 7.0) * 0.0012) * hours,
+            0.0,
+            1.0,
+        )
+        copepods = clamp(
+            copepods
+            + (infusoria * 0.00065 + plant_cover * 0.0007 + float(maturity.get("biofilm", 0.0)) * 0.00035) * hours * stability
+            - (animal_count * 0.00007 + shock * 0.0022) * hours,
+            0.0,
+            1.0,
+        )
+        if water.get("system") == "saltwater":
+            snail_pressure = max(0.0, snail_pressure - hours * 0.01)
+        else:
+            snail_pressure = clamp(
+                snail_pressure
+                + (food_fines * 0.00065 + plant_cover * 0.00016 + float(maturity.get("biofilm", 0.0)) * 0.00012) * hours
+                - max(0.0, 0.18 - food_fines) * hours * 0.00045,
+                0.0,
+                1.0,
+            )
+        maturity["infusoria"] = infusoria
+        maturity["copepods"] = copepods
+        maturity["pest_snails"] = snail_pressure
+        maturity["microfauna"] = clamp(float(maturity.get("microfauna", 0.0)) * 0.72 + infusoria * 0.18 + copepods * 0.10, 0.0, 1.0)
+        maturity["microfauna_bloom"] = clamp(max(0.0, infusoria - 0.72) + max(0.0, food_fines - 0.78) * 0.55, 0.0, 1.0)
+        if infusoria > 0.18:
+            water["organic_waste"] = clamp(water["organic_waste"] - infusoria * hours * 0.00032, 0.0, 5.0)
+            water["turbidity"] = clamp(water["turbidity"] - infusoria * hours * 0.00012, 0.0, 1.0)
+        if copepods > 0.15:
+            water["detritus"] = clamp(water.get("detritus", 0.0) - copepods * hours * 0.00024, 0.0, 1.0)
+        if snail_pressure > 0.04:
+            snail_export = min(float(food.get("available", 0.0)), snail_pressure * hours * 0.0018)
+            food["available"] = clamp(float(food.get("available", 0.0)) - snail_export, 0.0, 5.0)
+            bio["algae"] = clamp(float(bio.get("algae", 0.0)) - snail_pressure * hours * 0.00028, 0.0, 1.0)
+            water["detritus"] = clamp(water.get("detritus", 0.0) - snail_pressure * hours * 0.00016, 0.0, 1.0)
+            water["organic_waste"] = clamp(water["organic_waste"] + snail_pressure * hours * 0.00033 + snail_export * 0.025, 0.0, 5.0)
+            water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) + snail_pressure * hours * 0.000055, 0.0, 10.0)
+        if maturity["microfauna_bloom"] > 0.28:
+            water["turbidity"] = clamp(water["turbidity"] + maturity["microfauna_bloom"] * hours * 0.00035, 0.0, 1.0)
+            water["bacterial_pressure"] = clamp(water.get("bacterial_pressure", 0.0) + maturity["microfauna_bloom"] * hours * 0.00022, 0.0, 1.0)
         maturity["mulm"] = clamp(float(maturity.get("mulm", 0.0)) + water.get("organic_waste", 0.0) * hours * 0.0007 + len([a for a in self.state.get("animals", []) if a.get("alive", True)]) * hours * 0.000015, 0.0, 1.0)
         maturity["plant_rooting"] = clamp(float(maturity.get("plant_rooting", 0.0)) + hours * 0.0008 * bio.get("plant_health", 0.8) - float(maturity.get("last_water_change_shock", 0.0)) * hours * 0.0008, 0.0, 1.0)
         algae_pressure = bio.get("algae", 0.0) + water.get("phosphate_mg_l", 0.0) * 0.08 + max(0.0, water.get("nitrate_mg_l", 0.0) - 20.0) * 0.003
@@ -2735,6 +2792,10 @@ class AquariumSimulation:
         maturity["last_water_change_shock"] = max(0.0, float(maturity.get("last_water_change_shock", 0.0)) - hours * 0.012)
         if float(maturity.get("old_tank_risk", 0.0)) > 0.55:
             self._record_once("old_tank_risk", "warning", "Old-tank pressure is building", "Long-term nitrate, mulm, low alkalinity, or delayed maintenance is making the mature aquarium less stable.")
+        if float(maturity.get("pest_snails", 0.0)) > 0.58:
+            self._record_once("pest_snail_boom", "warning", "Pest snails are booming", "Snail numbers are rising because leftovers and biofilm are abundant. Feed less and remove uneaten food before they add more waste.")
+        if float(maturity.get("microfauna_bloom", 0.0)) > 0.45:
+            self._record_once("microfauna_bloom", "info", "Microfauna bloom is visible", "Tiny life is blooming from rich biofilm and leftover food. It can feed fry, but a heavy bloom clouds water and raises biological load.")
 
     def _update_equipment(self, hours: float) -> None:
         equipment = self.state["equipment"]
@@ -2939,14 +3000,17 @@ class AquariumSimulation:
         if not nursery:
             return
         water = self.state["water"]
+        maturity = self.state.get("maturity", {})
+        live_food = clamp(float(maturity.get("infusoria", 0.0)) * 0.42 + float(maturity.get("copepods", 0.0)) * 0.58, 0.0, 1.0)
         survivors: list[dict[str, Any]] = []
         for brood in nursery:
             species_id = str(brood.get("species_id", ""))
             spec = self.species.get(species_id, {})
             brood["age_days"] = float(brood.get("age_days", 0.0)) + hours / 24.0
             stress = clamp(water.get("ammonia_mg_l", 0.0) * 2.5 + water.get("nitrite_mg_l", 0.0) * 2.0 + max(0.0, water.get("nitrate_mg_l", 0.0) - 20.0) / 35.0 + water.get("organic_waste", 0.0) * 0.08, 0.0, 1.0)
-            survival = clamp(float(brood.get("survival_chance", 0.2)) - stress * hours * 0.002, 0.0, 1.0)
+            survival = clamp(float(brood.get("survival_chance", 0.2)) + live_food * hours * 0.00045 - stress * hours * 0.002, 0.0, 1.0)
             brood["survival_chance"] = survival
+            brood["live_food_support"] = live_food
             count = int(brood.get("count", 0))
             water["organic_waste"] = clamp(water["organic_waste"] + count * hours * 0.00002, 0, 5)
             if survival <= 0.04 or count <= 0:
@@ -3141,6 +3205,20 @@ class AquariumSimulation:
             animal["energy"] = clamp(animal["energy"] + hours * 0.025 * meal_strength * nutrition, 0, 1)
             animal["body_condition"] = clamp(float(animal.get("body_condition", 0.9)) + hours * 0.0018 * min(1.0, meal_strength) * nutrition, 0, 1.15)
             animal["digestion_quality"] = clamp(float(animal.get("digestion_quality", 0.75)) + (diet_match - float(animal.get("digestion_quality", 0.75))) * min(1.0, hours * 0.12), 0, 1)
+        maturity = self.state.get("maturity", {})
+        diet_tags = {str(tag) for tag in spec.get("diet", [])}
+        live_food_match = 0.0
+        if diet_tags.intersection({"small_invertebrates", "micro_crustaceans", "zooplankton", "small_crustaceans", "insect_larvae"}):
+            live_food_match += float(maturity.get("copepods", 0.0)) * 0.55 + float(maturity.get("infusoria", 0.0)) * 0.18
+        if diet_tags.intersection({"biofilm", "algae", "detritus", "shrimp_food"}):
+            live_food_match += float(maturity.get("biofilm", 0.0)) * 0.18 + float(maturity.get("beneficial_film", 0.0)) * 0.12
+        if live_food_match > 0.08 and animal["hunger"] > 0.34:
+            forage_gain = clamp(live_food_match, 0.0, 0.75) * hours * 0.0045 * clamp(float(animal.get("curiosity", 0.5)) + float(animal.get("boldness", 0.5)) * 0.35, 0.35, 1.15)
+            animal["hunger"] = clamp(animal["hunger"] - forage_gain, 0, 1)
+            animal["energy"] = clamp(animal["energy"] + forage_gain * 0.42, 0, 1)
+            animal["foraging_support"] = clamp(live_food_match, 0, 1)
+        else:
+            animal["foraging_support"] = clamp(float(animal.get("foraging_support", 0.0)) - hours * 0.01, 0, 1)
 
         temp_stress = range_stress(water["temperature_c"], spec["temperature_c"]["ideal"], spec["temperature_c"]["tolerated"])
         ph_stress = range_stress(water["ph"], spec["ph"]["ideal"], spec["ph"]["tolerated"])
@@ -3386,6 +3464,9 @@ class AquariumSimulation:
             "glass_algae": clamp(float(maturity.get("glass_algae", 0.0)), 0.0, 1.0),
             "diatom_dust": clamp(float(maturity.get("diatom_film", 0.0)) + water.get("silicate_mg_l", 0.0) * 0.04, 0.0, 1.0),
             "biofilm_sheen": clamp(float(maturity.get("beneficial_film", 0.0)) * 0.55 + water.get("surface_film", 0.0) * 0.35, 0.0, 1.0),
+            "visible_microfauna": clamp(float(maturity.get("infusoria", 0.0)) * 0.35 + float(maturity.get("copepods", 0.0)) * 0.55 + float(maturity.get("microfauna_bloom", 0.0)) * 0.35, 0.0, 1.0),
+            "pest_snails": clamp(float(maturity.get("pest_snails", 0.0)), 0.0, 1.0),
+            "live_food_web": clamp(float(maturity.get("infusoria", 0.0)) * 0.42 + float(maturity.get("copepods", 0.0)) * 0.58, 0.0, 1.0),
             "pathogen_pressure": clamp(max(water.get("parasite_pressure", 0.0), water.get("bacterial_pressure", 0.0)), 0.0, 1.0),
             "redox_stress": clamp(max(0.0, 260.0 - float(water.get("redox_mv", 310.0))) / 180.0, 0.0, 1.0),
             "substrate_hypoxia": clamp(float(maturity.get("substrate_hypoxia", 0.0)), 0.0, 1.0),

@@ -239,6 +239,32 @@ def test_tank_maturity_changes_with_time_and_neglect() -> None:
     assert any(event.get("title") == "Old-tank pressure is building" for event in state["events"])
 
 
+def test_tiny_life_web_grows_from_biofilm_and_leftovers() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Micro Life", "freshwater", 70)
+    state["randomness"]["noise"] = 0.0
+    state["cycle"]["days_running"] = 80
+    state["maturity"]["biofilm"] = 0.62
+    state["maturity"]["infusoria"] = 0.08
+    state["maturity"]["copepods"] = 0.05
+    state["maturity"]["pest_snails"] = 0.10
+    state["aquarium"]["plant_cover"] = 0.55
+    state["food"]["available"] = 0.8
+    state["food"]["decaying"] = 0.5
+    state["water"]["organic_waste"] = 0.9
+    sim = AquariumSimulation(species, state)
+    before_infusoria = state["maturity"]["infusoria"]
+    before_copepods = state["maturity"]["copepods"]
+    before_snails = state["maturity"]["pest_snails"]
+    before_food = state["food"]["available"]
+    sim.advance(72 * 3600)
+    assert state["maturity"]["infusoria"] > before_infusoria
+    assert state["maturity"]["copepods"] > before_copepods
+    assert state["maturity"]["pest_snails"] > before_snails
+    assert state["food"]["available"] < before_food
+    assert state["symptoms"]["visible_microfauna"] > 0.1
+
+
 def test_fish_routine_reflects_surface_stress() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -641,6 +667,28 @@ def test_animal_personality_fields_drive_routines() -> None:
     assert fish["behavior"] not in {"", None}
 
 
+def test_tiny_life_supports_natural_foraging() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    rich_state = default_state(species)
+    poor_state = default_state(species)
+    rich_fish = animal(species, "neon_tetra", "Forager", 31)
+    poor_fish = animal(species, "neon_tetra", "Hungry", 31)
+    for state, fish in ((rich_state, rich_fish), (poor_state, poor_fish)):
+        state["randomness"]["noise"] = 0.0
+        fish["hunger"] = 0.78
+        fish["acute_stress"] = 0.0
+        state["animals"] = [fish]
+        state["food"]["available"] = 0.0
+    rich_state["maturity"]["infusoria"] = 0.82
+    rich_state["maturity"]["copepods"] = 0.78
+    poor_state["maturity"]["infusoria"] = 0.02
+    poor_state["maturity"]["copepods"] = 0.01
+    AquariumSimulation(species, rich_state).advance(8 * 3600)
+    AquariumSimulation(species, poor_state).advance(8 * 3600)
+    assert rich_fish["hunger"] < poor_fish["hunger"]
+    assert rich_fish["foraging_support"] > 0.3
+
+
 def test_saltwater_switch_species_and_reefscape_rules() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -804,6 +852,26 @@ def test_nursery_recruits_when_conditions_remain_stable() -> None:
     sim.advance(6 * 3600)
     assert len(state["animals"]) > before
     assert state["nursery"] == []
+
+
+def test_microfauna_improves_fry_survival_chance() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    rich_state = default_state(species)
+    poor_state = default_state(species)
+    for state in (rich_state, poor_state):
+        state["randomness"]["noise"] = 0.0
+        state["nursery"] = [{"species_id": "fancy_guppy", "count": 6, "age_days": 12.0, "survival_chance": 0.45, "created_at": "test"}]
+        state["water"]["ammonia_mg_l"] = 0.0
+        state["water"]["nitrite_mg_l"] = 0.0
+        state["water"]["nitrate_mg_l"] = 10.0
+    rich_state["maturity"]["infusoria"] = 0.85
+    rich_state["maturity"]["copepods"] = 0.74
+    poor_state["maturity"]["infusoria"] = 0.01
+    poor_state["maturity"]["copepods"] = 0.01
+    AquariumSimulation(species, rich_state).advance(24 * 3600)
+    AquariumSimulation(species, poor_state).advance(24 * 3600)
+    assert rich_state["nursery"][0]["survival_chance"] > poor_state["nursery"][0]["survival_chance"]
+    assert rich_state["nursery"][0]["live_food_support"] > poor_state["nursery"][0]["live_food_support"]
 
 
 def test_free_ammonia_depends_on_ph_and_temperature() -> None:
@@ -973,6 +1041,7 @@ def main() -> int:
         test_overcleaned_filter_disturbs_biofilter,
         test_symptoms_publish_visible_tank_state,
         test_tank_maturity_changes_with_time_and_neglect,
+        test_tiny_life_web_grows_from_biofilm_and_leftovers,
         test_fish_routine_reflects_surface_stress,
         test_default_tank_starts_empty,
         test_clear_tank_setup_is_empty_uncycled_and_sized,
@@ -1000,6 +1069,7 @@ def main() -> int:
         test_hardscape_materials_change_water_chemistry,
         test_mineral_dosing_replenishes_reef_reserves,
         test_animal_personality_fields_drive_routines,
+        test_tiny_life_supports_natural_foraging,
         test_saltwater_switch_species_and_reefscape_rules,
         test_scape_placement_rules_and_relocation,
         test_feeding_competition_can_leave_shy_fish_hungry,
@@ -1009,6 +1079,7 @@ def main() -> int:
         test_skimmer_neck_fouling_reduces_export,
         test_plants_melt_when_root_feeders_have_bad_substrate,
         test_nursery_recruits_when_conditions_remain_stable,
+        test_microfauna_improves_fry_survival_chance,
         test_free_ammonia_depends_on_ph_and_temperature,
         test_deep_dirty_substrate_builds_hypoxia_and_low_redox,
         test_parameter_swings_leave_stability_debt_and_welfare_risk,

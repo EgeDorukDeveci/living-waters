@@ -1522,7 +1522,17 @@ func _refresh_research_card() -> void:
 	])
 	pages.append("REDOX AND ORGANICS\nRedox/ORP is a rough sign of the water's oxidizing capacity. It falls when oxygen debt, dissolved organics, stagnant substrate, surface film, and bacterial pressure rise. It is not a magic score, but a low value means the tank is carrying hidden biological load.\n\nCarbon, skimming, water changes, flow, aeration, less feeding, and removing decay improve it slowly.\n\nCurrent ORP %.0f mV, dissolved organics %.2f, oxygen debt %.0f%%, trend: %s." % [float(water.get("redox_mv", 0.0)), float(water.get("dissolved_organics", 0.0)), float(chemistry.get("oxygen_debt", 0.0)) * 100.0, str(chemistry.get("redox_trend", "stable"))])
 	pages.append("DISEASE AND STRESS\nDisease follows conditions. Stress, injury, dirty water, bad acclimation, ammonia, nitrite, low oxygen, high CO2, salinity drift, parasite pressure, bacterial pressure, and weak immunity all matter.\n\nFish track body condition, gill condition, fin condition, parasite load, immune condition, fear memory, hunger, social satisfaction, and stress.\n\nCurrent parasite pressure %.0f%%, bacterial pressure %.0f%%, stressed animals %d." % [float(water.get("parasite_pressure", 0.0)) * 100.0, float(water.get("bacterial_pressure", 0.0)) * 100.0, int(summary.get("stressed_animals", 0))])
-	pages.append("TANK MATURITY\nA new tank is fragile. A mature tank develops biofilm, microfauna, rooted plants, mulm, stable bacteria, and small visual aging. A very old or neglected tank can develop low KH, nitrate buildup, compacted substrate, and old-tank pressure.\n\nCurrent seasoning %.0f%%, biofilm %.0f%%, microfauna %.0f%%, mulm %.0f%%, old-tank risk %.0f%%." % [float(maturity.get("seasoning", 0.0)) * 100.0, float(maturity.get("biofilm", 0.0)) * 100.0, float(maturity.get("microfauna", 0.0)) * 100.0, float(maturity.get("mulm", 0.0)) * 100.0, float(maturity.get("old_tank_risk", 0.0)) * 100.0])
+	pages.append("TANK MATURITY\nA new tank is fragile. A mature tank develops biofilm, infusoria, copepods, rooted plants, mulm, stable bacteria, and small visual aging. That tiny life can feed fry and small fish, polish organics, and make the aquarium feel settled.\n\nIt can also go wrong. Too much leftover food can bloom infusoria, cloud the water, raise bacterial pressure, and fuel pest snails. A very old or neglected tank can develop low KH, nitrate buildup, compacted substrate, and old-tank pressure.\n\nCurrent seasoning %.0f%%, biofilm %.0f%%, microfauna %.0f%%, infusoria %.0f%%, copepods %.0f%%, pest snails %.0f%%, bloom %.0f%%, mulm %.0f%%, old-tank risk %.0f%%." % [
+		float(maturity.get("seasoning", 0.0)) * 100.0,
+		float(maturity.get("biofilm", 0.0)) * 100.0,
+		float(maturity.get("microfauna", 0.0)) * 100.0,
+		float(maturity.get("infusoria", 0.0)) * 100.0,
+		float(maturity.get("copepods", 0.0)) * 100.0,
+		float(maturity.get("pest_snails", 0.0)) * 100.0,
+		float(maturity.get("microfauna_bloom", 0.0)) * 100.0,
+		float(maturity.get("mulm", 0.0)) * 100.0,
+		float(maturity.get("old_tank_risk", 0.0)) * 100.0
+	])
 	pages.append("MAINTENANCE ACTIONS\nTest water: produces realistic kit readings.\nFeed: helps animals but can become waste.\nRemove leftovers: stops food before it mineralizes.\nScrape: clears glass but releases some film.\nTrim: prevents overgrowth and melt.\nTop off: restores evaporated water and lowers concentrated TDS/salinity.\nRefresh media: restores flow and reduces clog/channeling.\nDose minerals: replenishes KH/GH or reef alkalinity/calcium/magnesium/trace reserves.")
 	pages.append("CARE RESIDUE\nMaintenance is helpful, but it is not invisible. Feeding can dust the water with fines. Water changes and siphons suspend mulm. Scraping releases algae film. Trimming leaves plant fragments. Filter service can shed biofilm dust. Testing leaves tiny reagent traces. Hands and tools can briefly scare shy fish.\n\nGood care clears gradually through flow, filtration, time, and restraint. Too many actions at once can make a clean tank feel disturbed.\n\nCurrent last action: %s. Suspended debris %.0f%%, plant fragments %.0f%%, filter dust %.0f%%, reagent trace %.0f%%, handling stress %.0f%%." % [
 		str(residue.get("last_action", "none")),
@@ -1965,20 +1975,34 @@ func _draw_substrate(inner: Rect2) -> void:
 
 func _draw_water_seasoning(inner: Rect2) -> void:
 	var maturity = state.get("maturity", {})
+	var symptoms = state.get("symptoms", {})
 	var biofilm := float(maturity.get("biofilm", 0.0))
 	var microfauna := float(maturity.get("microfauna", 0.0))
+	var visible_microfauna: float = max(microfauna, float(symptoms.get("visible_microfauna", 0.0)))
+	var pest_snails := float(symptoms.get("pest_snails", maturity.get("pest_snails", 0.0)))
 	var shock := float(maturity.get("last_water_change_shock", 0.0))
 	if biofilm > 0.08:
 		draw_rect(inner, Color(0.68, 0.82, 0.70, biofilm * 0.035), true)
 	if shock > 0.04:
 		draw_rect(inner, Color(0.86, 0.92, 0.72, shock * 0.12), true)
-	if microfauna > 0.16:
-		for i in range(int(10 + microfauna * 24.0)):
+	if visible_microfauna > 0.16:
+		for i in range(int(10 + visible_microfauna * 38.0)):
 			var pos := Vector2(
 				inner.position.x + fposmod(i * 89.0 + Time.get_ticks_msec() / 95.0, inner.size.x),
 				inner.position.y + 48.0 + fposmod(i * 61.0 + sin(Time.get_ticks_msec() / 1300.0 + i) * 14.0, inner.size.y - SAND_HEIGHT - 88.0)
 			)
-			draw_circle(pos, 0.9, Color(0.88, 0.96, 0.84, 0.08 + microfauna * 0.08))
+			draw_circle(pos, 0.8 + float(i % 3) * 0.18, Color(0.88, 0.96, 0.84, 0.07 + visible_microfauna * 0.08))
+	if pest_snails > 0.08:
+		var count := int(4 + pest_snails * 24.0)
+		var sand_top := inner.end.y - _substrate_height()
+		for i in range(count):
+			var x := inner.position.x + 24.0 + fposmod(i * 71.0, inner.size.x - 48.0)
+			var y := sand_top - 6.0 - fposmod(i * 19.0, inner.size.y * 0.48)
+			if i % 3 != 0:
+				y = sand_top - 7.0 - float(i % 5) * 3.0
+			var shell := Vector2(x, y)
+			draw_arc(shell, 4.4, 0.1, TAU * 0.88, 14, Color(0.69, 0.57, 0.38, 0.18 + pest_snails * 0.22), 1.2, true)
+			draw_circle(shell + Vector2(2.0, 1.2), 1.1, Color(0.35, 0.31, 0.22, 0.20 + pest_snails * 0.18))
 
 func _aquascape_style() -> String:
 	return str(state.get("aquarium", {}).get("aquascape_style", "greenscape"))
@@ -3122,6 +3146,10 @@ func _refresh_ui() -> void:
 			float(maturity.get("seasoning", 0.0)) * 100.0,
 			float(maturity.get("mulm", 0.0)) * 100.0,
 			float(maturity.get("old_tank_risk", 0.0)) * 100.0
+		]
+		randomness_label.text += " - tiny life %.0f%% / snails %.0f%%" % [
+			(float(maturity.get("infusoria", 0.0)) * 0.42 + float(maturity.get("copepods", 0.0)) * 0.58) * 100.0,
+			float(maturity.get("pest_snails", 0.0)) * 100.0
 		]
 		if nursery.size() > 0:
 			randomness_label.text += " - nursery: %d brood(s)" % nursery.size()
