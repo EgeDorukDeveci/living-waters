@@ -333,10 +333,10 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
         },
         "equipment": {
             "filter": default_filter(),
-            "heater": {"enabled": True, "health": 0.98, "target_c": 23.5, "placement_near_flow": True, "thermometer_present": True},
-            "light": {"enabled": True, "health": 0.99, "hours_per_day": 8.0, "start_hour": 10.0, "timer_enabled": True, "plant_spectrum": 0.82},
-            "air_pump": {"enabled": True, "health": 0.97, "output": 0.5},
-            "protein_skimmer": {"enabled": False, "health": 0.95, "output": 0.0, "cup_fullness": 0.0},
+            "heater": {"enabled": True, "health": 0.98, "target_c": 23.5, "placement_near_flow": True, "thermometer_present": True, "wear_hours": 0.0, "calibration_offset_c": 0.0},
+            "light": {"enabled": True, "health": 0.99, "hours_per_day": 8.0, "start_hour": 10.0, "timer_enabled": True, "plant_spectrum": 0.82, "effective_spectrum": 0.82, "par_output": 0.94, "lamp_age_days": 45.0},
+            "air_pump": {"enabled": True, "health": 0.97, "output": 0.5, "diaphragm_age_days": 60.0},
+            "protein_skimmer": {"enabled": False, "health": 0.95, "output": 0.0, "cup_fullness": 0.0, "neck_fouling": 0.0, "service_hours": 0.0},
             "auto_top_off": {"enabled": False, "health": 0.96, "reservoir_litres": 5.0},
             "checklist": {
                 "tank": True,
@@ -511,6 +511,7 @@ def default_filter() -> dict[str, Any]:
         "maturity": 0.9,
         "rated_lph": 650,
         "last_serviced": now_iso(),
+        "service_hours": 0.0,
         "media": {
             "mechanical": {"kind": "coarse_foam_and_floss", "condition": 0.92, "clog": 0.12, "channeling": 0.0},
             "biological": {"kind": "ceramic_ring", "surface_area": 1.0, "maturity": 0.9, "oxygen_access": 0.82},
@@ -519,6 +520,7 @@ def default_filter() -> dict[str, Any]:
                 "carbon_remaining": 0.35,
                 "zeolite_remaining": 0.0,
                 "phosphate_remover_remaining": 0.25,
+                "media_age_days": 0.0,
             },
         },
         "failure_mode": "",
@@ -901,24 +903,35 @@ class AquariumSimulation:
         filter_state.setdefault("last_serviced", now_iso())
         filter_state.setdefault("failure_mode", "")
         filter_state.setdefault("noise", 0.12)
+        filter_state.setdefault("service_hours", 0.0)
         media = filter_state.setdefault("media", {})
         for media_name, defaults in default_media["media"].items():
             existing = media.setdefault(media_name, {})
             for key, value in defaults.items():
                 existing.setdefault(key, value)
+        media.setdefault("chemical", {}).setdefault("media_age_days", 0.0)
         equipment.setdefault("heater", {"enabled": True, "health": 0.98, "target_c": water.get("temperature_c", 24.0), "placement_near_flow": True, "thermometer_present": True})
         equipment["heater"].setdefault("placement_near_flow", True)
         equipment["heater"].setdefault("thermometer_present", True)
         equipment["heater"].setdefault("failure_mode", "")
+        equipment["heater"].setdefault("wear_hours", 0.0)
+        equipment["heater"].setdefault("calibration_offset_c", 0.0)
+        equipment["heater"].setdefault("temperature_variance_c", 0.0)
         equipment.setdefault("light", {"enabled": True, "health": 0.99, "hours_per_day": 8.0, "timer_enabled": True, "plant_spectrum": 0.82})
         equipment["light"].setdefault("timer_enabled", True)
         equipment["light"].setdefault("plant_spectrum", 0.82)
+        equipment["light"].setdefault("effective_spectrum", equipment["light"].get("plant_spectrum", 0.82))
+        equipment["light"].setdefault("par_output", equipment["light"].get("health", 0.99))
+        equipment["light"].setdefault("lamp_age_days", 45.0)
         equipment["light"].setdefault("start_hour", 10.0)
         equipment["light"].setdefault("failure_mode", "")
         equipment.setdefault("air_pump", {"enabled": True, "health": 0.97, "output": 0.5})
         equipment["air_pump"].setdefault("failure_mode", "")
+        equipment["air_pump"].setdefault("diaphragm_age_days", 60.0)
         equipment.setdefault("protein_skimmer", {"enabled": water["system"] == "saltwater", "health": 0.95, "output": 0.55 if water["system"] == "saltwater" else 0.0, "cup_fullness": 0.0})
         equipment["protein_skimmer"].setdefault("cup_fullness", 0.0)
+        equipment["protein_skimmer"].setdefault("neck_fouling", 0.0)
+        equipment["protein_skimmer"].setdefault("service_hours", 0.0)
         equipment["protein_skimmer"].setdefault("failure_mode", "")
         equipment.setdefault("auto_top_off", {"enabled": False, "health": 0.96, "reservoir_litres": 5.0})
         equipment["auto_top_off"].setdefault("reservoir_litres", 5.0)
@@ -1290,6 +1303,8 @@ class AquariumSimulation:
     def empty_skimmer_cup(self) -> None:
         skimmer = self.state["equipment"].setdefault("protein_skimmer", {"enabled": self.state["water"].get("system") == "saltwater", "health": 0.95, "output": 0.55, "cup_fullness": 0.0})
         skimmer["cup_fullness"] = 0.0
+        skimmer["neck_fouling"] = clamp(float(skimmer.get("neck_fouling", 0.0)) * 0.72, 0.0, 1.0)
+        skimmer["service_hours"] = 0.0
         self.state.setdefault("maintenance", default_maintenance())["last_skimmer_cup_empty"] = now_iso()
         self._record("info", "Skimmer cup emptied", "Protein skimmer export is back to normal.")
 
@@ -1395,7 +1410,9 @@ class AquariumSimulation:
         if replace_carbon:
             chemical["carbon_remaining"] = 1.0
             chemical["phosphate_remover_remaining"] = 1.0
+            chemical["media_age_days"] = 0.0
         filter_state["last_serviced"] = now_iso()
+        filter_state["service_hours"] = 0.0
         filter_state["failure_mode"] = ""
         filter_state["noise"] = clamp(float(filter_state.get("noise", 0.12)) * 0.55, 0.02, 1.0)
         self.state.setdefault("maintenance", default_maintenance())["last_filter_overcleaned"] = bool(overclean)
@@ -1842,6 +1859,21 @@ class AquariumSimulation:
         skimmer = self.state.get("equipment", {}).get("protein_skimmer", {})
         if water.get("system") == "saltwater" and bool(skimmer.get("enabled", False)) and float(skimmer.get("cup_fullness", 0.0)) > 0.75:
             issues.append({"severity": "warning", "title": "Skimmer cup filling", "details": "Empty the collection cup before export efficiency drops."})
+        equipment = self.state.get("equipment", {})
+        light = equipment.get("light", {})
+        if bool(light.get("enabled", True)) and (float(light.get("effective_spectrum", light.get("plant_spectrum", 0.82))) < 0.48 or float(light.get("lamp_age_days", 0.0)) > 420.0):
+            issues.append({"severity": "warning", "title": "Lighting output has aged", "details": "Aged lamps lose useful spectrum/PAR before they look completely broken. Plants and corals may slow, stretch, or melt."})
+        heater = equipment.get("heater", {})
+        if bool(heater.get("enabled", True)) and abs(float(heater.get("calibration_offset_c", 0.0))) > 0.45:
+            issues.append({"severity": "warning", "title": "Heater calibration is drifting", "details": "The heater is no longer matching its set point exactly. Watch daily temperature swings and consider replacement."})
+        filter_state = equipment.get("filter", {})
+        chemical = filter_state.get("media", {}).get("chemical", {})
+        if float(filter_state.get("service_hours", 0.0)) > 720.0:
+            issues.append({"severity": "warning", "title": "Filter service interval is long", "details": "The filter has run for a long stretch since service. Rinse mechanical media gently without destroying the biofilter."})
+        if float(chemical.get("media_age_days", 0.0)) > 45.0 and (float(chemical.get("carbon_remaining", 0.0)) < 0.12 or float(chemical.get("phosphate_remover_remaining", 0.0)) < 0.12):
+            issues.append({"severity": "warning", "title": "Chemical media is exhausted", "details": "Carbon and phosphate media are no longer doing much polishing. Replace them only if you actually need chemical filtration."})
+        if water.get("system") == "saltwater" and bool(skimmer.get("enabled", False)) and float(skimmer.get("neck_fouling", 0.0)) > 0.68:
+            issues.append({"severity": "warning", "title": "Skimmer neck needs cleaning", "details": "Residue on the skimmer neck is reducing foam export even if the cup is not completely full."})
         maintenance["issues"] = issues
         return maintenance
 
@@ -2589,7 +2621,8 @@ class AquariumSimulation:
 
         heater = equipment["heater"]
         ambient = 21.0
-        target = heater["target_c"] if heater["enabled"] and heater["health"] > 0.15 else ambient
+        calibration_offset = float(heater.get("calibration_offset_c", 0.0))
+        target = float(heater["target_c"]) + calibration_offset if heater["enabled"] and heater["health"] > 0.15 else ambient
         heater_efficiency = 1.0 if heater.get("placement_near_flow", True) else 0.55
         room_swing = float(planning.get("room_temp_swing_c", 0.0))
         water["temperature_c"] += (target - water["temperature_c"]) * min(1.0, hours * 0.12 * heater_efficiency)
@@ -2709,6 +2742,9 @@ class AquariumSimulation:
         filter_state = equipment.setdefault("filter", default_filter())
         media = filter_state.setdefault("media", default_filter()["media"])
         mechanical = media.setdefault("mechanical", default_filter()["media"]["mechanical"].copy())
+        chemical = media.setdefault("chemical", default_filter()["media"]["chemical"].copy())
+        filter_state["service_hours"] = clamp(float(filter_state.get("service_hours", 0.0)) + hours, 0.0, 2400.0)
+        chemical["media_age_days"] = clamp(float(chemical.get("media_age_days", 0.0)) + hours / 24.0, 0.0, 730.0)
         clog = float(mechanical.get("clog", 0.0))
         if clog > 0.78 and filter_state.get("failure_mode", "") == "":
             filter_state["failure_mode"] = "impeller strain"
@@ -2719,6 +2755,12 @@ class AquariumSimulation:
             filter_state["flow"] = clamp(float(filter_state.get("flow", 0.7)) - hours * 0.00022, 0.04, 1)
             water["turbidity"] = clamp(water["turbidity"] + hours * 0.0012, 0, 1)
         heater = equipment.setdefault("heater", {"enabled": True, "health": 0.98, "target_c": 24.0, "placement_near_flow": True, "thermometer_present": True})
+        if heater.get("enabled", True):
+            heater["wear_hours"] = clamp(float(heater.get("wear_hours", 0.0)) + hours, 0.0, 20000.0)
+            wear_pressure = clamp(float(heater.get("wear_hours", 0.0)) / 9000.0 + max(0.0, 0.62 - float(heater.get("health", 1.0))) * 0.7, 0.0, 1.0)
+            drift_target = math.sin(time.time() / 5400.0) * wear_pressure * 0.42
+            heater["calibration_offset_c"] = clamp(float(heater.get("calibration_offset_c", 0.0)) + (drift_target - float(heater.get("calibration_offset_c", 0.0))) * min(1.0, hours * 0.018), -1.4, 1.4)
+            heater["temperature_variance_c"] = clamp(abs(float(heater.get("calibration_offset_c", 0.0))) + (0.0 if heater.get("placement_near_flow", True) else 0.28), 0.0, 2.0)
         if heater.get("enabled", True) and float(heater.get("health", 1.0)) < 0.42 and heater.get("failure_mode", "") == "":
             heater["failure_mode"] = "thermostat drift"
             self._record_once("heater_drift_failure", "warning", "Heater thermostat is drifting", "The heater is aging; temperature will become less stable until replaced or disabled.")
@@ -2726,11 +2768,22 @@ class AquariumSimulation:
             drift = math.sin(time.time() / 1800.0) * (0.35 + (0.42 - float(heater.get("health", 0.42))) * 1.2)
             heater["target_c"] = clamp(float(heater.get("target_c", 24.0)) + drift * hours * 0.004, 16, 32)
         light = equipment.setdefault("light", {"enabled": True, "health": 0.99, "hours_per_day": 8.0, "timer_enabled": True, "plant_spectrum": 0.82})
+        if light.get("enabled", True):
+            use_factor = clamp(float(light.get("hours_per_day", 8.0)) / 8.0, 0.0, 2.0)
+            light["lamp_age_days"] = clamp(float(light.get("lamp_age_days", 45.0)) + hours / 24.0 * use_factor, 0.0, 2200.0)
+        age_pressure = clamp((float(light.get("lamp_age_days", 45.0)) - 180.0) / 420.0, 0.0, 1.0)
+        base_spectrum = clamp(float(light.get("plant_spectrum", 0.82)), 0.0, 1.0)
+        light["effective_spectrum"] = clamp(base_spectrum * float(light.get("health", 1.0)) * (1.0 - age_pressure * 0.38), 0.0, 1.0)
+        light["par_output"] = clamp(float(light.get("health", 1.0)) * (1.0 - age_pressure * 0.46), 0.0, 1.0)
         if light.get("enabled", True) and float(light.get("health", 1.0)) < 0.38 and light.get("failure_mode", "") == "":
             light["failure_mode"] = "weak spectrum"
             light["plant_spectrum"] = clamp(float(light.get("plant_spectrum", 0.82)) - 0.22, 0, 1)
             self._record_once("light_spectrum_failure", "warning", "Lighting spectrum is weakening", "Plant/coral growth will slow because the lamp output is degrading.")
         pump = equipment.setdefault("air_pump", {"enabled": True, "health": 0.97, "output": 0.5})
+        if pump.get("enabled", True):
+            pump["diaphragm_age_days"] = clamp(float(pump.get("diaphragm_age_days", 60.0)) + hours / 24.0, 0.0, 2200.0)
+            if float(pump.get("diaphragm_age_days", 0.0)) > 540.0:
+                pump["output"] = clamp(float(pump.get("output", 0.5)) - hours * 0.000015, 0.0, 1.0)
         if pump.get("enabled", True) and float(pump.get("health", 1.0)) < 0.35 and pump.get("failure_mode", "") == "":
             pump["failure_mode"] = "diaphragm wear"
             pump["output"] = clamp(float(pump.get("output", 0.5)) * 0.65, 0, 1)
@@ -2765,7 +2818,11 @@ class AquariumSimulation:
                 self._record_once("ato_empty", "warning", "Top-off reservoir is empty", "Evaporation is concentrating minerals and salinity because the ATO reservoir ran dry.")
         skimmer = equipment.setdefault("protein_skimmer", {"enabled": water.get("system") == "saltwater", "health": 0.95, "output": 0.55, "cup_fullness": 0.0})
         if water.get("system") == "saltwater" and bool(skimmer.get("enabled", True)) and float(skimmer.get("health", 1.0)) > 0.1:
-            output = clamp(float(skimmer.get("output", 0.55)) * float(skimmer.get("health", 1.0)) * (1.0 - float(skimmer.get("cup_fullness", 0.0)) * 0.55), 0, 1)
+            skimmer["service_hours"] = clamp(float(skimmer.get("service_hours", 0.0)) + hours, 0.0, 2400.0)
+            neck_fouling = clamp(float(skimmer.get("neck_fouling", 0.0)) + hours * 0.00032 + float(water.get("organic_waste", 0.0)) * hours * 0.00018, 0.0, 1.0)
+            skimmer["neck_fouling"] = neck_fouling
+            output = clamp(float(skimmer.get("output", 0.55)) * float(skimmer.get("health", 1.0)) * (1.0 - float(skimmer.get("cup_fullness", 0.0)) * 0.55) * (1.0 - neck_fouling * 0.48), 0, 1)
+            skimmer["effective_output"] = output
             export = min(float(water.get("organic_waste", 0.0)), output * hours * 0.006)
             water["organic_waste"] = clamp(float(water.get("organic_waste", 0.0)) - export, 0, 5)
             water["dissolved_organics"] = clamp(float(water.get("dissolved_organics", 0.0)) - export * 0.42, 0, 2.5)
@@ -2774,6 +2831,8 @@ class AquariumSimulation:
             skimmer["cup_fullness"] = clamp(float(skimmer.get("cup_fullness", 0.0)) + export * 0.22 + hours * 0.00035, 0, 1)
             if float(skimmer.get("cup_fullness", 0.0)) > 0.88:
                 self._record_once("skimmer_cup_full", "warning", "Skimmer cup is full", "Protein skimmer export is weakening because the collection cup needs emptying.")
+            if neck_fouling > 0.72:
+                self._record_once("skimmer_neck_fouling", "warning", "Skimmer neck is fouled", "Protein skimmer export is dropping because residue is coating the neck. Clean the skimmer during maintenance.")
 
     def _decompose_dead_animals(self, hours: float) -> None:
         water = self.state["water"]
@@ -2924,12 +2983,13 @@ class AquariumSimulation:
         aquarium = self.state["aquarium"]
         bio = self.state["biology"]
         light = self.state.get("equipment", {}).get("light", {})
-        spectrum = clamp(float(light.get("plant_spectrum", 0.82)) if light.get("enabled", True) else 0.0, 0.0, 1.0)
+        spectrum = clamp(float(light.get("effective_spectrum", light.get("plant_spectrum", 0.82))) if light.get("enabled", True) else 0.0, 0.0, 1.0)
+        par_output = clamp(float(light.get("par_output", light.get("health", 1.0))) if light.get("enabled", True) else 0.0, 0.0, 1.0)
         substrate = str(aquarium.get("substrate", "fine_sand"))
         depth = float(aquarium.get("substrate_depth_cm", 5.0))
         nutrient = clamp((water.get("nitrate_mg_l", 0.0) / 18.0 + water.get("phosphate_mg_l", 0.0) / 0.7) * 0.5, 0.0, 1.4)
         trace_balance = clamp(float(water.get("trace_elements", 0.8)) / 0.65, 0.0, 1.3)
-        light_balance = (1.0 - clamp(abs(light_hours - 7.0) / 7.0, 0.0, 1.0)) * spectrum
+        light_balance = (1.0 - clamp(abs(light_hours - 7.0) / 7.0, 0.0, 1.0)) * spectrum * par_output
         algae = float(bio.get("algae", 0.0))
         stability_penalty = max(0.0, 0.74 - float(self.state.get("stability", {}).get("stability_score", 1.0))) * 0.28
         for group_name in ("plants",):
@@ -2976,7 +3036,9 @@ class AquariumSimulation:
         water = self.state["water"]
         info = CORAL_TYPES.get(str(coral.get("type", "")), {})
         light_need = float(info.get("light_need", 0.55))
-        light_match = 1.0 - clamp(abs((light_hours / 10.0) - light_need), 0.0, 1.0)
+        light = self.state.get("equipment", {}).get("light", {})
+        light_quality = clamp(float(light.get("effective_spectrum", light.get("plant_spectrum", 0.82))) * float(light.get("par_output", light.get("health", 1.0))), 0.0, 1.0)
+        light_match = (1.0 - clamp(abs((light_hours / 10.0) - light_need), 0.0, 1.0)) * light_quality
         flow = float(self.state.get("equipment", {}).get("filter", {}).get("effective_flow", 0.6))
         flow_stress = max(0.0, 0.26 - flow) + max(0.0, flow - 0.94) * 0.8
         stress = clamp(max(water_stress, flow_stress, max(0.0, 0.42 - light_match)), 0.0, 1.0)

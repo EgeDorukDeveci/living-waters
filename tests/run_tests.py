@@ -715,6 +715,71 @@ def test_equipment_failure_and_service_recovery() -> None:
     assert state["equipment"]["air_pump"]["output"] == 0.9
 
 
+def test_aged_light_reduces_effective_growth_output() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    fresh_state = clear_state(species, "Fresh Lamp", "freshwater", 90)
+    aged_state = clear_state(species, "Old Lamp", "freshwater", 90)
+    for state in (fresh_state, aged_state):
+        state["randomness"]["noise"] = 0.0
+        state["aquarium"]["scape"]["plants"] = [{"type": "hornwort", "quantity": 18, "health": 0.72}]
+        state["water"]["nitrate_mg_l"] = 18.0
+        state["water"]["phosphate_mg_l"] = 0.35
+        state["water"]["trace_elements"] = 0.8
+        state["equipment"]["light"]["hours_per_day"] = 7.0
+        state["equipment"]["light"]["health"] = 0.96
+        state["equipment"]["light"]["plant_spectrum"] = 0.86
+    fresh_state["equipment"]["light"]["lamp_age_days"] = 30.0
+    aged_state["equipment"]["light"]["lamp_age_days"] = 720.0
+    fresh_sim = AquariumSimulation(species, fresh_state)
+    aged_sim = AquariumSimulation(species, aged_state)
+    fresh_sim.advance(48 * 3600)
+    aged_sim.advance(48 * 3600)
+    assert aged_state["equipment"]["light"]["effective_spectrum"] < fresh_state["equipment"]["light"]["effective_spectrum"] * 0.75
+    assert aged_state["equipment"]["light"]["par_output"] < fresh_state["equipment"]["light"]["par_output"] * 0.72
+    assert aged_state["aquarium"]["scape"]["plants"][0]["health"] <= fresh_state["aquarium"]["scape"]["plants"][0]["health"]
+
+
+def test_heater_calibration_offset_changes_temperature() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    normal_state = clear_state(species, "Normal Heater", "freshwater", 80)
+    offset_state = clear_state(species, "Offset Heater", "freshwater", 80)
+    for state in (normal_state, offset_state):
+        state["randomness"]["noise"] = 0.0
+        state["water"]["temperature_c"] = 21.0
+        state["equipment"]["heater"]["enabled"] = True
+        state["equipment"]["heater"]["target_c"] = 24.0
+        state["equipment"]["heater"]["health"] = 0.96
+    normal_state["equipment"]["heater"]["calibration_offset_c"] = 0.0
+    offset_state["equipment"]["heater"]["calibration_offset_c"] = 1.1
+    normal_sim = AquariumSimulation(species, normal_state)
+    offset_sim = AquariumSimulation(species, offset_state)
+    normal_sim.advance(8 * 3600)
+    offset_sim.advance(8 * 3600)
+    assert offset_state["water"]["temperature_c"] > normal_state["water"]["temperature_c"] + 0.25
+
+
+def test_skimmer_neck_fouling_reduces_export() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    clean_state = clear_state(species, "Clean Skimmer", "saltwater", 120)
+    fouled_state = clear_state(species, "Fouled Skimmer", "saltwater", 120)
+    for state in (clean_state, fouled_state):
+        state["randomness"]["noise"] = 0.0
+        state["water"]["organic_waste"] = 1.2
+        state["water"]["dissolved_organics"] = 0.8
+        state["equipment"]["protein_skimmer"]["enabled"] = True
+        state["equipment"]["protein_skimmer"]["health"] = 0.95
+        state["equipment"]["protein_skimmer"]["output"] = 0.75
+        state["equipment"]["protein_skimmer"]["cup_fullness"] = 0.1
+    clean_state["equipment"]["protein_skimmer"]["neck_fouling"] = 0.0
+    fouled_state["equipment"]["protein_skimmer"]["neck_fouling"] = 0.85
+    clean_sim = AquariumSimulation(species, clean_state)
+    fouled_sim = AquariumSimulation(species, fouled_state)
+    clean_sim.advance(8 * 3600)
+    fouled_sim.advance(8 * 3600)
+    assert clean_state["equipment"]["protein_skimmer"]["effective_output"] > fouled_state["equipment"]["protein_skimmer"]["effective_output"]
+    assert clean_state["water"]["organic_waste"] < fouled_state["water"]["organic_waste"]
+
+
 def test_plants_melt_when_root_feeders_have_bad_substrate() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -939,6 +1004,9 @@ def main() -> int:
         test_scape_placement_rules_and_relocation,
         test_feeding_competition_can_leave_shy_fish_hungry,
         test_equipment_failure_and_service_recovery,
+        test_aged_light_reduces_effective_growth_output,
+        test_heater_calibration_offset_changes_temperature,
+        test_skimmer_neck_fouling_reduces_export,
         test_plants_melt_when_root_feeders_have_bad_substrate,
         test_nursery_recruits_when_conditions_remain_stable,
         test_free_ammonia_depends_on_ph_and_temperature,

@@ -1505,8 +1505,21 @@ func _refresh_research_card() -> void:
 	var media_state = filter_state.get("media", {})
 	var mechanical_state = media_state.get("mechanical", {})
 	var chemical_state = media_state.get("chemical", {})
-	pages.append("EQUIPMENT\nThe filter handles mechanical trapping, biological conversion, and optional chemical polishing. Clogging reduces flow. Channeling means water bypasses media, so the filter can run while filtering badly.\n\nCarbon removes organics and tint. Phosphate media reduces phosphate but depletes. Air and surface movement improve oxygen and CO2 exchange.\n\nCurrent flow %.0f%%, clog %.0f%%, channeling %.0f%%, carbon %.0f%%, PO4 media %.0f%%." % [float(filter_state.get("effective_flow", filter_state.get("flow", 0.0))) * 100.0, float(mechanical_state.get("clog", 0.0)) * 100.0, float(mechanical_state.get("channeling", 0.0)) * 100.0, float(chemical_state.get("carbon_remaining", 0.0)) * 100.0, float(chemical_state.get("phosphate_remover_remaining", 0.0)) * 100.0])
-	pages.append("GAS, LIGHT, TEMPERATURE\nOxygen depends on surface agitation, air output, plant day/night rhythm, temperature, salinity, bioload, organics, and surface film. Warm or salty water holds less oxygen.\n\nCO2 rises from respiration and decay, lowers pH, and can crowd oxygen. Too much light feeds algae; too little light weakens plants and corals.\n\nCurrent O2 %.1f, CO2 %.1f, surface film %.0f%%, light %.1f h." % [float(water.get("oxygen_mg_l", 0.0)), float(water.get("co2_mg_l", 0.0)), float(water.get("surface_film", 0.0)) * 100.0, float(equipment.get("light", {}).get("hours_per_day", 0.0))])
+	var heater_state = equipment.get("heater", {})
+	var light_state = equipment.get("light", {})
+	var skimmer_state = equipment.get("protein_skimmer", {})
+	pages.append("EQUIPMENT\nThe filter handles mechanical trapping, biological conversion, and optional chemical polishing. Clogging reduces flow. Channeling means water bypasses media, so the filter can run while filtering badly.\n\nCarbon removes organics and tint. Phosphate media reduces phosphate but depletes. Service age matters because exhausted media and dirty mechanics slowly stop doing useful work.\n\nCurrent flow %.0f%%, clog %.0f%%, channeling %.0f%%, carbon %.0f%%, PO4 media %.0f%%, filter service %.0f h, media age %.0f d." % [float(filter_state.get("effective_flow", filter_state.get("flow", 0.0))) * 100.0, float(mechanical_state.get("clog", 0.0)) * 100.0, float(mechanical_state.get("channeling", 0.0)) * 100.0, float(chemical_state.get("carbon_remaining", 0.0)) * 100.0, float(chemical_state.get("phosphate_remover_remaining", 0.0)) * 100.0, float(filter_state.get("service_hours", 0.0)), float(chemical_state.get("media_age_days", 0.0))])
+	pages.append("GAS, LIGHT, TEMPERATURE\nOxygen depends on surface agitation, air output, plant day/night rhythm, temperature, salinity, bioload, organics, and surface film. Warm or salty water holds less oxygen.\n\nLights age before they visibly fail: useful spectrum and PAR drop, so plants or corals can stall even when the lamp still turns on. Heaters also drift from their set point as they age.\n\nCurrent O2 %.1f, CO2 %.1f, surface film %.0f%%, light %.1f h, effective spectrum %.0f%%, PAR %.0f%%, lamp age %.0f d, heater offset %.2f C, skimmer fouling %.0f%%." % [
+		float(water.get("oxygen_mg_l", 0.0)),
+		float(water.get("co2_mg_l", 0.0)),
+		float(water.get("surface_film", 0.0)) * 100.0,
+		float(light_state.get("hours_per_day", 0.0)),
+		float(light_state.get("effective_spectrum", light_state.get("plant_spectrum", 0.82))) * 100.0,
+		float(light_state.get("par_output", light_state.get("health", 1.0))) * 100.0,
+		float(light_state.get("lamp_age_days", 0.0)),
+		float(heater_state.get("calibration_offset_c", 0.0)),
+		float(skimmer_state.get("neck_fouling", 0.0)) * 100.0
+	])
 	pages.append("REDOX AND ORGANICS\nRedox/ORP is a rough sign of the water's oxidizing capacity. It falls when oxygen debt, dissolved organics, stagnant substrate, surface film, and bacterial pressure rise. It is not a magic score, but a low value means the tank is carrying hidden biological load.\n\nCarbon, skimming, water changes, flow, aeration, less feeding, and removing decay improve it slowly.\n\nCurrent ORP %.0f mV, dissolved organics %.2f, oxygen debt %.0f%%, trend: %s." % [float(water.get("redox_mv", 0.0)), float(water.get("dissolved_organics", 0.0)), float(chemistry.get("oxygen_debt", 0.0)) * 100.0, str(chemistry.get("redox_trend", "stable"))])
 	pages.append("DISEASE AND STRESS\nDisease follows conditions. Stress, injury, dirty water, bad acclimation, ammonia, nitrite, low oxygen, high CO2, salinity drift, parasite pressure, bacterial pressure, and weak immunity all matter.\n\nFish track body condition, gill condition, fin condition, parasite load, immune condition, fear memory, hunger, social satisfaction, and stress.\n\nCurrent parasite pressure %.0f%%, bacterial pressure %.0f%%, stressed animals %d." % [float(water.get("parasite_pressure", 0.0)) * 100.0, float(water.get("bacterial_pressure", 0.0)) * 100.0, int(summary.get("stressed_animals", 0))])
 	pages.append("TANK MATURITY\nA new tank is fragile. A mature tank develops biofilm, microfauna, rooted plants, mulm, stable bacteria, and small visual aging. A very old or neglected tank can develop low KH, nitrate buildup, compacted substrate, and old-tank pressure.\n\nCurrent seasoning %.0f%%, biofilm %.0f%%, microfauna %.0f%%, mulm %.0f%%, old-tank risk %.0f%%." % [float(maturity.get("seasoning", 0.0)) * 100.0, float(maturity.get("biofilm", 0.0)) * 100.0, float(maturity.get("microfauna", 0.0)) * 100.0, float(maturity.get("mulm", 0.0)) * 100.0, float(maturity.get("old_tank_risk", 0.0)) * 100.0])
@@ -3047,17 +3060,21 @@ func _refresh_ui() -> void:
 			var mode := str(item.get("failure_mode", ""))
 			if mode != "":
 				failure_bits.append(mode)
-		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / channel %.0f%% / carbon %.0f%% / PO4 media %.0f%% - heater %.1f C - light %.1fh - air %.0f%% - skimmer %.0f%% cup %.0f%% - ATO %s %.1fL" % [
+		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / channel %.0f%% / carbon %.0f%% / PO4 %.0f%% / service %.0fh - heater %.1f C (%+.2f) - light %.1fh PAR %.0f%% - air %.0f%% - skimmer %.0f%% cup %.0f%% fouling %.0f%% - ATO %s %.1fL" % [
 			float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0,
 			float(mechanical.get("clog", 0.0)) * 100.0,
 			float(mechanical.get("channeling", 0.0)) * 100.0,
 			float(chemical.get("carbon_remaining", 0.0)) * 100.0,
 			float(chemical.get("phosphate_remover_remaining", 0.0)) * 100.0,
+			float(filter.get("service_hours", 0.0)),
 			float(heater.get("target_c", water.get("temperature_c", 24.0))),
+			float(heater.get("calibration_offset_c", 0.0)),
 			float(light.get("hours_per_day", 8.0)) if bool(light.get("enabled", true)) else 0.0,
+			float(light.get("par_output", light.get("health", 1.0))) * 100.0,
 			float(air.get("output", 0.0)) * 100.0 if bool(air.get("enabled", true)) else 0.0,
-			float(skimmer.get("output", 0.0)) * 100.0 if bool(skimmer.get("enabled", false)) else 0.0,
+			float(skimmer.get("effective_output", skimmer.get("output", 0.0))) * 100.0 if bool(skimmer.get("enabled", false)) else 0.0,
 			float(skimmer.get("cup_fullness", 0.0)) * 100.0,
+			float(skimmer.get("neck_fouling", 0.0)) * 100.0,
 			"on" if bool(ato.get("enabled", false)) else "off",
 			float(ato.get("reservoir_litres", 0.0))
 		]
