@@ -297,6 +297,7 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "maintenance": default_maintenance(),
         "source_water": default_source_water("freshwater"),
         "maturity": default_maturity(35.0),
+        "action_residue": default_action_residue(),
         "stability": default_stability({
             "temperature_c": 23.5,
             "ph": 6.9,
@@ -421,6 +422,7 @@ def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium"
     })
     state["maturity"] = default_maturity(0.0)
     state["chemistry"] = default_chemistry()
+    state["action_residue"] = default_action_residue()
     state["stability"] = default_stability(state["water"])
     state["animals"] = []
     state["food"] = {"available": 0.0, "decaying": 0.0, "last_fed": now_iso(), "daily_amount_ewma": 0.0}
@@ -581,6 +583,17 @@ def default_chemistry() -> dict[str, Any]:
         "substrate_warning": "",
         "plant_limiting_factor": "balanced",
         "coral_limiting_factor": "balanced",
+    }
+
+
+def default_action_residue() -> dict[str, Any]:
+    return {
+        "suspended_debris": 0.0,
+        "reagent_trace": 0.0,
+        "plant_fragments": 0.0,
+        "filter_biofilm_shed": 0.0,
+        "hands_in_tank_stress": 0.0,
+        "last_action": "",
     }
 
 
@@ -782,6 +795,10 @@ class AquariumSimulation:
         chemistry = self.state.setdefault("chemistry", chemistry_defaults.copy())
         for key, value in chemistry_defaults.items():
             chemistry.setdefault(key, value)
+        residue_defaults = default_action_residue()
+        residue = self.state.setdefault("action_residue", residue_defaults.copy())
+        for key, value in residue_defaults.items():
+            residue.setdefault(key, value)
         stability_defaults = default_stability(water)
         stability = self.state.setdefault("stability", stability_defaults.copy())
         for key, value in stability_defaults.items():
@@ -960,6 +977,9 @@ class AquariumSimulation:
         food["available"] += amount
         food["daily_amount_ewma"] = clamp(float(food.get("daily_amount_ewma", 0.0)) * 0.82 + amount * 0.18, 0.0, 2.0)
         food["last_fed"] = now_iso()
+        residue = self.state.setdefault("action_residue", default_action_residue())
+        residue["suspended_debris"] = clamp(float(residue.get("suspended_debris", 0.0)) + amount * 0.018, 0.0, 1.0)
+        residue["last_action"] = "feeding"
         self._record("info", "Aquarium fed", "Food entered the water and will be consumed according to feeding zone and hunger.")
 
     def water_change(
@@ -1053,6 +1073,10 @@ class AquariumSimulation:
             maturity["substrate_compaction"] = clamp(float(maturity.get("substrate_compaction", 0.0)) * (1.0 - fraction * 0.55), 0, 1)
             maturity["substrate_hypoxia"] = clamp(float(maturity.get("substrate_hypoxia", 0.0)) * (1.0 - fraction * 0.30), 0, 1)
             maturity["last_disturbance"] = "substrate disturbed during water change"
+        residue = self.state.setdefault("action_residue", default_action_residue())
+        residue["suspended_debris"] = clamp(float(residue.get("suspended_debris", 0.0)) + fraction * (0.12 if disturbed_substrate else 0.035), 0.0, 1.0)
+        residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + fraction * (0.38 if disturbed_substrate else 0.16), 0.0, 1.0)
+        residue["last_action"] = "water change"
         if shock > 0.12:
             for animal in self.state.get("animals", []):
                 if not animal.get("alive", True):
@@ -1077,6 +1101,10 @@ class AquariumSimulation:
         water["surface_film"] = clamp(water.get("surface_film", 0.0) * 0.55, 0, 1)
         water["detritus"] = clamp(water.get("detritus", 0.0) * 0.62, 0, 1)
         water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) * 0.9, 0, 10)
+        residue = self.state.setdefault("action_residue", default_action_residue())
+        residue["suspended_debris"] = clamp(float(residue.get("suspended_debris", 0.0)) + 0.08, 0.0, 1.0)
+        residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + 0.18, 0.0, 1.0)
+        residue["last_action"] = "weekly maintenance"
         maintenance = self.state.setdefault("maintenance", default_maintenance())
         maintenance["last_substrate_vacuum"] = now_iso()
         maintenance["last_water_test"] = now_iso()
@@ -1092,6 +1120,10 @@ class AquariumSimulation:
         water["organic_waste"] = clamp(water.get("organic_waste", 0.0) * 0.92, 0, 5)
         water["dissolved_organics"] = clamp(water.get("dissolved_organics", 0.0) * 0.93, 0, 2.5)
         water["surface_film"] = clamp(water.get("surface_film", 0.0) * 0.9, 0, 1)
+        residue = self.state.setdefault("action_residue", default_action_residue())
+        residue["suspended_debris"] = clamp(float(residue.get("suspended_debris", 0.0)) + 0.025, 0.0, 1.0)
+        residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + 0.045, 0.0, 1.0)
+        residue["last_action"] = "leftover removal"
         self._record("info", "Uneaten food removed", "Visible leftovers were siphoned out before they could mineralize into ammonia and phosphate.")
 
     def scrape_algae(self) -> None:
@@ -1103,6 +1135,11 @@ class AquariumSimulation:
         bio["algae"] = clamp(float(bio.get("algae", 0.0)) * 0.86, 0, 1)
         water["turbidity"] = clamp(water.get("turbidity", 0.0) + before * 0.06, 0, 1)
         water["organic_waste"] = clamp(water.get("organic_waste", 0.0) + before * 0.04, 0, 5)
+        residue = self.state.setdefault("action_residue", default_action_residue())
+        residue["suspended_debris"] = clamp(float(residue.get("suspended_debris", 0.0)) + before * 0.10, 0.0, 1.0)
+        residue["filter_biofilm_shed"] = clamp(float(residue.get("filter_biofilm_shed", 0.0)) + before * 0.025, 0.0, 1.0)
+        residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + 0.04, 0.0, 1.0)
+        residue["last_action"] = "glass scraping"
         self.state.setdefault("maintenance", default_maintenance())["last_algae_scrape"] = now_iso()
         self._record("info", "Glass algae scraped", "Algae was removed from the glass; some loosened film entered the water column.")
 
@@ -1119,8 +1156,16 @@ class AquariumSimulation:
                 trimmed += cut
         if trimmed > 0:
             water["organic_waste"] = clamp(water.get("organic_waste", 0.0) + trimmed * 0.002, 0, 5)
+            residue = self.state.setdefault("action_residue", default_action_residue())
+            residue["plant_fragments"] = clamp(float(residue.get("plant_fragments", 0.0)) + trimmed * 0.012, 0.0, 1.0)
+            residue["suspended_debris"] = clamp(float(residue.get("suspended_debris", 0.0)) + trimmed * 0.004, 0.0, 1.0)
+            residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + 0.06, 0.0, 1.0)
+            residue["last_action"] = "plant trimming"
             self._record("info", "Plants trimmed", "Overgrown stems and leaves were trimmed, reducing shade and preventing future melt.")
         else:
+            residue = self.state.setdefault("action_residue", default_action_residue())
+            residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + 0.02, 0.0, 1.0)
+            residue["last_action"] = "plant inspection"
             self._record("info", "Plants inspected", "No major trimming was needed.")
         self.state.setdefault("maintenance", default_maintenance())["last_plant_trim"] = now_iso()
 
@@ -1161,6 +1206,9 @@ class AquariumSimulation:
     def dose_minerals(self, strength: float = 1.0) -> None:
         water = self.state["water"]
         strength = clamp(float(strength), 0.1, 1.5)
+        old_ph = float(water.get("ph", 7.0))
+        old_salinity = float(water.get("salinity_ppt", 0.2))
+        old_tds = float(water.get("tds_mg_l", 180.0))
         if water.get("system") == "saltwater":
             water["alkalinity_dkh"] = clamp(float(water.get("alkalinity_dkh", 8.2)) + 0.55 * strength, 0.0, 14.0)
             water["kh_dkh"] = clamp(float(water.get("kh_dkh", water.get("alkalinity_dkh", 8.2))) + 0.55 * strength, 0.0, 14.0)
@@ -1168,6 +1216,7 @@ class AquariumSimulation:
             water["magnesium_mg_l"] = clamp(float(water.get("magnesium_mg_l", 1280.0)) + 34.0 * strength, 0.0, 1500.0)
             water["trace_elements"] = clamp(float(water.get("trace_elements", 0.8)) + 0.12 * strength, 0.0, 1.25)
             water["tds_mg_l"] = clamp(float(water.get("tds_mg_l", 10200.0)) + 55.0 * strength, 0.0, 45000.0)
+            self._register_parameter_swing(salinity_delta=float(water.get("salinity_ppt", old_salinity)) - old_salinity, tds_delta=float(water.get("tds_mg_l", old_tds)) - old_tds, shock=0.035 * strength)
             self._record("info", "Reef minerals dosed", "Alkalinity, calcium, magnesium, and trace reserves were raised gradually for coral and coralline growth.")
         else:
             water["gh_dgh"] = clamp(float(water.get("gh_dgh", 7.0)) + 0.45 * strength, 0.0, 24.0)
@@ -1177,7 +1226,11 @@ class AquariumSimulation:
             water["magnesium_mg_l"] = clamp(float(water.get("magnesium_mg_l", 12.0)) + 2.0 * strength, 0.0, 80.0)
             water["trace_elements"] = clamp(float(water.get("trace_elements", 0.75)) + 0.08 * strength, 0.0, 1.2)
             water["tds_mg_l"] = clamp(float(water.get("tds_mg_l", 180.0)) + 18.0 * strength, 0.0, 1200.0)
+            self._register_parameter_swing(ph_delta=float(water.get("ph", old_ph)) - old_ph, tds_delta=float(water.get("tds_mg_l", old_tds)) - old_tds, shock=0.025 * strength)
             self._record("info", "Minerals replenished", "GH, KH, calcium, magnesium, and trace reserves rose slightly. Sensitive soft-water fish still prefer slow changes.")
+        residue = self.state.setdefault("action_residue", default_action_residue())
+        residue["reagent_trace"] = clamp(float(residue.get("reagent_trace", 0.0)) + 0.015 * strength, 0.0, 1.0)
+        residue["last_action"] = "mineral dosing"
 
     def dose_ammonia(self, amount: float = 1.0) -> None:
         amount = clamp(amount, 0.1, 3.0)
@@ -1197,6 +1250,10 @@ class AquariumSimulation:
         self.state.setdefault("maintenance", default_maintenance())["last_water_test"] = now_iso()
         self.state.setdefault("cycle", default_cycle())["last_tested"] = now_iso()
         water = self.state["water"]
+        residue = self.state.setdefault("action_residue", default_action_residue())
+        residue["reagent_trace"] = clamp(float(residue.get("reagent_trace", 0.0)) + 0.025, 0.0, 1.0)
+        residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + 0.018, 0.0, 1.0)
+        residue["last_action"] = "water test"
         has_kit = bool(self.state.get("equipment", {}).get("checklist", {}).get("test_kit", True))
         error = 0.06 if has_kit else 0.18
         readings = {
@@ -1232,11 +1289,18 @@ class AquariumSimulation:
         biological["maturity"] = clamp(float(biological.get("maturity", 0.85)) * 0.97, 0.05, 1.0)
         self.state["biology"]["ammonia_bacteria"] = clamp(self.state["biology"]["ammonia_bacteria"] * 0.985, 0.05, 1.0)
         self.state["biology"]["nitrite_bacteria"] = clamp(self.state["biology"]["nitrite_bacteria"] * 0.985, 0.05, 1.0)
+        residue = self.state.setdefault("action_residue", default_action_residue())
+        residue["filter_biofilm_shed"] = clamp(float(residue.get("filter_biofilm_shed", 0.0)) + 0.08, 0.0, 1.0)
+        residue["suspended_debris"] = clamp(float(residue.get("suspended_debris", 0.0)) + 0.055, 0.0, 1.0)
+        residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + 0.06, 0.0, 1.0)
+        residue["last_action"] = "filter service"
         if overclean:
             biological["maturity"] = clamp(float(biological.get("maturity", 0.85)) * 0.52, 0.02, 1.0)
             self.state["biology"]["ammonia_bacteria"] = clamp(self.state["biology"]["ammonia_bacteria"] * 0.58, 0.02, 1.0)
             self.state["biology"]["nitrite_bacteria"] = clamp(self.state["biology"]["nitrite_bacteria"] * 0.55, 0.02, 1.0)
             self.state.setdefault("maturity", default_maturity())["last_disturbance"] = "filter media was over-cleaned"
+            residue["filter_biofilm_shed"] = clamp(float(residue.get("filter_biofilm_shed", 0.0)) + 0.25, 0.0, 1.0)
+            residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + 0.16, 0.0, 1.0)
             self._record("warning", "Filter was over-cleaned", "Too much biological media was disturbed; watch ammonia and nitrite for the next few days.")
         if replace_carbon:
             chemical["carbon_remaining"] = 1.0
@@ -1768,6 +1832,20 @@ class AquariumSimulation:
         water = self.state["water"]
         stability = self.state.get("stability", default_stability(water))
         stability_score = float(stability.get("stability_score", 1.0))
+        residue = self.state.get("action_residue", {})
+        handling_stress = float(residue.get("hands_in_tank_stress", 0.0))
+        maintenance_haze = float(residue.get("suspended_debris", 0.0)) + float(residue.get("filter_biofilm_shed", 0.0))
+        if handling_stress > 0.28 or maintenance_haze > 0.42:
+            severity = clamp(handling_stress * 0.75 + maintenance_haze * 0.35, 0.0, 1.0)
+            issues.append({
+                "key": "recent_maintenance_disturbance",
+                "severity": "warning",
+                "title": "Recent maintenance disturbed the tank",
+                "details": "Hands, tools, suspended debris, or filter dust are still affecting visibility and animal confidence.",
+            })
+            for animal in living:
+                shy = 1.0 - float(animal.get("boldness", 0.5))
+                self._add_animal_risk(animal_risks, animal, 0.04 + severity * (0.08 + shy * 0.16), severity * 0.0015, "recent maintenance disturbance")
         if stability_score < 0.72:
             severity = clamp((0.72 - stability_score) / 0.52, 0.0, 1.0)
             issues.append({
@@ -2168,6 +2246,44 @@ class AquariumSimulation:
         bio["cleanup_export"] = cleanup_export
         return pressure
 
+    def _update_action_residue(self, hours: float) -> None:
+        residue = self.state.setdefault("action_residue", default_action_residue())
+        water = self.state["water"]
+        maturity = self.state.setdefault("maturity", default_maturity(float(self.state.get("cycle", {}).get("days_running", 0.0))))
+        equipment = self.state.setdefault("equipment", {})
+        filter_state = equipment.setdefault("filter", default_filter())
+        media = filter_state.setdefault("media", default_filter()["media"])
+        mechanical = media.setdefault("mechanical", default_filter()["media"]["mechanical"].copy())
+
+        debris = float(residue.get("suspended_debris", 0.0))
+        plant_fragments = float(residue.get("plant_fragments", 0.0))
+        biofilm_shed = float(residue.get("filter_biofilm_shed", 0.0))
+        reagent = float(residue.get("reagent_trace", 0.0))
+        handling = float(residue.get("hands_in_tank_stress", 0.0))
+        if debris + plant_fragments + biofilm_shed + reagent + handling <= 0.0001:
+            return
+
+        water["turbidity"] = clamp(float(water.get("turbidity", 0.0)) + (debris * 0.006 + plant_fragments * 0.004 + biofilm_shed * 0.007) * hours, 0.0, 1.0)
+        water["dissolved_organics"] = clamp(float(water.get("dissolved_organics", 0.0)) + (plant_fragments * 0.0018 + biofilm_shed * 0.0012) * hours, 0.0, 2.5)
+        water["organic_waste"] = clamp(float(water.get("organic_waste", 0.0)) + (plant_fragments * 0.0016 + debris * 0.0008 + biofilm_shed * 0.0009) * hours, 0.0, 5.0)
+        water["ammonia_mg_l"] = clamp(float(water.get("ammonia_mg_l", 0.0)) + plant_fragments * hours * 0.00012, 0.0, 5.0)
+        water["phosphate_mg_l"] = clamp(float(water.get("phosphate_mg_l", 0.0)) + plant_fragments * hours * 0.00016, 0.0, 10.0)
+        water["surface_film"] = clamp(float(water.get("surface_film", 0.0)) + (plant_fragments + reagent) * hours * 0.0007, 0.0, 1.0)
+        water["bacterial_pressure"] = clamp(float(water.get("bacterial_pressure", 0.0)) + (plant_fragments + biofilm_shed) * hours * 0.0009, 0.0, 1.0)
+        water["oxygen_mg_l"] = clamp(float(water.get("oxygen_mg_l", 7.0)) - (plant_fragments + biofilm_shed) * hours * 0.0008, 0.0, 10.0)
+        mechanical["clog"] = clamp(float(mechanical.get("clog", 0.0)) + (debris + plant_fragments + biofilm_shed) * hours * 0.00075, 0.0, 1.0)
+        maturity["beneficial_film"] = clamp(float(maturity.get("beneficial_film", 0.0)) - reagent * hours * 0.0004 + biofilm_shed * hours * 0.0002, 0.0, 1.0)
+
+        residue["suspended_debris"] = max(0.0, debris - hours * (0.026 + float(filter_state.get("effective_flow", filter_state.get("flow", 0.6))) * 0.018))
+        residue["plant_fragments"] = max(0.0, plant_fragments - hours * 0.018)
+        residue["filter_biofilm_shed"] = max(0.0, biofilm_shed - hours * 0.032)
+        residue["reagent_trace"] = max(0.0, reagent - hours * 0.045)
+        residue["hands_in_tank_stress"] = max(0.0, handling - hours * 0.085)
+        if plant_fragments > 0.18:
+            self._record_once("plant_fragments_decay", "warning", "Plant trimmings are decaying", "Loose plant clippings are adding dissolved organics, ammonia, and phosphate until removed or filtered.")
+        if debris + biofilm_shed > 0.28:
+            self._record_once("maintenance_haze", "info", "Maintenance haze is clearing", "Loose debris and biofilm dust are temporarily clouding the water after recent care.")
+
     def _update_minerals_pathogens_and_film(self, hours: float, lights_on: bool, total_bioload: float, scape_metrics: dict[str, Any]) -> None:
         water = self.state["water"]
         maturity = self.state.setdefault("maturity", default_maturity(float(self.state.get("cycle", {}).get("days_running", 0.0))))
@@ -2241,6 +2357,7 @@ class AquariumSimulation:
         if food["available"] > 0.9 or food["decaying"] > 0.55:
             self._record_once("overfeeding", "warning", "Uneaten food is decaying", "Overfeeding is producing extra ammonia risk. Feed less and remove leftovers.")
         self._cleanup_grazing(living, hours)
+        self._update_action_residue(hours)
         substrate_depth = float(self.state["aquarium"].get("substrate_depth_cm", 5.0))
         substrate_trap = clamp((substrate_depth - 3.0) / 5.0, 0.0, 0.55)
         waste_input = (
@@ -3032,6 +3149,9 @@ class AquariumSimulation:
         stability = self.state.get("stability", {})
         if float(stability.get("stability_score", 1.0)) < 0.62:
             self._record_once("stability_swings", "warning", "Water has been unstable", "Recent temperature, pH, salinity, TDS, or water-change swings are still stressing the ecosystem.")
+        residue = self.state.get("action_residue", {})
+        if float(residue.get("plant_fragments", 0.0)) > 0.22:
+            self._record_once("loose_plant_fragments", "warning", "Loose plant clippings remain", "Plant cuttings left in the water are slowly becoming dissolved organics, ammonia, and phosphate.")
         skimmer = self.state.get("equipment", {}).get("protein_skimmer", {})
         if water.get("system") == "saltwater" and skimmer.get("enabled", False) and float(skimmer.get("cup_fullness", 0.0)) > 0.88:
             self._record_once("skimmer_cup", "warning", "Skimmer cup needs emptying", "The protein skimmer is losing export efficiency.")
@@ -3051,6 +3171,7 @@ class AquariumSimulation:
         biology = self.state["biology"]
         maturity = self.state.get("maturity", {})
         stability = self.state.get("stability", {})
+        residue = self.state.get("action_residue", {})
         animals = [a for a in self.state.get("animals", []) if a.get("alive", True)]
         plants = self.state.get("aquarium", {}).get("scape", {}).get("plants", [])
         corals = self.state.get("aquarium", {}).get("scape", {}).get("corals", [])
@@ -3066,6 +3187,7 @@ class AquariumSimulation:
             "green_water": clamp(float(biology.get("algae", 0.0)) * 0.85 + max(0.0, water.get("nitrate_mg_l", 0.0) - 25.0) * 0.006 + water.get("phosphate_mg_l", 0.0) * 0.16, 0.0, 1.0),
             "surface_film": clamp(water.get("surface_film", 0.0), 0.0, 1.0),
             "dirty_substrate": clamp(water.get("detritus", 0.0) + float(maturity.get("mulm", 0.0)) * 0.45, 0.0, 1.0),
+            "maintenance_haze": clamp(float(residue.get("suspended_debris", 0.0)) + float(residue.get("filter_biofilm_shed", 0.0)) + float(residue.get("plant_fragments", 0.0)) * 0.45, 0.0, 1.0),
             "glass_algae": clamp(float(maturity.get("glass_algae", 0.0)), 0.0, 1.0),
             "diatom_dust": clamp(float(maturity.get("diatom_film", 0.0)) + water.get("silicate_mg_l", 0.0) * 0.04, 0.0, 1.0),
             "biofilm_sheen": clamp(float(maturity.get("beneficial_film", 0.0)) * 0.55 + water.get("surface_film", 0.0) * 0.35, 0.0, 1.0),
@@ -3141,6 +3263,8 @@ class AquariumSimulation:
             risks.append("stagnant substrate")
         if self.state.get("stability", {}).get("stability_score", 1.0) < 0.7:
             risks.append("recent parameter swings")
+        if self.state.get("action_residue", {}).get("suspended_debris", 0.0) > 0.28 or self.state.get("action_residue", {}).get("plant_fragments", 0.0) > 0.22:
+            risks.append("maintenance residue")
         if self.state["biology"].get("algae", 0.0) > 0.55:
             risks.append("algae pressure")
         if not self.state.get("cycle", {}).get("ready_for_animals", True):

@@ -1299,6 +1299,7 @@ func _refresh_research_card() -> void:
 	var chemistry = state.get("chemistry", {})
 	var stability = state.get("stability", {})
 	var biology = state.get("biology", {})
+	var residue = state.get("action_residue", {})
 	var maintenance = state.get("maintenance", {})
 	var symptoms = state.get("symptoms", {})
 	var summary = state.get("summary", {})
@@ -1364,6 +1365,11 @@ func _refresh_research_card() -> void:
 		str(stability.get("latest_swing", "stable")),
 		float(biology.get("grazing_pressure", 0.0)) * 100.0,
 		float(biology.get("metabolic_load", 0.0))
+	])
+	right.append("Recent care residue: haze %.0f%%, plant bits %.0f%%, handling stress %.0f%%." % [
+		(float(residue.get("suspended_debris", 0.0)) + float(residue.get("filter_biofilm_shed", 0.0))) * 100.0,
+		float(residue.get("plant_fragments", 0.0)) * 100.0,
+		float(residue.get("hands_in_tank_stress", 0.0)) * 100.0
 	])
 	right.append("")
 	right.append("Nitrogen cycle")
@@ -1458,6 +1464,14 @@ func _refresh_research_card() -> void:
 	pages.append("DISEASE AND STRESS\nDisease follows conditions. Stress, injury, dirty water, bad acclimation, ammonia, nitrite, low oxygen, high CO2, salinity drift, parasite pressure, bacterial pressure, and weak immunity all matter.\n\nFish track body condition, gill condition, fin condition, parasite load, immune condition, fear memory, hunger, social satisfaction, and stress.\n\nCurrent parasite pressure %.0f%%, bacterial pressure %.0f%%, stressed animals %d." % [float(water.get("parasite_pressure", 0.0)) * 100.0, float(water.get("bacterial_pressure", 0.0)) * 100.0, int(summary.get("stressed_animals", 0))])
 	pages.append("TANK MATURITY\nA new tank is fragile. A mature tank develops biofilm, microfauna, rooted plants, mulm, stable bacteria, and small visual aging. A very old or neglected tank can develop low KH, nitrate buildup, compacted substrate, and old-tank pressure.\n\nCurrent seasoning %.0f%%, biofilm %.0f%%, microfauna %.0f%%, mulm %.0f%%, old-tank risk %.0f%%." % [float(maturity.get("seasoning", 0.0)) * 100.0, float(maturity.get("biofilm", 0.0)) * 100.0, float(maturity.get("microfauna", 0.0)) * 100.0, float(maturity.get("mulm", 0.0)) * 100.0, float(maturity.get("old_tank_risk", 0.0)) * 100.0])
 	pages.append("MAINTENANCE ACTIONS\nTest water: produces realistic kit readings.\nFeed: helps animals but can become waste.\nRemove leftovers: stops food before it mineralizes.\nScrape: clears glass but releases some film.\nTrim: prevents overgrowth and melt.\nTop off: restores evaporated water and lowers concentrated TDS/salinity.\nRefresh media: restores flow and reduces clog/channeling.\nDose minerals: replenishes KH/GH or reef alkalinity/calcium/magnesium/trace reserves.")
+	pages.append("CARE RESIDUE\nMaintenance is helpful, but it is not invisible. Feeding can dust the water with fines. Water changes and siphons suspend mulm. Scraping releases algae film. Trimming leaves plant fragments. Filter service can shed biofilm dust. Testing leaves tiny reagent traces. Hands and tools can briefly scare shy fish.\n\nGood care clears gradually through flow, filtration, time, and restraint. Too many actions at once can make a clean tank feel disturbed.\n\nCurrent last action: %s. Suspended debris %.0f%%, plant fragments %.0f%%, filter dust %.0f%%, reagent trace %.0f%%, handling stress %.0f%%." % [
+		str(residue.get("last_action", "none")),
+		float(residue.get("suspended_debris", 0.0)) * 100.0,
+		float(residue.get("plant_fragments", 0.0)) * 100.0,
+		float(residue.get("filter_biofilm_shed", 0.0)) * 100.0,
+		float(residue.get("reagent_trace", 0.0)) * 100.0,
+		float(residue.get("hands_in_tank_stress", 0.0)) * 100.0
+	])
 	var event_lines: Array[String] = ["CURRENT OBSERVATIONS", "Cloudiness %.0f%%, green water %.0f%%, glass algae %.0f%%, diatom dust %.0f%%." % [float(symptoms.get("cloudiness", 0.0)) * 100.0, float(symptoms.get("green_water", 0.0)) * 100.0, float(symptoms.get("glass_algae", 0.0)) * 100.0, float(symptoms.get("diatom_dust", 0.0)) * 100.0], "Maintenance: %s." % ("ok" if maintenance.get("issues", []).is_empty() else str(maintenance.get("issues", [])[0].get("title", "attention needed"))), "", "Recent events:"]
 	for event_item in state.get("events", []).slice(0, 5):
 		event_lines.append("- %s: %s" % [str(event_item.get("severity", "info")), str(event_item.get("title", "event"))])
@@ -1787,9 +1801,18 @@ func _draw_aquarium() -> void:
 	var ammonia: float = clamp(float(water.get("ammonia_mg_l", 0.0)) * 2.0, 0.0, 1.0)
 	var nitrate: float = clamp(max(0.0, float(water.get("nitrate_mg_l", 0.0)) - 20.0) / 40.0, 0.0, 1.0)
 	var green_water: float = clamp(float(symptoms.get("green_water", 0.0)), 0.0, 1.0)
+	var maintenance_haze: float = clamp(float(symptoms.get("maintenance_haze", 0.0)), 0.0, 1.0)
 	var film: float = clamp(float(symptoms.get("surface_film", water.get("surface_film", 0.0))), 0.0, 1.0)
 	if turbidity > 0.02:
 		draw_rect(inner, Color(0.46, 0.36, 0.18, turbidity * 0.18), true)
+	if maintenance_haze > 0.02:
+		draw_rect(inner, Color(0.72, 0.68, 0.54, maintenance_haze * 0.10), true)
+		for m in range(int(10 + maintenance_haze * 55.0)):
+			var speck := Vector2(
+				inner.position.x + 18.0 + fposmod(m * 83.0 + Time.get_ticks_msec() / 80.0, inner.size.x - 36.0),
+				inner.position.y + 42.0 + fposmod(m * 37.0 + sin(Time.get_ticks_msec() / 700.0 + m) * 18.0, inner.size.y - 96.0)
+			)
+			draw_circle(speck, 1.2 + float(m % 3) * 0.5, Color(0.85, 0.78, 0.58, 0.07 + maintenance_haze * 0.09))
 	if green_water > 0.02:
 		draw_rect(inner, Color(0.18, 0.48, 0.18, green_water * 0.16), true)
 	if ammonia > 0.02:
@@ -2598,6 +2621,7 @@ func _draw_tank_sensors() -> void:
 	var water = state.get("water", {})
 	var stability = state.get("stability", {})
 	var biology = state.get("biology", {})
+	var residue = state.get("action_residue", {})
 	var font := get_theme_default_font()
 	var small := 12
 	var normal := 15
@@ -2636,7 +2660,8 @@ func _draw_tank_sensors() -> void:
 	var filter_text := "filter %.0f%%" % (float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0)
 	var cycle_text := "cycle %s" % ("ready" if bool(cycle.get("ready_for_animals", false)) else "new")
 	var graze_text := "grazing %.0f%%" % (float(biology.get("grazing_pressure", 0.0)) * 100.0)
-	draw_string(font, inner.position + Vector2(24, inner.end.y - SAND_HEIGHT - 14), "%s  /  %s  /  %s" % [filter_text, cycle_text, graze_text], HORIZONTAL_ALIGNMENT_LEFT, -1, small, Color(0.85, 0.98, 0.92, 0.72))
+	var residue_text := "care haze %.0f%%" % ((float(residue.get("suspended_debris", 0.0)) + float(residue.get("filter_biofilm_shed", 0.0))) * 100.0)
+	draw_string(font, inner.position + Vector2(24, inner.end.y - SAND_HEIGHT - 14), "%s  /  %s  /  %s  /  %s" % [filter_text, cycle_text, graze_text, residue_text], HORIZONTAL_ALIGNMENT_LEFT, -1, small, Color(0.85, 0.98, 0.92, 0.72))
 
 func _draw_sensor_line(pos: Vector2, label: String, value: String, color: Color, size_px: int) -> void:
 	var font := get_theme_default_font()

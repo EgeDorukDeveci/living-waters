@@ -796,6 +796,54 @@ def test_metabolic_load_depends_on_temperature_activity_and_condition() -> None:
     assert warm_sim._metabolic_bioload([warm_fish]) > cool_sim._metabolic_bioload([cool_fish])
 
 
+def test_filter_service_creates_temporary_maintenance_residue() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["water"]["turbidity"] = 0.0
+    state["equipment"]["filter"]["media"]["mechanical"]["clog"] = 0.1
+    sim = AquariumSimulation(species, state)
+    sim.service_filter()
+    assert state["action_residue"]["filter_biofilm_shed"] > 0.05
+    assert state["action_residue"]["suspended_debris"] > 0.03
+    before_clog = state["equipment"]["filter"]["media"]["mechanical"]["clog"]
+    sim.advance(6 * 3600)
+    assert state["symptoms"]["maintenance_haze"] > 0.0
+    assert state["equipment"]["filter"]["media"]["mechanical"]["clog"] > before_clog
+    assert state["action_residue"]["filter_biofilm_shed"] < 0.08
+
+
+def test_trimmed_plant_fragments_decay_if_left_in_tank() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["aquarium"]["scape"]["plants"] = [{"type": "vallisneria", "quantity": 80, "health": 0.88}]
+    state["water"]["organic_waste"] = 0.0
+    state["water"]["phosphate_mg_l"] = 0.0
+    state["water"]["ammonia_mg_l"] = 0.0
+    sim = AquariumSimulation(species, state)
+    sim.trim_plants()
+    fragments = state["action_residue"]["plant_fragments"]
+    assert fragments > 0.1
+    before_organics = state["water"]["organic_waste"]
+    before_ammonia = state["water"]["ammonia_mg_l"]
+    sim._update_action_residue(6.0)
+    sim._update_symptoms()
+    assert state["action_residue"]["plant_fragments"] < fragments
+    assert state["water"]["organic_waste"] > before_organics
+    assert state["water"]["ammonia_mg_l"] >= before_ammonia
+    assert state["symptoms"]["maintenance_haze"] > 0
+
+
+def test_water_testing_leaves_small_temporary_reagent_trace() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    sim.test_water()
+    assert state["action_residue"]["reagent_trace"] > 0
+    assert state["action_residue"]["last_action"] == "water test"
+    sim.advance(2 * 3600)
+    assert state["action_residue"]["reagent_trace"] < 0.025
+
+
 def main() -> int:
     tests = [
         test_nitrogen_cycle_and_water_change,
@@ -847,6 +895,9 @@ def main() -> int:
         test_parameter_swings_leave_stability_debt_and_welfare_risk,
         test_cleanup_animals_graze_algae_detritus_and_leftovers,
         test_metabolic_load_depends_on_temperature_activity_and_condition,
+        test_filter_service_creates_temporary_maintenance_residue,
+        test_trimmed_plant_fragments_decay_if_left_in_tank,
+        test_water_testing_leaves_small_temporary_reagent_trace,
     ]
     for test in tests:
         test()
