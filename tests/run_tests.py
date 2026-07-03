@@ -105,6 +105,54 @@ def test_leftover_food_mineralizes_slowly() -> None:
     assert state["water"]["ammonia_mg_l"] < 0.18
 
 
+def test_food_profiles_change_waste_pressure() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    clean_state = clear_state(species, "Pellet Test", "freshwater", 80)
+    rich_state = clear_state(species, "Frozen Food Test", "freshwater", 80)
+    clean_state["randomness"]["noise"] = 0.0
+    rich_state["randomness"]["noise"] = 0.0
+    clean_sim = AquariumSimulation(species, clean_state)
+    rich_sim = AquariumSimulation(species, rich_state)
+    clean_sim.feed(1.0, "micro_pellet")
+    rich_sim.feed(1.0, "frozen_invertebrates")
+    clean_sim.advance(72 * 3600)
+    rich_sim.advance(72 * 3600)
+    assert rich_state["water"]["phosphate_mg_l"] > clean_state["water"]["phosphate_mg_l"]
+    assert rich_state["water"]["organic_waste"] > clean_state["water"]["organic_waste"]
+    assert rich_state["food"]["clouding"] > clean_state["food"]["clouding"]
+
+
+def test_diet_match_distinguishes_grazers_from_meaty_food() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Diet Match Test", "freshwater", 45)
+    sim = AquariumSimulation(species, state)
+    shrimp_spec = species["cherry_shrimp"]
+    sim.feed(0.3, "algae_wafer")
+    algae_match = sim._diet_match(shrimp_spec, state["food"])
+    sim.feed(0.3, "frozen_invertebrates")
+    frozen_match = sim._diet_match(shrimp_spec, state["food"])
+    assert algae_match > 0.85
+    assert frozen_match < algae_match * 0.55
+
+
+def test_sinking_food_reaches_bottom_fish_better_than_flake() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Feeding Zone Test", "freshwater", 100)
+    cory = animal(species, "peppered_cory", "Cory", 21)
+    danio = animal(species, "zebra_danio", "Danio", 22)
+    for fish in (cory, danio):
+        fish["hunger"] = 0.92
+        fish["acute_stress"] = 0.0
+    state["animals"] = [cory, danio]
+    sim = AquariumSimulation(species, state)
+    sim.feed(0.4, "community_flake")
+    flake_share = sim._feeding_distribution(state["animals"], 0.4)[cory["id"]]
+    sim.feed(0.4, "sinking_wafer")
+    wafer_share = sim._feeding_distribution(state["animals"], 0.4)[cory["id"]]
+    assert wafer_share > flake_share * 1.35
+    assert wafer_share > 0.2
+
+
 def test_day_night_clock_fields_are_published() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -851,6 +899,9 @@ def main() -> int:
         test_phosphate_can_be_reduced_by_water_change_and_media,
         test_plants_and_macroalgae_use_some_phosphate,
         test_leftover_food_mineralizes_slowly,
+        test_food_profiles_change_waste_pressure,
+        test_diet_match_distinguishes_grazers_from_meaty_food,
+        test_sinking_food_reaches_bottom_fish_better_than_flake,
         test_day_night_clock_fields_are_published,
         test_source_water_and_conditioner_affect_water_changes,
         test_small_maintenance_actions_reduce_visible_pressure,

@@ -324,7 +324,7 @@ class Daemon:
         sim = self.sims.get(target_id, self.sim)
         state = self.states.get(target_id, self.state)
         if action == "feed":
-            sim.feed(float(command.get("amount", 0.42)))
+            sim.feed(float(command.get("amount", 0.42)), str(command.get("food_type", "community_flake")))
         elif action == "water_change":
             sim.water_change(
                 float(command.get("fraction", 0.25)),

@@ -16,6 +16,14 @@ const COMMAND_EMPTY_SKIMMER := {"action": "empty_skimmer_cup"}
 const COMMAND_DOSE_MINERALS := {"action": "dose_minerals", "strength": 1.0}
 const COMMAND_DOSE_AMMONIA := {"action": "dose_ammonia", "amount": 1.0}
 const COMMAND_TEST_WATER := {"action": "test_water"}
+const FOOD_OPTIONS := [
+	{"id": "community_flake", "label": "Community flake", "hint": "surface/midwater, balanced, moderate clouding"},
+	{"id": "micro_pellet", "label": "Micro pellet", "hint": "small fish, cleaner water, slow sink"},
+	{"id": "sinking_wafer", "label": "Sinking wafer", "hint": "bottom fish, heavier leftovers"},
+	{"id": "frozen_invertebrates", "label": "Frozen invertebrates", "hint": "high protein, rich, dirtier water"},
+	{"id": "algae_wafer", "label": "Algae wafer", "hint": "grazers and shrimp, sinks fast"},
+	{"id": "reef_plankton", "label": "Reef plankton", "hint": "marine fish/corals, nutrient rich"}
+]
 
 var root_dir: String
 var state_path: String
@@ -55,6 +63,7 @@ var replacement_ph_spin: SpinBox
 var replacement_gh_spin: SpinBox
 var disturb_substrate_check: CheckBox
 var species_select: OptionButton
+var food_select: OptionButton
 var status_label: Label
 var summary_label: Label
 var research_label: Label
@@ -81,6 +90,7 @@ var selected_animal_tool: Dictionary = {}
 var action_effects: Array[Dictionary] = []
 var last_command_note := ""
 var last_command_until := 0.0
+var synced_food_type := ""
 var notebook_open := false
 var notebook_amount := 0.0
 var notebook_pages: Array = []
@@ -731,7 +741,7 @@ func _build_ui() -> void:
 	feed.text = "Feed"
 	feed.custom_minimum_size = Vector2(101, 38)
 	_style_button(feed, "primary")
-	feed.pressed.connect(func(): _write_command(COMMAND_FEED.duplicate()))
+	feed.pressed.connect(func(): _write_command(_feed_command()))
 	quick_row.add_child(feed)
 	var test_button := Button.new()
 	test_button.text = "Test"
@@ -745,6 +755,12 @@ func _build_ui() -> void:
 	_style_button(maintenance_button)
 	maintenance_button.pressed.connect(func(): _write_command(COMMAND_WEEKLY_MAINTENANCE.duplicate()))
 	quick_row.add_child(maintenance_button)
+	food_select = OptionButton.new()
+	_style_field(food_select, Vector2(322, 32))
+	for option in FOOD_OPTIONS:
+		food_select.add_item("%s - %s" % [str(option["label"]), str(option["hint"])])
+		food_select.set_item_metadata(food_select.item_count - 1, str(option["id"]))
+	quick_box.add_child(food_select)
 	var small_care_row := HBoxContainer.new()
 	small_care_row.add_theme_constant_override("separation", 8)
 	quick_box.add_child(small_care_row)
@@ -1154,6 +1170,12 @@ func _water_change_command() -> Dictionary:
 	command["conditioner_dose"] = 1.0
 	return command
 
+func _feed_command() -> Dictionary:
+	var command := COMMAND_FEED.duplicate()
+	if food_select and food_select.selected >= 0:
+		command["food_type"] = str(food_select.get_item_metadata(food_select.selected))
+	return command
+
 func _apply_equipment() -> void:
 	if filter_flow_spin:
 		_write_command({"action": "set_equipment", "equipment": "filter", "enabled": true, "value": float(filter_flow_spin.value) / 100.0})
@@ -1192,6 +1214,19 @@ func _sync_equipment_controls() -> void:
 		light_hours_spin.value = float(light.get("hours_per_day", 8.0)) if bool(light.get("enabled", true)) else 0.0
 	if air_output_spin:
 		air_output_spin.value = float(air.get("output", 0.5)) * 100.0 if bool(air.get("enabled", true)) else 0.0
+
+func _sync_food_controls() -> void:
+	if not food_select:
+		return
+	var food = state.get("food", {})
+	var last_type := str(food.get("last_type", "community_flake"))
+	if last_type == synced_food_type:
+		return
+	for i in range(food_select.item_count):
+		if str(food_select.get_item_metadata(i)) == last_type:
+			food_select.select(i)
+			synced_food_type = last_type
+			return
 
 func _toggle_notebook(force_open = null) -> void:
 	notebook_open = (not notebook_open) if force_open == null else bool(force_open)
@@ -1299,6 +1334,7 @@ func _refresh_research_card() -> void:
 	var chemistry = state.get("chemistry", {})
 	var stability = state.get("stability", {})
 	var biology = state.get("biology", {})
+	var food = state.get("food", {})
 	var residue = state.get("action_residue", {})
 	var maintenance = state.get("maintenance", {})
 	var symptoms = state.get("symptoms", {})
@@ -1448,7 +1484,18 @@ func _refresh_research_card() -> void:
 	pages.append("SUBSTRATE\nFine sand looks natural and lets bottom fish forage, but deep sand can compact if neglected. Gravel is easy to clean but traps food. Planted soil feeds roots and can grow plants better, but adds maintenance load. Bare bottom is clean but bad for rooted plants.\n\nDeep compacted substrate with mulm can become hypoxic. Some denitrifying biofilm can reduce nitrate, but stagnant pockets also lower redox and can create dangerous reduced chemistry. Clean in sections.\n\nCurrent substrate: %s, %.1f cm. Compaction %.0f%%, hypoxia %.0f%%, anaerobic risk %.0f%%." % [str(aquarium.get("substrate", "unknown")).replace("_", " "), float(aquarium.get("substrate_depth_cm", 0.0)), float(maturity.get("substrate_compaction", 0.0)) * 100.0, float(maturity.get("substrate_hypoxia", 0.0)) * 100.0, float(maturity.get("anaerobic_pocket_risk", 0.0)) * 100.0])
 	pages.append("PLANTS\nPlants use nitrate, phosphate, light, CO2, trace elements, and sometimes root nutrients. They add oxygen in the light and use oxygen at night.\n\nIf one resource is missing, extra of the others does not fix it. If conditions are wrong, plants melt; melt adds organics, ammonia, and phosphate.\n\nCurrent plant cover %.0f%%, shade %.0f%%, algae control %.0f%%, limiting factor: %s." % [float(aquarium.get("plant_cover", 0.0)) * 100.0, float(aquarium.get("surface_shade", 0.0)) * 100.0, float(aquarium.get("algae_control", 0.0)) * 100.0, str(chemistry.get("plant_limiting_factor", "balanced"))])
 	pages.append("CORALS AND REEF CHEMISTRY\nSaltwater stability depends on salinity, alkalinity, calcium, magnesium, temperature, flow, light, nitrate, phosphate, and trace elements.\n\nCoral growth consumes alkalinity, calcium, magnesium, and trace reserves. Evaporation raises salinity because water leaves but salt stays. Top-off restores level; mineral dosing restores depleted reserves.\n\nCurrent salinity %.1f ppt, alkalinity %.1f dKH, calcium %.0f, magnesium %.0f, limiting factor: %s." % [float(water.get("salinity_ppt", 0.0)), float(water.get("alkalinity_dkh", water.get("kh_dkh", 0.0))), float(water.get("calcium_mg_l", 0.0)), float(water.get("magnesium_mg_l", 0.0)), str(chemistry.get("coral_limiting_factor", "balanced"))])
-	pages.append("FEEDING AND WASTE\nFood helps body condition, energy, breeding condition, and confidence. Too much food becomes leftovers, then decay, then ammonia, phosphate, organics, detritus, surface film, and bacterial pressure.\n\nDominant fish can outcompete shy fish. Long-term hunger lowers body condition; dirty water and stress lower immune condition.\n\nCurrent available food %.2f, decaying food %.2f." % [float(state.get("food", {}).get("available", 0.0)), float(state.get("food", {}).get("decaying", 0.0))])
+	pages.append("FEEDING AND WASTE\nFood helps body condition, energy, breeding condition, and confidence only when the animal can actually use it. Flakes linger near the surface, wafers reach bottom fish, algae foods suit grazers, frozen foods are rich but dirtier, and reef blends add planktonic nutrition plus nutrients.\n\nWrong foods are not harmless. Poor diet fit leaves shy or specialized animals hungry, lowers digestion quality, adds decay, increases ammonia and phosphate pressure, clouds water, and feeds bacteria.\n\nLast food: %s. Available %.2f, decaying %.2f. Protein %.0f%%, plant matter %.0f%%, digestibility %.0f%%, sinking %.0f%%, clouding %.0f%%, phosphate pressure %.0f%%, diet mismatch %.0f%%." % [
+		str(food.get("last_type", "community_flake")).replace("_", " "),
+		float(food.get("available", 0.0)),
+		float(food.get("decaying", 0.0)),
+		float(food.get("protein", 0.42)) * 100.0,
+		float(food.get("plant", 0.18)) * 100.0,
+		float(food.get("digestibility", 0.72)) * 100.0,
+		float(food.get("sinking", 0.35)) * 100.0,
+		float(food.get("clouding", 0.9)) * 100.0,
+		float(food.get("phosphate_factor", 1.0)) * 100.0,
+		float(food.get("diet_mismatch_ewma", 0.0)) * 100.0
+	])
 	pages.append("CLEANUP CREWS\nShrimp, otocinclus, plecos, blennies, and cleaner shrimp do useful work, but they are not magic filters. They graze algae, biofilm, detritus, and leftovers, then turn some of that into ordinary animal waste.\n\nThey work best when healthy and hungry. Stress, bad water, wrong salinity, or poor group sizes reduce grazing.\n\nCurrent grazing pressure %.0f%%, recent cleanup export %.3f, metabolic load %.2f." % [
 		float(biology.get("grazing_pressure", 0.0)) * 100.0,
 		float(biology.get("cleanup_export", 0.0)),
@@ -3061,6 +3108,7 @@ func _refresh_ui() -> void:
 		]
 		if nursery.size() > 0:
 			randomness_label.text += " - nursery: %d brood(s)" % nursery.size()
+	_sync_food_controls()
 	_sync_equipment_controls()
 	animal_list.clear()
 	animal_ids.clear()
