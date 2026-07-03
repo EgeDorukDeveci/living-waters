@@ -732,6 +732,70 @@ def test_deep_dirty_substrate_builds_hypoxia_and_low_redox() -> None:
     assert state["chemistry"]["substrate_warning"] or state["symptoms"]["substrate_hypoxia"] > 0.08
 
 
+def test_parameter_swings_leave_stability_debt_and_welfare_risk() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    fish = animal(species, "neon_tetra", "Swing", 11)
+    state["animals"] = [fish]
+    sim = AquariumSimulation(species, state)
+    sim.water_change(
+        0.55,
+        conditioner_used=True,
+        replacement_temp_c=14.0,
+        replacement_ph=8.7,
+        replacement_gh_dgh=22.0,
+        disturbed_substrate=True,
+    )
+    assert state["stability"]["temperature_swing_24h"] > 4.0
+    assert state["stability"]["ph_swing_24h"] > 0.5
+    assert state["stability"]["stability_score"] < 0.72
+    sim._summarize()
+    assert any(issue["key"] == "unstable_parameters" for issue in state["welfare"]["issues"])
+
+
+def test_cleanup_animals_graze_algae_detritus_and_leftovers() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["randomness"]["noise"] = 0.0
+    state["animals"] = [
+        animal(species, "otocinclus", "Oto", 12),
+        animal(species, "cherry_shrimp", "Shrimp", 13),
+        animal(species, "bristlenose_pleco", "Pleco", 14),
+    ]
+    state["biology"]["algae"] = 0.72
+    state["maturity"]["glass_algae"] = 0.62
+    state["water"]["detritus"] = 0.55
+    state["food"]["available"] = 0.75
+    sim = AquariumSimulation(species, state)
+    before_algae = state["biology"]["algae"]
+    before_detritus = state["water"]["detritus"]
+    before_food = state["food"]["available"]
+    sim.advance(24 * 3600)
+    assert state["biology"]["grazing_pressure"] > 0.2
+    assert state["biology"]["algae"] < before_algae
+    assert state["water"]["detritus"] < before_detritus
+    assert state["food"]["available"] < before_food
+    assert state["biology"]["cleanup_export"] > 0
+
+
+def test_metabolic_load_depends_on_temperature_activity_and_condition() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    cool_state = default_state(species)
+    warm_state = default_state(species)
+    cool_fish = animal(species, "zebra_danio", "Cool", 15)
+    warm_fish = animal(species, "zebra_danio", "Warm", 15)
+    cool_fish["hunger"] = 0.85
+    warm_fish["hunger"] = 0.2
+    warm_fish["acute_stress"] = 0.45
+    cool_state["animals"] = [cool_fish]
+    warm_state["animals"] = [warm_fish]
+    cool_state["water"]["temperature_c"] = 20.0
+    warm_state["water"]["temperature_c"] = 28.0
+    cool_sim = AquariumSimulation(species, cool_state)
+    warm_sim = AquariumSimulation(species, warm_state)
+    assert warm_sim._metabolic_bioload([warm_fish]) > cool_sim._metabolic_bioload([cool_fish])
+
+
 def main() -> int:
     tests = [
         test_nitrogen_cycle_and_water_change,
@@ -780,6 +844,9 @@ def main() -> int:
         test_nursery_recruits_when_conditions_remain_stable,
         test_free_ammonia_depends_on_ph_and_temperature,
         test_deep_dirty_substrate_builds_hypoxia_and_low_redox,
+        test_parameter_swings_leave_stability_debt_and_welfare_risk,
+        test_cleanup_animals_graze_algae_detritus_and_leftovers,
+        test_metabolic_load_depends_on_temperature_activity_and_condition,
     ]
     for test in tests:
         test()

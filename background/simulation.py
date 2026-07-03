@@ -155,6 +155,14 @@ CORAL_TYPES: dict[str, dict[str, Any]] = {
     "kenya_tree_coral": {"name": "Kenya tree coral", "nitrate_uptake": 0.035, "hiding": 0.055, "algae_control": 0.015, "maintenance": 0.04, "light_need": 0.48},
 }
 
+CLEANUP_ROLES: dict[str, dict[str, float]] = {
+    "cherry_shrimp": {"algae": 0.32, "detritus": 0.42, "leftovers": 0.55, "biofilm": 0.18},
+    "otocinclus": {"algae": 0.78, "detritus": 0.12, "leftovers": 0.04, "biofilm": 0.58},
+    "bristlenose_pleco": {"algae": 0.95, "detritus": 0.26, "leftovers": 0.10, "biofilm": 0.34},
+    "tailspot_blenny": {"algae": 0.72, "detritus": 0.08, "leftovers": 0.04, "biofilm": 0.28},
+    "cleaner_shrimp": {"algae": 0.16, "detritus": 0.24, "leftovers": 0.42, "biofilm": 0.12},
+}
+
 
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
@@ -178,6 +186,23 @@ def range_stress(value: float, ideal: list[float], tolerated: list[float]) -> fl
         return clamp(abs(value - edge) / max(0.01, abs(limit - edge)), 0.0, 1.0) * 0.45
     distance = tolerated[0] - value if value < tolerated[0] else value - tolerated[1]
     return clamp(0.55 + distance * 0.15, 0.55, 1.0)
+
+
+def default_stability(water: dict[str, Any] | None = None) -> dict[str, Any]:
+    water = water or {}
+    return {
+        "temperature_swing_24h": 0.0,
+        "ph_swing_24h": 0.0,
+        "salinity_swing_24h": 0.0,
+        "tds_swing_24h": 0.0,
+        "water_change_debt": 0.0,
+        "stability_score": 1.0,
+        "latest_swing": "stable",
+        "last_temperature_c": float(water.get("temperature_c", 24.0)),
+        "last_ph": float(water.get("ph", 7.0)),
+        "last_salinity_ppt": float(water.get("salinity_ppt", 0.2)),
+        "last_tds_mg_l": float(water.get("tds_mg_l", 180.0)),
+    }
 
 
 def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -239,6 +264,9 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
             "nitrite_bacteria": 0.84,
             "plant_health": 0.91,
             "algae": 0.12,
+            "metabolic_load": 0.0,
+            "grazing_pressure": 0.0,
+            "cleanup_export": 0.0,
         },
         "equipment": {
             "filter": default_filter(),
@@ -269,6 +297,12 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "maintenance": default_maintenance(),
         "source_water": default_source_water("freshwater"),
         "maturity": default_maturity(35.0),
+        "stability": default_stability({
+            "temperature_c": 23.5,
+            "ph": 6.9,
+            "salinity_ppt": 0.2,
+            "tds_mg_l": 180.0,
+        }),
         "randomness": default_randomness(),
         "last_test_results": {},
         "animals": [],
@@ -367,6 +401,9 @@ def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium"
         "nitrite_bacteria": 0.04,
         "plant_health": 1.0,
         "algae": 0.01,
+        "metabolic_load": 0.0,
+        "grazing_pressure": 0.0,
+        "cleanup_export": 0.0,
     })
     state["equipment"]["filter"] = default_filter()
     state["equipment"]["filter"]["maturity"] = 0.05
@@ -384,6 +421,7 @@ def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium"
     })
     state["maturity"] = default_maturity(0.0)
     state["chemistry"] = default_chemistry()
+    state["stability"] = default_stability(state["water"])
     state["animals"] = []
     state["food"] = {"available": 0.0, "decaying": 0.0, "last_fed": now_iso(), "daily_amount_ewma": 0.0}
     state["events"] = [
@@ -731,11 +769,23 @@ class AquariumSimulation:
         water.setdefault("detritus", 0.0)
         water.setdefault("parasite_pressure", 0.025)
         water.setdefault("bacterial_pressure", 0.05)
+        biology = self.state.setdefault("biology", {})
+        biology.setdefault("ammonia_bacteria", 0.7)
+        biology.setdefault("nitrite_bacteria", 0.7)
+        biology.setdefault("plant_health", 0.85)
+        biology.setdefault("algae", 0.1)
+        biology.setdefault("metabolic_load", 0.0)
+        biology.setdefault("grazing_pressure", 0.0)
+        biology.setdefault("cleanup_export", 0.0)
         self.state.setdefault("chemistry", default_chemistry())
         chemistry_defaults = default_chemistry()
         chemistry = self.state.setdefault("chemistry", chemistry_defaults.copy())
         for key, value in chemistry_defaults.items():
             chemistry.setdefault(key, value)
+        stability_defaults = default_stability(water)
+        stability = self.state.setdefault("stability", stability_defaults.copy())
+        for key, value in stability_defaults.items():
+            stability.setdefault(key, value)
         scape = aquarium["scape"]
         scape.setdefault("rocks", [])
         scape.setdefault("wood", [])
@@ -930,6 +980,7 @@ class AquariumSimulation:
         old_gh = float(water.get("gh_dgh", 7.0))
         old_kh = float(water.get("kh_dkh", 4.0))
         old_tds = float(water.get("tds_mg_l", 180.0))
+        old_salinity = float(water.get("salinity_ppt", 0.2))
         old_calcium = float(water.get("calcium_mg_l", 420.0 if water.get("system") == "saltwater" else 35.0))
         old_magnesium = float(water.get("magnesium_mg_l", 1280.0 if water.get("system") == "saltwater" else 12.0))
         old_trace = float(water.get("trace_elements", 0.8))
@@ -988,6 +1039,13 @@ class AquariumSimulation:
             1.0,
         )
         maturity["last_water_change_shock"] = shock
+        self._register_parameter_swing(
+            temperature_delta=float(water.get("temperature_c", old_temp)) - old_temp,
+            ph_delta=float(water.get("ph", old_ph)) - old_ph,
+            salinity_delta=float(water.get("salinity_ppt", old_salinity)) - old_salinity,
+            tds_delta=float(water.get("tds_mg_l", old_tds)) - old_tds,
+            shock=shock,
+        )
         if disturbed_substrate:
             water["organic_waste"] = clamp(water["organic_waste"] + float(maturity.get("mulm", 0.0)) * fraction * 0.55, 0, 5)
             water["turbidity"] = clamp(water["turbidity"] + 0.12 + float(maturity.get("mulm", 0.0)) * 0.18, 0, 1)
@@ -1076,6 +1134,8 @@ class AquariumSimulation:
                 self._record("info", "Top-off checked", "Water level is already near full.")
             return
         old_level = max(0.55, float(water.get("water_level", 1.0)))
+        old_salinity = float(water.get("salinity_ppt", 0.2))
+        old_tds = float(water.get("tds_mg_l", 180.0))
         new_level = clamp(old_level + missing, 0.55, 1.0)
         dilution = old_level / max(new_level, 0.55)
         water["water_level"] = new_level
@@ -1083,6 +1143,11 @@ class AquariumSimulation:
         if water.get("system") == "saltwater":
             water["salinity_ppt"] = clamp(float(water.get("salinity_ppt", 35.0)) * dilution, 0, 45)
         water["surface_film"] = clamp(float(water.get("surface_film", 0.0)) * 0.92, 0, 1)
+        self._register_parameter_swing(
+            salinity_delta=float(water.get("salinity_ppt", old_salinity)) - old_salinity,
+            tds_delta=float(water.get("tds_mg_l", old_tds)) - old_tds,
+            shock=missing * 0.18,
+        )
         self.state.setdefault("maintenance", default_maintenance())["last_top_off"] = now_iso()
         if not quiet:
             self._record("info", "Evaporation topped off", "Fresh top-off water restored level and reduced salinity/TDS concentration from evaporation.")
@@ -1701,6 +1766,18 @@ class AquariumSimulation:
         checklist = self.state.get("equipment", {}).get("checklist", {})
         heater = self.state.get("equipment", {}).get("heater", {})
         water = self.state["water"]
+        stability = self.state.get("stability", default_stability(water))
+        stability_score = float(stability.get("stability_score", 1.0))
+        if stability_score < 0.72:
+            severity = clamp((0.72 - stability_score) / 0.52, 0.0, 1.0)
+            issues.append({
+                "key": "unstable_parameters",
+                "severity": "critical" if severity > 0.62 else "warning",
+                "title": "Recent parameter swings are stressful",
+                "details": f"The tank still carries instability from {stability.get('latest_swing', 'recent changes')}. Stability score is {stability_score * 100:.0f}%.",
+            })
+            for animal in living:
+                self._add_animal_risk(animal_risks, animal, 0.16 + severity * 0.34, severity * 0.005, "recent water parameter swings")
         if not cycle.get("ready_for_animals", False):
             issues.append({
                 "key": "uncycled_tank",
@@ -1989,6 +2066,108 @@ class AquariumSimulation:
         if water["hydrogen_sulfide_risk"] > 0.45:
             self._record_once("substrate_hypoxia", "warning", "Substrate pockets are becoming hypoxic", "Deep compacted substrate with trapped organics can create low-oxygen pockets. Clean gently over multiple sessions, not all at once.")
 
+    def _metabolic_bioload(self, living: list[dict[str, Any]]) -> float:
+        water = self.state["water"]
+        total = 0.0
+        for animal in living:
+            spec = self.species.get(animal.get("species_id", ""), {})
+            ideal_temp = spec.get("temperature_c", {}).get("ideal", [24.0, 26.0])
+            ideal_mid = (float(ideal_temp[0]) + float(ideal_temp[1])) / 2.0
+            temp_factor = clamp(1.0 + (float(water.get("temperature_c", 24.0)) - ideal_mid) * 0.055, 0.68, 1.42)
+            activity_factor = 0.72 + float(spec.get("activity", 0.5)) * 0.72
+            stress_factor = 1.0 + float(animal.get("acute_stress", 0.0)) * 0.18 + float(animal.get("chronic_stress", 0.0)) * 0.14
+            body_factor = clamp(float(animal.get("body_condition", 0.9)), 0.45, 1.18)
+            fed_factor = 0.88 + max(0.0, 0.5 - float(animal.get("hunger", 0.4))) * 0.34
+            total += float(spec.get("bioload", 0.5)) * temp_factor * activity_factor * stress_factor * body_factor * fed_factor
+        return max(0.0, total)
+
+    def _register_parameter_swing(
+        self,
+        temperature_delta: float = 0.0,
+        ph_delta: float = 0.0,
+        salinity_delta: float = 0.0,
+        tds_delta: float = 0.0,
+        shock: float = 0.0,
+    ) -> None:
+        stability = self.state.setdefault("stability", default_stability(self.state.get("water", {})))
+        stability["temperature_swing_24h"] = max(float(stability.get("temperature_swing_24h", 0.0)), abs(temperature_delta))
+        stability["ph_swing_24h"] = max(float(stability.get("ph_swing_24h", 0.0)), abs(ph_delta))
+        stability["salinity_swing_24h"] = max(float(stability.get("salinity_swing_24h", 0.0)), abs(salinity_delta))
+        stability["tds_swing_24h"] = max(float(stability.get("tds_swing_24h", 0.0)), abs(tds_delta))
+        stability["water_change_debt"] = clamp(float(stability.get("water_change_debt", 0.0)) + shock, 0.0, 1.5)
+        self._score_stability()
+
+    def _update_stability_memory(self, hours: float) -> None:
+        water = self.state["water"]
+        stability = self.state.setdefault("stability", default_stability(water))
+        temp = float(water.get("temperature_c", 24.0))
+        ph = float(water.get("ph", 7.0))
+        salinity = float(water.get("salinity_ppt", 0.2))
+        tds = float(water.get("tds_mg_l", 180.0))
+        decay = math.exp(-max(0.0, hours) / 24.0)
+        stability["temperature_swing_24h"] = max(float(stability.get("temperature_swing_24h", 0.0)) * decay, abs(temp - float(stability.get("last_temperature_c", temp))))
+        stability["ph_swing_24h"] = max(float(stability.get("ph_swing_24h", 0.0)) * decay, abs(ph - float(stability.get("last_ph", ph))))
+        stability["salinity_swing_24h"] = max(float(stability.get("salinity_swing_24h", 0.0)) * decay, abs(salinity - float(stability.get("last_salinity_ppt", salinity))))
+        stability["tds_swing_24h"] = max(float(stability.get("tds_swing_24h", 0.0)) * decay, abs(tds - float(stability.get("last_tds_mg_l", tds))))
+        stability["water_change_debt"] = max(0.0, float(stability.get("water_change_debt", 0.0)) - hours * 0.018)
+        stability["last_temperature_c"] = temp
+        stability["last_ph"] = ph
+        stability["last_salinity_ppt"] = salinity
+        stability["last_tds_mg_l"] = tds
+        self._score_stability()
+
+    def _score_stability(self) -> None:
+        water = self.state["water"]
+        stability = self.state.setdefault("stability", default_stability(water))
+        salinity_scale = 3.0 if water.get("system") == "saltwater" else 0.8
+        tds_scale = 9000.0 if water.get("system") == "saltwater" else 420.0
+        parts = {
+            "temperature": float(stability.get("temperature_swing_24h", 0.0)) / 3.5,
+            "pH": float(stability.get("ph_swing_24h", 0.0)) / 0.65,
+            "salinity": float(stability.get("salinity_swing_24h", 0.0)) / salinity_scale,
+            "TDS": float(stability.get("tds_swing_24h", 0.0)) / tds_scale,
+            "water change": float(stability.get("water_change_debt", 0.0)) / 0.85,
+        }
+        pressure = clamp(sum(parts.values()) / 2.2, 0.0, 1.0)
+        stability["stability_score"] = clamp(1.0 - pressure, 0.0, 1.0)
+        stability["latest_swing"] = max(parts, key=parts.get) if max(parts.values()) > 0.08 else "stable"
+
+    def _cleanup_grazing(self, living: list[dict[str, Any]], hours: float) -> dict[str, float]:
+        water = self.state["water"]
+        bio = self.state["biology"]
+        food = self.state["food"]
+        maturity = self.state.setdefault("maturity", default_maturity(float(self.state.get("cycle", {}).get("days_running", 0.0))))
+        pressure = {"algae": 0.0, "detritus": 0.0, "leftovers": 0.0, "biofilm": 0.0}
+        for animal in living:
+            role = CLEANUP_ROLES.get(str(animal.get("species_id", "")))
+            if not role:
+                continue
+            health = clamp(float(animal.get("health", 1.0)) * (1.0 - float(animal.get("acute_stress", 0.0)) * 0.55), 0.0, 1.0)
+            hunger_drive = 0.55 + float(animal.get("hunger", 0.35)) * 0.65
+            size = clamp(float(animal.get("size_cm", 4.0)) / 6.0, 0.35, 1.9)
+            for key, value in role.items():
+                pressure[key] += value * health * hunger_drive * size
+        if sum(pressure.values()) <= 0:
+            bio["grazing_pressure"] = 0.0
+            bio["cleanup_export"] = 0.0
+            return pressure
+        algae_removed = min(float(bio.get("algae", 0.0)), pressure["algae"] * hours * 0.0018)
+        glass_removed = min(float(maturity.get("glass_algae", 0.0)), pressure["algae"] * hours * 0.0012)
+        diatom_removed = min(float(maturity.get("diatom_film", 0.0)), pressure["biofilm"] * hours * 0.0010)
+        detritus_removed = min(float(water.get("detritus", 0.0)), pressure["detritus"] * hours * 0.0015)
+        leftovers_removed = min(float(food.get("available", 0.0)), pressure["leftovers"] * hours * 0.0045)
+        bio["algae"] = clamp(float(bio.get("algae", 0.0)) - algae_removed, 0.0, 1.0)
+        maturity["glass_algae"] = clamp(float(maturity.get("glass_algae", 0.0)) - glass_removed, 0.0, 1.0)
+        maturity["diatom_film"] = clamp(float(maturity.get("diatom_film", 0.0)) - diatom_removed, 0.0, 1.0)
+        water["detritus"] = clamp(float(water.get("detritus", 0.0)) - detritus_removed, 0.0, 1.0)
+        food["available"] = clamp(float(food.get("available", 0.0)) - leftovers_removed, 0.0, 5.0)
+        cleanup_export = algae_removed + glass_removed + diatom_removed + detritus_removed + leftovers_removed
+        water["organic_waste"] = clamp(float(water.get("organic_waste", 0.0)) + cleanup_export * 0.055, 0.0, 5.0)
+        water["phosphate_mg_l"] = clamp(float(water.get("phosphate_mg_l", 0.0)) + cleanup_export * 0.002, 0.0, 10.0)
+        bio["grazing_pressure"] = clamp(sum(pressure.values()) / 4.0, 0.0, 3.0)
+        bio["cleanup_export"] = cleanup_export
+        return pressure
+
     def _update_minerals_pathogens_and_film(self, hours: float, lights_on: bool, total_bioload: float, scape_metrics: dict[str, Any]) -> None:
         water = self.state["water"]
         maturity = self.state.setdefault("maturity", default_maturity(float(self.state.get("cycle", {}).get("days_running", 0.0))))
@@ -2043,7 +2222,8 @@ class AquariumSimulation:
         scape_metrics = self.state["aquarium"]
         self._decompose_dead_animals(hours)
         living = [a for a in self.state["animals"] if a["alive"]]
-        total_bioload = sum(self.species[a["species_id"]]["bioload"] for a in living)
+        total_bioload = self._metabolic_bioload(living)
+        bio["metabolic_load"] = total_bioload
 
         appetite_demand = sum(max(0.0, a["hunger"] - 0.2) * float(a.get("appetite_bias", 1.0)) for a in living)
         consumed = min(food["available"], appetite_demand * hours * 0.32 * self._noise_multiplier(variability * 0.65, "feeding"))
@@ -2060,6 +2240,7 @@ class AquariumSimulation:
         food["daily_amount_ewma"] = clamp(float(food.get("daily_amount_ewma", 0.0)) * max(0.0, 1.0 - hours / 72.0), 0.0, 2.0)
         if food["available"] > 0.9 or food["decaying"] > 0.55:
             self._record_once("overfeeding", "warning", "Uneaten food is decaying", "Overfeeding is producing extra ammonia risk. Feed less and remove leftovers.")
+        self._cleanup_grazing(living, hours)
         substrate_depth = float(self.state["aquarium"].get("substrate_depth_cm", 5.0))
         substrate_trap = clamp((substrate_depth - 3.0) / 5.0, 0.0, 0.55)
         waste_input = (
@@ -2204,6 +2385,7 @@ class AquariumSimulation:
         co2_pressure = max(0.0, water.get("co2_mg_l", 4.0) - 5.0) / max(2.0, kh + 1.0)
         water["ph"] = clamp(water["ph"] - water["organic_waste"] * hours * 0.00025 - scape_metrics.get("soft_water", 0.0) * hours * 0.0009 - water.get("tannins", 0.0) * hours * 0.00025 - co2_pressure * hours * 0.00055 + (kh - 4) * hours * 0.0001 + scape_metrics.get("kh_release", 0.0) * hours * 0.0005, 4.5, 9)
         self._update_derived_chemistry(hours, effective_flow, lights_on, total_bioload)
+        self._update_stability_memory(hours)
         light_excess = max(0.0, light_hours + sunlight_hours - 8.0)
         light_shortage = max(0.0, 5.0 - light_hours)
         bio["algae"] = clamp(
@@ -2511,6 +2693,7 @@ class AquariumSimulation:
         trace_balance = clamp(float(water.get("trace_elements", 0.8)) / 0.65, 0.0, 1.3)
         light_balance = (1.0 - clamp(abs(light_hours - 7.0) / 7.0, 0.0, 1.0)) * spectrum
         algae = float(bio.get("algae", 0.0))
+        stability_penalty = max(0.0, 0.74 - float(self.state.get("stability", {}).get("stability_score", 1.0))) * 0.28
         for group_name in ("plants",):
             for plant in aquarium["scape"].get(group_name, []):
                 plant_type = str(plant.get("type", ""))
@@ -2521,7 +2704,7 @@ class AquariumSimulation:
                 if info.get("root_feeder") and (substrate in {"bare_bottom", "rounded_gravel"} or depth < 3.5):
                     root_penalty = 0.32
                 shade_penalty = clamp(float(aquarium.get("surface_shade", 0.0)) * 0.45, 0.0, 0.45)
-                melt_pressure = root_penalty + max(0.0, algae - 0.45) * 0.35 + max(0.0, 0.25 - nutrient) * 0.25 + max(0.0, 0.42 - light_balance) * 0.35 + max(0.0, 0.35 - trace_balance) * 0.18
+                melt_pressure = root_penalty + stability_penalty + max(0.0, algae - 0.45) * 0.35 + max(0.0, 0.25 - nutrient) * 0.25 + max(0.0, 0.42 - light_balance) * 0.35 + max(0.0, 0.35 - trace_balance) * 0.18
                 growth_pressure = max(0.0, nutrient - 0.2) * light_balance * trace_balance * (1.0 - algae * 0.45)
                 health = clamp(health + (growth_pressure * 0.006 - melt_pressure * 0.012) * hours, 0.0, 1.0)
                 if health > 0.7 and growth_pressure > 0.25:
@@ -2546,10 +2729,10 @@ class AquariumSimulation:
                 1,
             )
             for coral in aquarium["scape"].get("corals", []):
-                self._update_coral_piece(coral, hours, light_hours, max(temp_stress, salinity_stress, nitrate_stress, phosphate_stress, mineral_stress))
+                self._update_coral_piece(coral, hours, light_hours, max(temp_stress, salinity_stress, nitrate_stress, phosphate_stress, mineral_stress, stability_penalty))
             for obj in aquarium["scape"].get("objects", []):
                 if obj.get("category") == "corals":
-                    self._update_coral_piece(obj, hours, light_hours, max(temp_stress, salinity_stress, nitrate_stress, phosphate_stress, mineral_stress))
+                    self._update_coral_piece(obj, hours, light_hours, max(temp_stress, salinity_stress, nitrate_stress, phosphate_stress, mineral_stress, stability_penalty))
 
     def _update_coral_piece(self, coral: dict[str, Any], hours: float, light_hours: float, water_stress: float) -> None:
         water = self.state["water"]
@@ -2846,6 +3029,9 @@ class AquariumSimulation:
             self._record_once("redox_low", "warning", "Redox is low", "The tank is carrying high oxygen demand or dissolved organics. Increase flow/aeration and remove waste gradually.")
         if self.state.get("maturity", {}).get("anaerobic_pocket_risk", 0.0) > 0.45:
             self._record_once("anaerobic_pockets", "warning", "Deep substrate is turning stagnant", "Compacted substrate pockets can produce low-oxygen chemistry. Vacuum in sections instead of tearing up the whole bed.")
+        stability = self.state.get("stability", {})
+        if float(stability.get("stability_score", 1.0)) < 0.62:
+            self._record_once("stability_swings", "warning", "Water has been unstable", "Recent temperature, pH, salinity, TDS, or water-change swings are still stressing the ecosystem.")
         skimmer = self.state.get("equipment", {}).get("protein_skimmer", {})
         if water.get("system") == "saltwater" and skimmer.get("enabled", False) and float(skimmer.get("cup_fullness", 0.0)) > 0.88:
             self._record_once("skimmer_cup", "warning", "Skimmer cup needs emptying", "The protein skimmer is losing export efficiency.")
@@ -2864,6 +3050,7 @@ class AquariumSimulation:
         water = self.state["water"]
         biology = self.state["biology"]
         maturity = self.state.get("maturity", {})
+        stability = self.state.get("stability", {})
         animals = [a for a in self.state.get("animals", []) if a.get("alive", True)]
         plants = self.state.get("aquarium", {}).get("scape", {}).get("plants", [])
         corals = self.state.get("aquarium", {}).get("scape", {}).get("corals", [])
@@ -2885,6 +3072,8 @@ class AquariumSimulation:
             "pathogen_pressure": clamp(max(water.get("parasite_pressure", 0.0), water.get("bacterial_pressure", 0.0)), 0.0, 1.0),
             "redox_stress": clamp(max(0.0, 260.0 - float(water.get("redox_mv", 310.0))) / 180.0, 0.0, 1.0),
             "substrate_hypoxia": clamp(float(maturity.get("substrate_hypoxia", 0.0)), 0.0, 1.0),
+            "instability": clamp(1.0 - float(stability.get("stability_score", 1.0)), 0.0, 1.0),
+            "active_grazing": clamp(float(biology.get("grazing_pressure", 0.0)) / 2.0, 0.0, 1.0),
             "free_ammonia_toxicity": clamp(float(water.get("free_ammonia_mg_l", 0.0)) / 0.05, 0.0, 1.0),
             "plant_melt": clamp(plant_melt, 0.0, 1.0),
             "coral_bleach": clamp(coral_stress, 0.0, 1.0),
@@ -2950,6 +3139,8 @@ class AquariumSimulation:
             risks.append("low redox")
         if self.state.get("maturity", {}).get("anaerobic_pocket_risk", 0.0) > 0.45:
             risks.append("stagnant substrate")
+        if self.state.get("stability", {}).get("stability_score", 1.0) < 0.7:
+            risks.append("recent parameter swings")
         if self.state["biology"].get("algae", 0.0) > 0.55:
             risks.append("algae pressure")
         if not self.state.get("cycle", {}).get("ready_for_animals", True):

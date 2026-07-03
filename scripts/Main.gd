@@ -1297,6 +1297,8 @@ func _refresh_research_card() -> void:
 	var equipment = state.get("equipment", {})
 	var maturity = state.get("maturity", {})
 	var chemistry = state.get("chemistry", {})
+	var stability = state.get("stability", {})
+	var biology = state.get("biology", {})
 	var maintenance = state.get("maintenance", {})
 	var symptoms = state.get("symptoms", {})
 	var summary = state.get("summary", {})
@@ -1357,6 +1359,12 @@ func _refresh_research_card() -> void:
 
 	right.append("AQUARIUM SYSTEM NOTES")
 	right.append("Overall status: %s. Risks: %s." % [str(summary.get("status", "unknown")), ", ".join(summary.get("risks", [])) if summary.get("risks", []).size() > 0 else "none visible"])
+	right.append("Stability %.0f%% after recent %s pressure. Active grazing %.0f%%, metabolic load %.2f." % [
+		float(stability.get("stability_score", 1.0)) * 100.0,
+		str(stability.get("latest_swing", "stable")),
+		float(biology.get("grazing_pressure", 0.0)) * 100.0,
+		float(biology.get("metabolic_load", 0.0))
+	])
 	right.append("")
 	right.append("Nitrogen cycle")
 	right.append("Ammonia and nitrite should stay at 0. Total ammonia becomes far more toxic as pH and temperature rise, because more of it is un-ionized NH3.")
@@ -1422,11 +1430,24 @@ func _refresh_research_card() -> void:
 	pages.append("COMPATIBILITY CHECKLIST\nSame water type matters first. Then compare adult size, minimum group, preferred group, swim layer, territoriality, fin nipping, predator mouth size, activity level, hiding needs, and nitrate tolerance.\n\nSchooling fish are not decoration: they need their group before mixed community ideas matter. Territorial fish need broken sight lines and space. Bottom fish need substrate and hiding routes. Long-finned fish dislike strong current and fin nippers.")
 	pages.append("NITROGEN CYCLE\nFish waste and uneaten food become total ammonia, usually written TAN. Mature bacteria convert ammonia to nitrite, then nitrite to nitrate.\n\nThe toxic part is free un-ionized NH3. The same TAN is much more dangerous in warm alkaline water and less dangerous in cool acidic water. Nitrite also hurts oxygen transport.\n\nCurrent free ammonia fraction %.3f%%, toxicity index %.2f." % [float(chemistry.get("free_ammonia_fraction", 0.0)) * 100.0, float(water.get("nitrogen_toxicity_index", 0.0))])
 	pages.append("WATER CHANGES\nA water change dilutes ammonia, nitrite, nitrate, phosphate, organics, turbidity, surface film, and detritus.\n\nIt can also add whatever is in the source water: nitrate, phosphate, chlorine, chloramine, silicate, KH, GH, TDS, calcium, magnesium, salinity, and trace elements.\n\nLarge, fast, cold, hot, untreated, pH-mismatched, hardness-mismatched, or substrate-disturbing changes cause shock. Disturbing the bed can remove compacted waste, but it can also release mulm and organics.")
+	pages.append("STABILITY MEMORY\nReal aquariums do not reset biologically after one good test. The app remembers 24-hour temperature, pH, salinity, and TDS swings plus water-change shock debt.\n\nFish, plants, corals, disease pressure, and welfare react to this history. Stability recovers slowly with time, gentle maintenance, steady temperature, and small matched water changes.\n\nCurrent stability %.0f%%. 24h swings: %.2f C, %.2f pH, %.2f ppt salinity, %.0f TDS. Main pressure: %s." % [
+		float(stability.get("stability_score", 1.0)) * 100.0,
+		float(stability.get("temperature_swing_24h", 0.0)),
+		float(stability.get("ph_swing_24h", 0.0)),
+		float(stability.get("salinity_swing_24h", 0.0)),
+		float(stability.get("tds_swing_24h", 0.0)),
+		str(stability.get("latest_swing", "stable"))
+	])
 	pages.append("WOOD AND ROCKS\nWood does not make water alkaline. Driftwood releases tannins, darkens the water, and usually softens or acidifies slowly. Root driftwood is stronger; branch wood is moderate; manzanita is milder.\n\nReef/live rock and mineral stones can raise KH, calcium, hardness, and pH slowly. Lava rock and dragon stone can add silicate, which can feed brown diatom dust.\n\nCurrent tannins %.0f%%, soft-water pressure %.0f%%, KH release %.0f%%, silicate %.2f." % [float(water.get("tannins", 0.0)) * 100.0, float(aquarium.get("soft_water", 0.0)) * 100.0, float(aquarium.get("kh_release", 0.0)) * 100.0, float(water.get("silicate_mg_l", 0.0))])
 	pages.append("SUBSTRATE\nFine sand looks natural and lets bottom fish forage, but deep sand can compact if neglected. Gravel is easy to clean but traps food. Planted soil feeds roots and can grow plants better, but adds maintenance load. Bare bottom is clean but bad for rooted plants.\n\nDeep compacted substrate with mulm can become hypoxic. Some denitrifying biofilm can reduce nitrate, but stagnant pockets also lower redox and can create dangerous reduced chemistry. Clean in sections.\n\nCurrent substrate: %s, %.1f cm. Compaction %.0f%%, hypoxia %.0f%%, anaerobic risk %.0f%%." % [str(aquarium.get("substrate", "unknown")).replace("_", " "), float(aquarium.get("substrate_depth_cm", 0.0)), float(maturity.get("substrate_compaction", 0.0)) * 100.0, float(maturity.get("substrate_hypoxia", 0.0)) * 100.0, float(maturity.get("anaerobic_pocket_risk", 0.0)) * 100.0])
 	pages.append("PLANTS\nPlants use nitrate, phosphate, light, CO2, trace elements, and sometimes root nutrients. They add oxygen in the light and use oxygen at night.\n\nIf one resource is missing, extra of the others does not fix it. If conditions are wrong, plants melt; melt adds organics, ammonia, and phosphate.\n\nCurrent plant cover %.0f%%, shade %.0f%%, algae control %.0f%%, limiting factor: %s." % [float(aquarium.get("plant_cover", 0.0)) * 100.0, float(aquarium.get("surface_shade", 0.0)) * 100.0, float(aquarium.get("algae_control", 0.0)) * 100.0, str(chemistry.get("plant_limiting_factor", "balanced"))])
 	pages.append("CORALS AND REEF CHEMISTRY\nSaltwater stability depends on salinity, alkalinity, calcium, magnesium, temperature, flow, light, nitrate, phosphate, and trace elements.\n\nCoral growth consumes alkalinity, calcium, magnesium, and trace reserves. Evaporation raises salinity because water leaves but salt stays. Top-off restores level; mineral dosing restores depleted reserves.\n\nCurrent salinity %.1f ppt, alkalinity %.1f dKH, calcium %.0f, magnesium %.0f, limiting factor: %s." % [float(water.get("salinity_ppt", 0.0)), float(water.get("alkalinity_dkh", water.get("kh_dkh", 0.0))), float(water.get("calcium_mg_l", 0.0)), float(water.get("magnesium_mg_l", 0.0)), str(chemistry.get("coral_limiting_factor", "balanced"))])
 	pages.append("FEEDING AND WASTE\nFood helps body condition, energy, breeding condition, and confidence. Too much food becomes leftovers, then decay, then ammonia, phosphate, organics, detritus, surface film, and bacterial pressure.\n\nDominant fish can outcompete shy fish. Long-term hunger lowers body condition; dirty water and stress lower immune condition.\n\nCurrent available food %.2f, decaying food %.2f." % [float(state.get("food", {}).get("available", 0.0)), float(state.get("food", {}).get("decaying", 0.0))])
+	pages.append("CLEANUP CREWS\nShrimp, otocinclus, plecos, blennies, and cleaner shrimp do useful work, but they are not magic filters. They graze algae, biofilm, detritus, and leftovers, then turn some of that into ordinary animal waste.\n\nThey work best when healthy and hungry. Stress, bad water, wrong salinity, or poor group sizes reduce grazing.\n\nCurrent grazing pressure %.0f%%, recent cleanup export %.3f, metabolic load %.2f." % [
+		float(biology.get("grazing_pressure", 0.0)) * 100.0,
+		float(biology.get("cleanup_export", 0.0)),
+		float(biology.get("metabolic_load", 0.0))
+	])
 	var filter_state = equipment.get("filter", {})
 	var media_state = filter_state.get("media", {})
 	var mechanical_state = media_state.get("mechanical", {})
@@ -2575,10 +2596,12 @@ func _draw_tank_sensors() -> void:
 		return
 	var inner := _tank_inner()
 	var water = state.get("water", {})
+	var stability = state.get("stability", {})
+	var biology = state.get("biology", {})
 	var font := get_theme_default_font()
 	var small := 12
 	var normal := 15
-	var board := Rect2(inner.position + Vector2(18, 18), Vector2(214, 220))
+	var board := Rect2(inner.position + Vector2(18, 18), Vector2(214, 246))
 	draw_rect(board, Color(0.03, 0.045, 0.045, 0.72), true)
 	draw_rect(board, Color(0.74, 0.92, 0.89, 0.24), false, 1.4, true)
 	draw_string(font, board.position + Vector2(12, 22), "WATER PROBE", HORIZONTAL_ALIGNMENT_LEFT, -1, small, Color("#c9e7df"))
@@ -2588,7 +2611,8 @@ func _draw_tank_sensors() -> void:
 	_draw_sensor_line(board.position + Vector2(12, 124), "NH3", "%.4f" % float(water.get("free_ammonia_mg_l", 0.0)), _max_color(float(water.get("free_ammonia_mg_l", 0.0)), 0.015, 0.03), normal)
 	_draw_sensor_line(board.position + Vector2(12, 150), "NO2", "%.3f" % float(water.get("nitrite_mg_l", 0.0)), _max_color(float(water.get("nitrite_mg_l", 0.0)), 0.05, 0.3), normal)
 	_draw_sensor_line(board.position + Vector2(12, 176), "ORP", "%.0f mV" % float(water.get("redox_mv", 0.0)), _range_color(float(water.get("redox_mv", 0.0)), 280.0, 430.0, 220.0, 460.0), normal)
-	_draw_sensor_line(board.position + Vector2(12, 202), "DOC", "%.2f" % float(water.get("dissolved_organics", 0.0)), _max_color(float(water.get("dissolved_organics", 0.0)), 0.45, 0.9), normal)
+	_draw_sensor_line(board.position + Vector2(12, 202), "STB", "%.0f%%" % (float(stability.get("stability_score", 1.0)) * 100.0), _range_color(float(stability.get("stability_score", 1.0)), 0.72, 1.0, 0.45, 1.0), normal)
+	_draw_sensor_line(board.position + Vector2(12, 228), "DOC", "%.2f" % float(water.get("dissolved_organics", 0.0)), _max_color(float(water.get("dissolved_organics", 0.0)), 0.45, 0.9), normal)
 
 	var strip := Rect2(Vector2(inner.end.x - 70, inner.position.y + 86), Vector2(34, inner.size.y - SAND_HEIGHT - 132))
 	draw_rect(strip, Color(0.92, 0.88, 0.72, 0.24), true)
@@ -2611,7 +2635,8 @@ func _draw_tank_sensors() -> void:
 	var cycle = state.get("cycle", {})
 	var filter_text := "filter %.0f%%" % (float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0)
 	var cycle_text := "cycle %s" % ("ready" if bool(cycle.get("ready_for_animals", false)) else "new")
-	draw_string(font, inner.position + Vector2(24, inner.end.y - SAND_HEIGHT - 14), "%s  /  %s" % [filter_text, cycle_text], HORIZONTAL_ALIGNMENT_LEFT, -1, small, Color(0.85, 0.98, 0.92, 0.72))
+	var graze_text := "grazing %.0f%%" % (float(biology.get("grazing_pressure", 0.0)) * 100.0)
+	draw_string(font, inner.position + Vector2(24, inner.end.y - SAND_HEIGHT - 14), "%s  /  %s  /  %s" % [filter_text, cycle_text, graze_text], HORIZONTAL_ALIGNMENT_LEFT, -1, small, Color(0.85, 0.98, 0.92, 0.72))
 
 func _draw_sensor_line(pos: Vector2, label: String, value: String, color: Color, size_px: int) -> void:
 	var font := get_theme_default_font()
@@ -2925,9 +2950,11 @@ func _refresh_ui() -> void:
 		summary_label.text = "The aquarium keeps living in the background. Add animals deliberately, acclimate them, and watch water plus welfare signals."
 	var aquarium = state.get("aquarium", {})
 	if scape_label:
-		scape_label.text = "Plants affect nitrate, oxygen, algae, cover, and maintenance. Cover %.0f%% - algae control %.0f%% - upkeep %.0f%%" % [
+		var biology = state.get("biology", {})
+		scape_label.text = "Plants and cleanup crews affect nitrate, oxygen, algae, cover, waste, and maintenance. Cover %.0f%% - algae control %.0f%% - grazing %.0f%% - upkeep %.0f%%" % [
 			float(aquarium.get("plant_cover", 0.0)) * 100.0,
 			float(aquarium.get("algae_control", 0.0)) * 100.0,
+			float(biology.get("grazing_pressure", 0.0)) * 100.0,
 			float(aquarium.get("maintenance_load", 0.0)) * 100.0
 		]
 	for key in water_labels.keys():
@@ -2995,8 +3022,11 @@ func _refresh_ui() -> void:
 		var randomness = state.get("randomness", {})
 		var nursery: Array = state.get("nursery", [])
 		var maturity = state.get("maturity", {})
-		randomness_label.text = "Variability: %.0f%% - %s" % [
+		var stability = state.get("stability", {})
+		randomness_label.text = "Variability: %.0f%% - stability %.0f%% (%s) - %s" % [
 			float(randomness.get("noise", 0.12)) * 100.0,
+			float(stability.get("stability_score", 1.0)) * 100.0,
+			str(stability.get("latest_swing", "stable")),
 			str(randomness.get("latest", "No recent ecosystem surprises."))
 		]
 		randomness_label.text += " - seasoned %.0f%% / mulm %.0f%% / old risk %.0f%%" % [
