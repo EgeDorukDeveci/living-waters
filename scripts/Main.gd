@@ -16,6 +16,7 @@ const COMMAND_EMPTY_SKIMMER := {"action": "empty_skimmer_cup"}
 const COMMAND_DOSE_MINERALS := {"action": "dose_minerals", "strength": 1.0}
 const COMMAND_DOSE_AMMONIA := {"action": "dose_ammonia", "amount": 1.0}
 const COMMAND_TEST_WATER := {"action": "test_water"}
+const COMMAND_TREAT_OUTBREAK := {"action": "treat_outbreak", "strength": 0.55, "days": 5.0}
 const FOOD_OPTIONS := [
 	{"id": "community_flake", "label": "Community flake", "hint": "surface/midwater, balanced, moderate clouding"},
 	{"id": "micro_pellet", "label": "Micro pellet", "hint": "small fish, cleaner water, slow sink"},
@@ -943,6 +944,21 @@ func _build_ui() -> void:
 	_style_button(remove_animal, "danger")
 	remove_animal.pressed.connect(func(): _remove_selected_animal())
 	animal_box.add_child(remove_animal)
+	var health_row := HBoxContainer.new()
+	health_row.add_theme_constant_override("separation", 8)
+	animal_box.add_child(health_row)
+	var quarantine := Button.new()
+	quarantine.text = "Quarantine"
+	quarantine.custom_minimum_size = Vector2(154, 34)
+	_style_button(quarantine)
+	quarantine.pressed.connect(func(): _quarantine_selected_animal())
+	health_row.add_child(quarantine)
+	var treat := Button.new()
+	treat.text = "Treat outbreak"
+	treat.custom_minimum_size = Vector2(154, 34)
+	_style_button(treat, "ghost")
+	treat.pressed.connect(func(): _write_command(COMMAND_TREAT_OUTBREAK.duplicate()))
+	health_row.add_child(treat)
 
 	var scape_tab := _add_tab(tabs, "Scape")
 	var scape_box := _make_section(scape_tab, "Scape studio", "Pick a piece, then place it in the tank. Rooted plants need substrate, floaters need surface.")
@@ -1336,6 +1352,7 @@ func _refresh_research_card() -> void:
 	var biology = state.get("biology", {})
 	var food = state.get("food", {})
 	var residue = state.get("action_residue", {})
+	var disease_ecology = state.get("disease_ecology", {})
 	var maintenance = state.get("maintenance", {})
 	var symptoms = state.get("symptoms", {})
 	var summary = state.get("summary", {})
@@ -1468,6 +1485,14 @@ func _refresh_research_card() -> void:
 		float(water.get("parasite_pressure", 0.0)) * 100.0,
 		float(water.get("bacterial_pressure", 0.0)) * 100.0
 	])
+	right.append("Disease ecology: %s. Free swimmers %.0f%%, cysts %.0f%%, bacterial bloom %.0f%%, treatment %.0f%%, quarantined %d." % [
+		str(disease_ecology.get("outbreak_stage", "quiet")),
+		float(disease_ecology.get("free_swimming_parasites", 0.0)) * 100.0,
+		float(disease_ecology.get("encysted_parasites", 0.0)) * 100.0,
+		float(disease_ecology.get("bacterial_bloom", 0.0)) * 100.0,
+		float(disease_ecology.get("treatment_strength", 0.0)) * 100.0,
+		int(symptoms.get("quarantined_animals", 0))
+	])
 	var pages: Array = ["\n".join(left), "\n".join(right)]
 	pages.append("COMPATIBILITY CHECKLIST\nSame water type matters first. Then compare adult size, minimum group, preferred group, swim layer, territoriality, fin nipping, predator mouth size, activity level, hiding needs, and nitrate tolerance.\n\nSchooling fish are not decoration: they need their group before mixed community ideas matter. Territorial fish need broken sight lines and space. Bottom fish need substrate and hiding routes. Long-finned fish dislike strong current and fin nippers.")
 	pages.append("NITROGEN CYCLE\nFish waste and uneaten food become total ammonia, usually written TAN. Mature bacteria convert ammonia to nitrite, then nitrite to nitrate.\n\nThe toxic part is free un-ionized NH3. The same TAN is much more dangerous in warm alkaline water and less dangerous in cool acidic water. Nitrite also hurts oxygen transport.\n\nCurrent free ammonia fraction %.3f%%, toxicity index %.2f." % [float(chemistry.get("free_ammonia_fraction", 0.0)) * 100.0, float(water.get("nitrogen_toxicity_index", 0.0))])
@@ -1521,7 +1546,16 @@ func _refresh_research_card() -> void:
 		float(skimmer_state.get("neck_fouling", 0.0)) * 100.0
 	])
 	pages.append("REDOX AND ORGANICS\nRedox/ORP is a rough sign of the water's oxidizing capacity. It falls when oxygen debt, dissolved organics, stagnant substrate, surface film, and bacterial pressure rise. It is not a magic score, but a low value means the tank is carrying hidden biological load.\n\nCarbon, skimming, water changes, flow, aeration, less feeding, and removing decay improve it slowly.\n\nCurrent ORP %.0f mV, dissolved organics %.2f, oxygen debt %.0f%%, trend: %s." % [float(water.get("redox_mv", 0.0)), float(water.get("dissolved_organics", 0.0)), float(chemistry.get("oxygen_debt", 0.0)) * 100.0, str(chemistry.get("redox_trend", "stable"))])
-	pages.append("DISEASE AND STRESS\nDisease follows conditions. Stress, injury, dirty water, bad acclimation, ammonia, nitrite, low oxygen, high CO2, salinity drift, parasite pressure, bacterial pressure, and weak immunity all matter.\n\nFish track body condition, gill condition, fin condition, parasite load, immune condition, fear memory, hunger, social satisfaction, and stress.\n\nCurrent parasite pressure %.0f%%, bacterial pressure %.0f%%, stressed animals %d." % [float(water.get("parasite_pressure", 0.0)) * 100.0, float(water.get("bacterial_pressure", 0.0)) * 100.0, int(summary.get("stressed_animals", 0))])
+	pages.append("DISEASE AND STRESS\nDisease follows conditions. Stress, injury, dirty water, bad acclimation, ammonia, nitrite, low oxygen, high CO2, salinity drift, parasite pressure, bacterial pressure, and weak immunity all matter.\n\nThe tank now tracks a simple pathogen life cycle: carriers shed parasites, free swimmers can infect fish, cyst stages wait in the environment, and dirty water can bloom bacteria. Quarantine lowers display shedding. Treatment lowers pathogens but also disturbs oxygen, microfauna, and biofilter margins.\n\nFish track body condition, gill condition, fin condition, parasite load, immune condition, immune memory, fear memory, hunger, social satisfaction, and stress.\n\nCurrent stage %s, free swimmers %.0f%%, cysts %.0f%%, bacterial bloom %.0f%%, parasite pressure %.0f%%, bacterial pressure %.0f%%, visible disease %.0f%%, quarantined %d." % [
+		str(disease_ecology.get("outbreak_stage", "quiet")),
+		float(disease_ecology.get("free_swimming_parasites", 0.0)) * 100.0,
+		float(disease_ecology.get("encysted_parasites", 0.0)) * 100.0,
+		float(disease_ecology.get("bacterial_bloom", 0.0)) * 100.0,
+		float(water.get("parasite_pressure", 0.0)) * 100.0,
+		float(water.get("bacterial_pressure", 0.0)) * 100.0,
+		float(symptoms.get("visible_disease", 0.0)) * 100.0,
+		int(symptoms.get("quarantined_animals", 0))
+	])
 	pages.append("TANK MATURITY\nA new tank is fragile. A mature tank develops biofilm, infusoria, copepods, rooted plants, mulm, stable bacteria, and small visual aging. That tiny life can feed fry and small fish, polish organics, and make the aquarium feel settled.\n\nIt can also go wrong. Too much leftover food can bloom infusoria, cloud the water, raise bacterial pressure, and fuel pest snails. A very old or neglected tank can develop low KH, nitrate buildup, compacted substrate, and old-tank pressure.\n\nCurrent seasoning %.0f%%, biofilm %.0f%%, microfauna %.0f%%, infusoria %.0f%%, copepods %.0f%%, pest snails %.0f%%, bloom %.0f%%, mulm %.0f%%, old-tank risk %.0f%%." % [
 		float(maturity.get("seasoning", 0.0)) * 100.0,
 		float(maturity.get("biofilm", 0.0)) * 100.0,
@@ -1652,6 +1686,15 @@ func _remove_selected_animal() -> void:
 		return
 	_write_command({"action": "remove_animal", "animal_id": selected_animal_id})
 	selected_animal_id = ""
+
+func _quarantine_selected_animal() -> void:
+	if selected_animal_id == "":
+		if tool_label:
+			tool_label.text = "Select a resident first, then quarantine it for observation."
+		return
+	_write_command({"action": "quarantine_animal", "animal_id": selected_animal_id, "days": 14.0})
+	if tool_label:
+		tool_label.text = "Selected animal moved to observation quarantine. Watch stress, appetite, and visible symptoms."
 
 func _choose_scape_tool(category: String, item_type: String, label: String) -> void:
 	selected_scape_tool = {"category": category, "type": item_type, "label": label}
@@ -2818,6 +2861,7 @@ func _draw_animals() -> void:
 		var tint := Color(spec.get("color", "#cccccc")).lerp(Color("#d8c8a0"), clamp(stress * 0.35 + (1.0 - health) * 0.4, 0.0, 0.55))
 		var accent := Color(spec.get("accent", "#ffffff"))
 		if _draw_fish_sprite(str(animal.get("species_id", "")), pos, facing, stress, health):
+			_draw_health_marks(animal, pos, facing)
 			continue
 		var visual_family := str(spec.get("visual_family", animal.get("species_id", "")))
 		match visual_family:
@@ -2839,6 +2883,7 @@ func _draw_animals() -> void:
 				_draw_loach(pos, facing, tint, accent, visual)
 			_:
 				_draw_tetra(pos, facing, tint, accent, visual)
+		_draw_health_marks(animal, pos, facing)
 
 func _draw_fish_sprite(species_id: String, pos: Vector2, facing: float, stress: float, health: float) -> bool:
 	if not fish_textures.has(species_id):
@@ -2874,6 +2919,24 @@ func _fish_sprite_size(species_id: String) -> Vector2:
 			var spec: Dictionary = species.get(species_id, {})
 			var adult_cm := float(spec.get("adult_cm", 4.0))
 			return Vector2(clamp(adult_cm * 9.0, 48.0, 96.0), clamp(adult_cm * 4.8, 28.0, 52.0))
+
+func _draw_health_marks(animal: Dictionary, pos: Vector2, facing: float) -> void:
+	if bool(animal.get("quarantined", false)):
+		draw_arc(pos + Vector2(0, 2), 28.0, 0.05, TAU - 0.05, 36, Color(0.70, 0.88, 1.0, 0.22), 1.4, true)
+	var disease := str(animal.get("disease", ""))
+	if disease == "":
+		return
+	var stage := str(animal.get("disease_stage", "early"))
+	var alpha := 0.34 if stage == "early" else 0.48 if stage == "visible" else 0.66
+	if disease.contains("spot") or disease.contains("ich") or disease.contains("parasite"):
+		for i in range(5 if stage != "severe" else 8):
+			var offset := Vector2(-14.0 + float(i % 4) * 8.0, -5.0 + float(i / 4) * 8.0)
+			draw_circle(pos + Vector2(offset.x * facing, offset.y), 1.35, Color(0.95, 0.97, 0.88, alpha))
+	if disease.contains("fin rot") or float(animal.get("fin_condition", 1.0)) < 0.55:
+		draw_line(pos + Vector2(-24.0 * facing, -4.0), pos + Vector2(-34.0 * facing, -10.0), Color(0.92, 0.78, 0.68, alpha), 1.5, true)
+		draw_line(pos + Vector2(-24.0 * facing, 4.0), pos + Vector2(-35.0 * facing, 10.0), Color(0.92, 0.78, 0.68, alpha), 1.5, true)
+	if disease.contains("gill"):
+		draw_arc(pos + Vector2(11.0 * facing, 0), 7.0, -PI * 0.35, PI * 0.35, 8, Color(1.0, 0.45, 0.40, alpha), 1.6, true)
 
 func _fish_points(pos: Vector2, facing: float, length: float, height: float) -> PackedVector2Array:
 	return PackedVector2Array([
@@ -3136,6 +3199,7 @@ func _refresh_ui() -> void:
 		var nursery: Array = state.get("nursery", [])
 		var maturity = state.get("maturity", {})
 		var stability = state.get("stability", {})
+		var disease_ecology = state.get("disease_ecology", {})
 		randomness_label.text = "Variability: %.0f%% - stability %.0f%% (%s) - %s" % [
 			float(randomness.get("noise", 0.12)) * 100.0,
 			float(stability.get("stability_score", 1.0)) * 100.0,
@@ -3151,6 +3215,7 @@ func _refresh_ui() -> void:
 			(float(maturity.get("infusoria", 0.0)) * 0.42 + float(maturity.get("copepods", 0.0)) * 0.58) * 100.0,
 			float(maturity.get("pest_snails", 0.0)) * 100.0
 		]
+		randomness_label.text += " - disease: %s" % str(disease_ecology.get("outbreak_stage", "quiet"))
 		if nursery.size() > 0:
 			randomness_label.text += " - nursery: %d brood(s)" % nursery.size()
 	_sync_food_controls()
@@ -3176,13 +3241,18 @@ func _refresh_ui() -> void:
 			line += " - fins %.0f%%" % (float(animal.get("fin_condition", 1.0)) * 100.0)
 		if float(animal.get("parasite_load", 0.0)) > 0.25:
 			line += " - parasite %.0f%%" % (float(animal.get("parasite_load", 0.0)) * 100.0)
+		if bool(animal.get("quarantined", false)):
+			line += " - quarantine %.0f d" % float(animal.get("quarantine_days_remaining", 0.0))
 		if float(animal.get("breeding_condition", 0.0)) > 0.6:
 			line += " - breeding"
 		var welfare_reasons: Array = animal.get("welfare_reasons", [])
 		if welfare_reasons.size() > 0 and alive:
 			line += " - %s" % welfare_reasons[0]
 		if str(animal.get("disease", "")) != "" and alive:
-			line += " - %s" % animal.get("disease", "")
+			line += " - %s (%s)" % [animal.get("disease", ""), animal.get("disease_stage", "early")]
+			var visible_symptoms: Array = animal.get("visible_symptoms", [])
+			if visible_symptoms.size() > 0:
+				line += " - %s" % ", ".join(visible_symptoms.slice(0, 2))
 		if not alive:
 			line = "%s - died: %s" % [animal.get("name", "animal"), animal.get("cause_of_death", "unknown")]
 		animal_list.add_item(line)

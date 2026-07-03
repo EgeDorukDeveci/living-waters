@@ -400,6 +400,10 @@ class Daemon:
                 animal["release_y"] = max(0.05, min(0.92, float(command.get("y", 0.45))))
         elif action == "remove_animal":
             sim.remove_animal(str(command.get("animal_id", "")))
+        elif action == "quarantine_animal":
+            sim.quarantine_animal(str(command.get("animal_id", "")), float(command.get("days", 14.0)))
+        elif action == "treat_outbreak":
+            sim.treat_outbreak(float(command.get("strength", 0.55)), float(command.get("days", 5.0)))
         elif action == "place_scape_item":
             sim.place_scape_item(
                 str(command.get("category", "")),

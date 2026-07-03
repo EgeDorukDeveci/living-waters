@@ -361,6 +361,7 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "source_water": default_source_water("freshwater"),
         "maturity": default_maturity(35.0),
         "action_residue": default_action_residue(),
+        "disease_ecology": default_disease_ecology(),
         "stability": default_stability({
             "temperature_c": 23.5,
             "ph": 6.9,
@@ -486,6 +487,7 @@ def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium"
     state["maturity"] = default_maturity(0.0)
     state["chemistry"] = default_chemistry()
     state["action_residue"] = default_action_residue()
+    state["disease_ecology"] = default_disease_ecology()
     state["stability"] = default_stability(state["water"])
     state["animals"] = []
     state["food"] = default_food()
@@ -655,6 +657,23 @@ def default_chemistry() -> dict[str, Any]:
     }
 
 
+def default_disease_ecology() -> dict[str, Any]:
+    return {
+        "free_swimming_parasites": 0.0,
+        "encysted_parasites": 0.0,
+        "bacterial_bloom": 0.0,
+        "carrier_pressure": 0.0,
+        "quarantine_quality": 0.78,
+        "recent_arrival_pressure": 0.0,
+        "cross_contamination": 0.0,
+        "treatment_strength": 0.0,
+        "treatment_days_remaining": 0.0,
+        "medication_residue": 0.0,
+        "outbreak_stage": "quiet",
+        "last_action": "",
+    }
+
+
 def default_action_residue() -> dict[str, Any]:
     return {
         "suspended_debris": 0.0,
@@ -735,6 +754,12 @@ def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
         "fear_memory": 0.0,
         "microbiome_stability": rng.uniform(0.72, 1.0),
         "latent_pathogen_load": rng.uniform(0.0, 0.08),
+        "disease_days": 0.0,
+        "disease_stage": "",
+        "immune_memory": rng.uniform(0.0, 0.14),
+        "quarantined": False,
+        "quarantine_days_remaining": 0.0,
+        "visible_symptoms": [],
         "feeding_rank": rng.uniform(0.2, 1.0),
         "territory_claim": rng.uniform(0.05, 0.45),
         "breeding_condition": rng.uniform(0.0, 0.18),
@@ -974,6 +999,10 @@ class AquariumSimulation:
         clock.setdefault("emergency_pause", False)
         self.state.setdefault("last_test_results", {})
         self.state.setdefault("symptoms", {})
+        disease_defaults = default_disease_ecology()
+        disease_ecology = self.state.setdefault("disease_ecology", disease_defaults.copy())
+        for key, value in disease_defaults.items():
+            disease_ecology.setdefault(key, value)
         self.state.setdefault("nursery", [])
         food_defaults = default_food()
         food = self.state.setdefault("food", food_defaults.copy())
@@ -1006,6 +1035,12 @@ class AquariumSimulation:
             animal.setdefault("fear_memory", 0.0)
             animal.setdefault("microbiome_stability", 0.9)
             animal.setdefault("latent_pathogen_load", 0.03)
+            animal.setdefault("disease_days", 0.0)
+            animal.setdefault("disease_stage", "")
+            animal.setdefault("immune_memory", 0.0)
+            animal.setdefault("quarantined", False)
+            animal.setdefault("quarantine_days_remaining", 0.0)
+            animal.setdefault("visible_symptoms", [])
             animal.setdefault("feeding_rank", 0.6)
             animal.setdefault("territory_claim", 0.2)
             animal.setdefault("breeding_condition", 0.0)
@@ -1180,6 +1215,14 @@ class AquariumSimulation:
             maturity["substrate_compaction"] = clamp(float(maturity.get("substrate_compaction", 0.0)) * (1.0 - fraction * 0.55), 0, 1)
             maturity["substrate_hypoxia"] = clamp(float(maturity.get("substrate_hypoxia", 0.0)) * (1.0 - fraction * 0.30), 0, 1)
             maturity["last_disturbance"] = "substrate disturbed during water change"
+        ecology = self.state.setdefault("disease_ecology", default_disease_ecology())
+        ecology["free_swimming_parasites"] = clamp(float(ecology.get("free_swimming_parasites", 0.0)) * (1.0 - fraction * 0.55), 0.0, 1.0)
+        ecology["bacterial_bloom"] = clamp(float(ecology.get("bacterial_bloom", 0.0)) * (1.0 - fraction * 0.35), 0.0, 1.0)
+        if disturbed_substrate:
+            released = float(ecology.get("encysted_parasites", 0.0)) * fraction * 0.18
+            ecology["encysted_parasites"] = clamp(float(ecology.get("encysted_parasites", 0.0)) - released * 0.35, 0.0, 1.0)
+            ecology["free_swimming_parasites"] = clamp(float(ecology.get("free_swimming_parasites", 0.0)) + released, 0.0, 1.0)
+        ecology["last_action"] = "water change"
         residue = self.state.setdefault("action_residue", default_action_residue())
         residue["suspended_debris"] = clamp(float(residue.get("suspended_debris", 0.0)) + fraction * (0.12 if disturbed_substrate else 0.035), 0.0, 1.0)
         residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + fraction * (0.38 if disturbed_substrate else 0.16), 0.0, 1.0)
@@ -1227,6 +1270,9 @@ class AquariumSimulation:
         water["organic_waste"] = clamp(water.get("organic_waste", 0.0) * 0.92, 0, 5)
         water["dissolved_organics"] = clamp(water.get("dissolved_organics", 0.0) * 0.93, 0, 2.5)
         water["surface_film"] = clamp(water.get("surface_film", 0.0) * 0.9, 0, 1)
+        ecology = self.state.setdefault("disease_ecology", default_disease_ecology())
+        ecology["bacterial_bloom"] = clamp(float(ecology.get("bacterial_bloom", 0.0)) * 0.94, 0.0, 1.0)
+        ecology["recent_arrival_pressure"] = clamp(float(ecology.get("recent_arrival_pressure", 0.0)) * 0.99, 0.0, 1.0)
         residue = self.state.setdefault("action_residue", default_action_residue())
         residue["suspended_debris"] = clamp(float(residue.get("suspended_debris", 0.0)) + 0.025, 0.0, 1.0)
         residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + 0.045, 0.0, 1.0)
@@ -1415,6 +1461,9 @@ class AquariumSimulation:
             chemical["carbon_remaining"] = 1.0
             chemical["phosphate_remover_remaining"] = 1.0
             chemical["media_age_days"] = 0.0
+            ecology = self.state.setdefault("disease_ecology", default_disease_ecology())
+            ecology["bacterial_bloom"] = clamp(float(ecology.get("bacterial_bloom", 0.0)) * 0.88, 0.0, 1.0)
+            ecology["free_swimming_parasites"] = clamp(float(ecology.get("free_swimming_parasites", 0.0)) * 0.94, 0.0, 1.0)
         filter_state["last_serviced"] = now_iso()
         filter_state["service_hours"] = 0.0
         filter_state["failure_mode"] = ""
@@ -1558,6 +1607,10 @@ class AquariumSimulation:
         required = int(spec.get("acclimation_minutes", 30))
         animal["acclimation_minutes"] = int(acclimation_minutes)
         animal["acclimated"] = acclimation_minutes >= required
+        ecology = self.state.setdefault("disease_ecology", default_disease_ecology())
+        arrival_risk = clamp(float(animal.get("latent_pathogen_load", 0.03)) + float(animal.get("parasite_load", 0.02)) * 0.65, 0.0, 1.0)
+        ecology["recent_arrival_pressure"] = clamp(float(ecology.get("recent_arrival_pressure", 0.0)) + arrival_risk * 0.26, 0.0, 1.0)
+        ecology["carrier_pressure"] = clamp(float(ecology.get("carrier_pressure", 0.0)) + arrival_risk * 0.08, 0.0, 1.0)
         if animal["acclimated"]:
             animal["acute_stress"] = clamp(animal["acute_stress"] + 0.08, 0, 1)
             animal["behavior"] = "settling into the tank"
@@ -1566,6 +1619,10 @@ class AquariumSimulation:
             shortfall = 1.0 - clamp(acclimation_minutes / max(1, required), 0, 1)
             animal["acute_stress"] = clamp(0.65 + shortfall * 0.35, 0, 1)
             animal["health"] = clamp(0.18 - shortfall * 0.16, 0, 1)
+            animal["microbiome_stability"] = clamp(float(animal.get("microbiome_stability", 0.9)) - 0.45 * shortfall, 0.0, 1.0)
+            animal["latent_pathogen_load"] = clamp(float(animal.get("latent_pathogen_load", 0.03)) + 0.18 * shortfall, 0.0, 1.0)
+            ecology["free_swimming_parasites"] = clamp(float(ecology.get("free_swimming_parasites", 0.0)) + 0.06 + shortfall * 0.12, 0.0, 1.0)
+            ecology["cross_contamination"] = clamp(float(ecology.get("cross_contamination", 0.0)) + shortfall * 0.20, 0.0, 1.0)
             animal["behavior"] = "acclimation shock"
             self._record("critical", "Acclimation skipped", f"{animal['name']} was added without enough acclimation. Severe osmotic shock is likely.")
             if acclimation_minutes < required * 0.25:
@@ -1589,6 +1646,51 @@ class AquariumSimulation:
                 animals.pop()
         if removed:
             self._record("info", "Animal transferred out", "The selected animal was removed from the aquarium without force or cleanup side effects.")
+        self._summarize()
+
+    def quarantine_animal(self, animal_id: str = "", days: float = 14.0) -> None:
+        days = clamp(float(days), 1.0, 45.0)
+        candidates = [animal for animal in self.state.get("animals", []) if animal.get("alive", True)]
+        animal = next((item for item in candidates if item.get("id") == animal_id), candidates[0] if candidates else None)
+        if not animal:
+            self._record("warning", "Quarantine unavailable", "No living animal was selected for quarantine.")
+            return
+        animal["quarantined"] = True
+        animal["quarantine_days_remaining"] = max(float(animal.get("quarantine_days_remaining", 0.0)), days)
+        animal["acute_stress"] = clamp(float(animal.get("acute_stress", 0.0)) + 0.08, 0, 1)
+        animal["fear_memory"] = clamp(float(animal.get("fear_memory", 0.0)) + 0.04, 0, 1)
+        ecology = self.state.setdefault("disease_ecology", default_disease_ecology())
+        ecology["cross_contamination"] = clamp(float(ecology.get("cross_contamination", 0.0)) * 0.72, 0.0, 1.0)
+        ecology["last_action"] = "quarantine"
+        self._record("info", f"{animal['name']} isolated", "The animal is being observed separately, reducing shedding into the display tank but adding a small handling stress cost.", animal["id"])
+        self._summarize()
+
+    def treat_outbreak(self, strength: float = 0.55, days: float = 5.0) -> None:
+        strength = clamp(float(strength), 0.1, 1.0)
+        days = clamp(float(days), 1.0, 10.0)
+        ecology = self.state.setdefault("disease_ecology", default_disease_ecology())
+        water = self.state["water"]
+        maturity = self.state.setdefault("maturity", default_maturity())
+        bio = self.state["biology"]
+        ecology["treatment_strength"] = max(float(ecology.get("treatment_strength", 0.0)), strength)
+        ecology["treatment_days_remaining"] = max(float(ecology.get("treatment_days_remaining", 0.0)), days)
+        ecology["medication_residue"] = clamp(float(ecology.get("medication_residue", 0.0)) + strength * 0.45, 0.0, 1.0)
+        ecology["free_swimming_parasites"] = clamp(float(ecology.get("free_swimming_parasites", 0.0)) * (1.0 - strength * 0.35), 0.0, 1.0)
+        ecology["bacterial_bloom"] = clamp(float(ecology.get("bacterial_bloom", 0.0)) * (1.0 - strength * 0.22), 0.0, 1.0)
+        water["parasite_pressure"] = clamp(float(water.get("parasite_pressure", 0.0)) * (1.0 - strength * 0.16), 0.0, 1.0)
+        water["bacterial_pressure"] = clamp(float(water.get("bacterial_pressure", 0.0)) * (1.0 - strength * 0.10), 0.0, 1.0)
+        water["oxygen_mg_l"] = clamp(float(water.get("oxygen_mg_l", 7.0)) - strength * 0.18, 0.0, 10.0)
+        bio["ammonia_bacteria"] = clamp(float(bio.get("ammonia_bacteria", 0.8)) * (1.0 - strength * 0.018), 0.03, 1.0)
+        bio["nitrite_bacteria"] = clamp(float(bio.get("nitrite_bacteria", 0.8)) * (1.0 - strength * 0.018), 0.03, 1.0)
+        maturity["microfauna"] = clamp(float(maturity.get("microfauna", 0.0)) * (1.0 - strength * 0.06), 0.0, 1.0)
+        maturity["infusoria"] = clamp(float(maturity.get("infusoria", 0.0)) * (1.0 - strength * 0.05), 0.0, 1.0)
+        maturity["copepods"] = clamp(float(maturity.get("copepods", 0.0)) * (1.0 - strength * 0.08), 0.0, 1.0)
+        for animal in self.state.get("animals", []):
+            if not animal.get("alive", True):
+                continue
+            animal["acute_stress"] = clamp(float(animal.get("acute_stress", 0.0)) + strength * 0.035, 0.0, 1.0)
+        ecology["last_action"] = "treatment"
+        self._record("warning", "Treatment course started", "Pathogen pressure will fall gradually, but medication also stresses oxygen, microfauna, and biofilter margins. Keep water stable.", "")
         self._summarize()
 
     def place_scape_item(self, category: str, item_type: str, x: float, y: float, scale: float = 1.0) -> None:
@@ -2451,6 +2553,108 @@ class AquariumSimulation:
             1.0,
         )
 
+    def _update_disease_ecology(self, hours: float, living: list[dict[str, Any]], total_bioload: float) -> None:
+        water = self.state["water"]
+        maturity = self.state.setdefault("maturity", default_maturity())
+        ecology = self.state.setdefault("disease_ecology", default_disease_ecology())
+        filter_state = self.state["equipment"].setdefault("filter", default_filter())
+        effective_flow = clamp(float(filter_state.get("effective_flow", filter_state.get("flow", 0.6))) if filter_state.get("enabled", True) else 0.0, 0.0, 1.0)
+        treatment = clamp(float(ecology.get("treatment_strength", 0.0)), 0.0, 1.0)
+        treatment_days = max(0.0, float(ecology.get("treatment_days_remaining", 0.0)) - hours / 24.0)
+        if treatment_days <= 0.0:
+            treatment = max(0.0, treatment - hours * 0.018)
+        ecology["treatment_days_remaining"] = treatment_days
+        ecology["treatment_strength"] = treatment
+        ecology["medication_residue"] = max(0.0, float(ecology.get("medication_residue", 0.0)) - hours * (0.006 + effective_flow * 0.002))
+
+        active_sick = [animal for animal in living if animal.get("disease")]
+        carrier_pressure = sum(float(animal.get("parasite_load", 0.0)) + float(animal.get("latent_pathogen_load", 0.0)) * 0.35 for animal in living)
+        sick_shedding = sum(0.55 if not animal.get("quarantined", False) else 0.16 for animal in active_sick)
+        quarantine_quality = clamp(float(ecology.get("quarantine_quality", 0.78)), 0.0, 1.0)
+        for animal in living:
+            if animal.get("quarantined", False):
+                remaining = max(0.0, float(animal.get("quarantine_days_remaining", 0.0)) - hours / 24.0)
+                animal["quarantine_days_remaining"] = remaining
+                if remaining <= 0.0:
+                    animal["quarantined"] = False
+                    animal["immune_memory"] = clamp(float(animal.get("immune_memory", 0.0)) + quarantine_quality * 0.08, 0.0, 1.0)
+                    self._record("info", f"{animal['name']} finished quarantine", "Observation time passed without forcing the display tank to absorb the whole pathogen load at once.", animal["id"])
+
+        dirty_pressure = clamp(
+            max(0.0, float(water.get("organic_waste", 0.0)) - 0.65) * 0.16
+            + float(water.get("detritus", 0.0)) * 0.18
+            + max(0.0, float(water.get("turbidity", 0.0)) - 0.22) * 0.16
+            + max(0.0, 275.0 - float(water.get("redox_mv", 310.0))) / 380.0
+            + max(0.0, total_bioload / max(1.0, float(self.state["aquarium"].get("effective_litres", 60.0))) - 0.035) * 2.6,
+            0.0,
+            1.0,
+        )
+        temperature = float(water.get("temperature_c", 24.0))
+        parasite_cycle_speed = clamp((temperature - 18.0) / 11.0, 0.25, 1.45)
+        arrival = clamp(float(ecology.get("recent_arrival_pressure", 0.0)), 0.0, 1.0)
+        cross = clamp(float(ecology.get("cross_contamination", 0.0)), 0.0, 1.0)
+        free = clamp(float(ecology.get("free_swimming_parasites", 0.0)), 0.0, 1.0)
+        encysted = clamp(float(ecology.get("encysted_parasites", 0.0)), 0.0, 1.0)
+        bloom = clamp(float(ecology.get("bacterial_bloom", 0.0)), 0.0, 1.0)
+
+        cyst_drop = free * parasite_cycle_speed * hours * 0.0018
+        hatch = encysted * parasite_cycle_speed * hours * 0.0011
+        free = clamp(
+            free
+            + hatch
+            + carrier_pressure * hours * 0.00095
+            + sick_shedding * hours * 0.0028
+            + arrival * hours * 0.0007
+            + cross * hours * 0.00055
+            - (effective_flow * 0.0018 + float(maturity.get("microfauna", 0.0)) * 0.00035 + treatment * 0.0065) * hours
+            - cyst_drop,
+            0.0,
+            1.0,
+        )
+        encysted = clamp(
+            encysted
+            + cyst_drop * 0.85
+            - hatch * 0.72
+            - treatment * hours * 0.0014
+            - float(maturity.get("last_water_change_shock", 0.0)) * hours * 0.00055,
+            0.0,
+            1.0,
+        )
+        bloom = clamp(
+            bloom
+            + dirty_pressure * hours * 0.0026
+            + len(active_sick) * hours * 0.0008
+            + max(0.0, float(water.get("oxygen_mg_l", 7.0)) - 6.2) * hours * -0.00018
+            - (effective_flow * 0.0014 + treatment * 0.0045 + float(maturity.get("beneficial_film", 0.0)) * 0.00045) * hours,
+            0.0,
+            1.0,
+        )
+        ecology["carrier_pressure"] = clamp(carrier_pressure / max(1.0, len(living)), 0.0, 1.0)
+        ecology["free_swimming_parasites"] = free
+        ecology["encysted_parasites"] = encysted
+        ecology["bacterial_bloom"] = bloom
+        ecology["recent_arrival_pressure"] = max(0.0, arrival - hours * 0.006)
+        ecology["cross_contamination"] = max(0.0, cross - hours * 0.004)
+
+        water["parasite_pressure"] = clamp(float(water.get("parasite_pressure", 0.0)) + (free * 0.0032 + encysted * 0.0012 + arrival * 0.0008 - treatment * 0.0018) * hours, 0.0, 1.0)
+        water["bacterial_pressure"] = clamp(float(water.get("bacterial_pressure", 0.0)) + (bloom * 0.0028 + dirty_pressure * 0.0011 - treatment * 0.0012) * hours, 0.0, 1.0)
+        if bloom > 0.35:
+            water["turbidity"] = clamp(float(water.get("turbidity", 0.0)) + bloom * hours * 0.00045, 0.0, 1.0)
+            water["oxygen_mg_l"] = clamp(float(water.get("oxygen_mg_l", 7.0)) - bloom * hours * 0.00065, 0.0, 10.0)
+
+        if max(free, encysted, bloom) > 0.62 or len(active_sick) >= 2:
+            ecology["outbreak_stage"] = "active outbreak"
+        elif max(free, encysted, bloom) > 0.28 or active_sick:
+            ecology["outbreak_stage"] = "watch"
+        elif arrival > 0.12:
+            ecology["outbreak_stage"] = "new arrival watch"
+        else:
+            ecology["outbreak_stage"] = "quiet"
+        if ecology["outbreak_stage"] == "active outbreak":
+            self._record_once("disease_outbreak_active", "warning", "Disease outbreak pressure is active", "Parasites, bacterial bloom, or multiple sick animals are building enough pressure that observation, quarantine, water quality, and gentle treatment matter.")
+        elif ecology["outbreak_stage"] == "new arrival watch":
+            self._record_once("new_arrival_pathogen_watch", "info", "New arrival biosecurity watch", "Recently added animals can carry low parasite or bacterial loads even after acclimation. Stable water and quarantine reduce the risk.")
+
     def _tick(self, seconds: float) -> None:
         hours = seconds / 3600.0
         variability = float(self._randomness().get("noise", 0.12))
@@ -2596,6 +2800,7 @@ class AquariumSimulation:
 
         lights_on, light_hours = self._lighting_window()
         self._update_minerals_pathogens_and_film(hours, lights_on, total_bioload, scape_metrics)
+        self._update_disease_ecology(hours, living, total_bioload)
         self._update_evaporation_and_skimmer(hours, lights_on)
         sunlight_hours = float(planning.get("direct_sunlight_hours", 0.0))
         if sunlight_hours > 0:
@@ -3124,9 +3329,20 @@ class AquariumSimulation:
         if not animal.get("alive", True):
             return
         water = self.state["water"]
+        ecology = self.state.setdefault("disease_ecology", default_disease_ecology())
         immune_gap = max(0.0, 0.78 - float(animal.get("immune_condition", 1.0)))
         chronic = float(animal.get("chronic_stress", 0.0))
-        pathogen = float(animal.get("latent_pathogen_load", 0.02)) + float(animal.get("parasite_load", 0.0)) * 0.55 + float(water.get("parasite_pressure", 0.0)) * 0.35
+        treatment = clamp(float(ecology.get("treatment_strength", 0.0)), 0.0, 1.0)
+        immune_memory = clamp(float(animal.get("immune_memory", 0.0)), 0.0, 1.0)
+        quarantine_bonus = 0.18 if animal.get("quarantined", False) else 0.0
+        pathogen = (
+            float(animal.get("latent_pathogen_load", 0.02))
+            + float(animal.get("parasite_load", 0.0)) * 0.55
+            + float(water.get("parasite_pressure", 0.0)) * 0.35
+            + float(ecology.get("free_swimming_parasites", 0.0)) * 0.34
+            + float(ecology.get("bacterial_bloom", 0.0)) * 0.20
+            + float(ecology.get("recent_arrival_pressure", 0.0)) * 0.14
+        )
         nitrogen_pressure = clamp(water.get("free_ammonia_mg_l", 0.0) * 18.0 + water.get("ammonia_mg_l", 0.0) * 1.2 + water.get("nitrite_mg_l", 0.0) * 1.2, 0, 1.0)
         dirty_pressure = (
             max(0.0, water.get("organic_waste", 0.0) - 0.8) * 0.18
@@ -3150,28 +3366,67 @@ class AquariumSimulation:
             + acclimation_pressure
             + max(0.0, injury_pressure - 0.15) * 0.25
             + float(water.get("parasite_pressure", 0.0)) * 0.22
+            + float(ecology.get("free_swimming_parasites", 0.0)) * 0.18
+            + float(ecology.get("bacterial_bloom", 0.0)) * 0.14
         )
-        animal["parasite_load"] = clamp(float(animal.get("parasite_load", 0.0)) + (float(water.get("parasite_pressure", 0.0)) * 0.003 - max(0.0, float(animal.get("immune_condition", 0.8)) - 0.45) * 0.002) * hours, 0.0, 1.0)
+        parasite_gain = float(water.get("parasite_pressure", 0.0)) * 0.0022 + float(ecology.get("free_swimming_parasites", 0.0)) * 0.0048 + float(ecology.get("encysted_parasites", 0.0)) * 0.0012
+        immune_clearance = max(0.0, float(animal.get("immune_condition", 0.8)) + immune_memory * 0.22 + quarantine_bonus - 0.45) * (0.0018 + treatment * 0.0024)
+        animal["parasite_load"] = clamp(float(animal.get("parasite_load", 0.0)) + (parasite_gain - immune_clearance) * hours, 0.0, 1.0)
         disease_resistance = max(0.2, float(animal.get("disease_resistance", 1.0)))
         if animal.get("disease"):
-            recovery_rate = max(0.0, 0.012 * disease_resistance - chronic * 0.01 - water_pressure * 0.008)
+            animal["disease_days"] = float(animal.get("disease_days", 0.0)) + hours / 24.0
+            disease_days = float(animal.get("disease_days", 0.0))
+            if disease_days > 4.5 or animal.get("health", 1.0) < 0.42:
+                animal["disease_stage"] = "severe"
+            elif disease_days > 1.5:
+                animal["disease_stage"] = "visible"
+            else:
+                animal["disease_stage"] = "early"
+            animal["visible_symptoms"] = self._disease_symptoms(str(animal.get("disease", "")), animal)
+            recovery_rate = max(0.0, (0.012 + treatment * 0.018 + quarantine_bonus * 0.012) * disease_resistance + immune_memory * 0.006 - chronic * 0.01 - water_pressure * 0.008)
             if self._chance(recovery_rate, hours, f"disease_recovery_{animal['id']}"):
                 animal["disease"] = ""
+                animal["disease_stage"] = ""
+                animal["disease_days"] = 0.0
+                animal["visible_symptoms"] = []
+                animal["immune_memory"] = clamp(float(animal.get("immune_memory", 0.0)) + 0.18, 0.0, 1.0)
+                animal["parasite_load"] = clamp(float(animal.get("parasite_load", 0.0)) * 0.62, 0.0, 1.0)
                 animal["last_random_event"] = "recovered from opportunistic infection"
                 self._random_note(f"{animal['name']} recovered")
                 self._record("info", f"{animal['name']} recovered", "Stable water and reduced stress allowed the immune system to recover.", animal["id"])
             return
 
         disease_rate = (immune_gap * 0.04 + max(0.0, chronic - 0.25) * 0.035 + water_pressure * 0.018 + pathogen * 0.025) / disease_resistance
+        disease_rate *= clamp(1.0 - immune_memory * 0.28 - quarantine_bonus * 0.22, 0.42, 1.0)
         if self._chance(disease_rate, hours, f"disease_start_{animal['id']}"):
             disease, details = self._select_disease(animal, nitrogen_pressure, dirty_pressure, salinity_pressure, injury_pressure, acclimation_pressure)
             animal["disease"] = disease
+            animal["disease_stage"] = "early"
+            animal["disease_days"] = 0.0
+            animal["visible_symptoms"] = self._disease_symptoms(disease, animal)
             animal["last_random_event"] = disease
             self._random_note(f"{animal['name']} developed {disease}")
             self._record("warning", f"{animal['name']} looks ill", details, animal["id"])
 
+    def _disease_symptoms(self, disease: str, animal: dict[str, Any]) -> list[str]:
+        symptoms: list[str] = []
+        if "ich" in disease or "parasite" in disease:
+            symptoms.extend(["salt-like specks", "flashing"])
+        if "gill" in disease:
+            symptoms.extend(["rapid breathing", "surface visits"])
+        if "fin rot" in disease:
+            symptoms.extend(["ragged fins", "clamped fins"])
+        if "fungal" in disease:
+            symptoms.extend(["cottony wound"])
+        if "bacterial" in disease or "opportunistic" in disease:
+            symptoms.extend(["lethargy", "dull color"])
+        if float(animal.get("body_condition", 0.9)) < 0.55:
+            symptoms.append("thin body")
+        return symptoms[:4]
+
     def _select_disease(self, animal: dict[str, Any], nitrogen_pressure: float, dirty_pressure: float, salinity_pressure: float, injury_pressure: float, acclimation_pressure: float) -> tuple[str, str]:
         water = self.state["water"]
+        ecology = self.state.setdefault("disease_ecology", default_disease_ecology())
         if nitrogen_pressure > 0.5 or water.get("chlorine_mg_l", 0.0) + water.get("chloramine_mg_l", 0.0) > 0.03:
             return "gill inflammation", "Poor nitrogen control or disinfectant exposure irritated the gills and opened the door to infection."
         if injury_pressure > 0.28 and dirty_pressure > 0.12:
@@ -3180,11 +3435,13 @@ class AquariumSimulation:
             return "fungal wound infection", "A wound stayed dirty long enough for a cottony fungal infection to take hold."
         if water.get("system") == "saltwater" and (salinity_pressure > 0.32 or acclimation_pressure > 0.0):
             return "marine parasite outbreak", "Salinity or transfer stress allowed a marine parasite outbreak to appear."
+        if float(ecology.get("free_swimming_parasites", 0.0)) > 0.36 or float(ecology.get("encysted_parasites", 0.0)) > 0.48:
+            return "white spot outbreak", "A built-up parasite life cycle reached the free-swimming stage while the animal's immunity was low."
         if float(water.get("parasite_pressure", 0.0)) > 0.32 or float(animal.get("parasite_load", 0.0)) > 0.35:
             return "parasite flare-up", "Tank parasite pressure and the animal's parasite load finally overwhelmed its immune margin."
         if acclimation_pressure > 0.0 or float(animal.get("latent_pathogen_load", 0.0)) > 0.06:
             return "ich outbreak", "Transport or acclimation stress allowed latent white-spot style parasites to break out."
-        if dirty_pressure > 0.18:
+        if dirty_pressure > 0.18 or float(ecology.get("bacterial_bloom", 0.0)) > 0.35:
             return "bacterial infection", "Organic waste and cloudy water created conditions for a bacterial infection."
         return "opportunistic infection", "Chronic stress, immune weakness, or dirty water allowed an opportunistic infection to appear."
 
@@ -3266,7 +3523,9 @@ class AquariumSimulation:
         damage += float(animal.get("injury", 0.0)) * hours * 0.01
         damage *= clamp(1.0 + (1.0 - float(animal.get("genetic_resilience", 1.0))) * 0.45, 0.82, 1.12)
         if animal.get("disease"):
-            disease_damage = (0.004 + animal["chronic_stress"] * 0.018 + max(0.0, 0.7 - animal["immune_condition"]) * 0.03) * hours
+            stage_multiplier = {"early": 0.72, "visible": 1.0, "severe": 1.55}.get(str(animal.get("disease_stage", "visible")), 1.0)
+            treatment_relief = clamp(1.0 - float(self.state.get("disease_ecology", {}).get("treatment_strength", 0.0)) * 0.22, 0.62, 1.0)
+            disease_damage = (0.004 + animal["chronic_stress"] * 0.018 + max(0.0, 0.7 - animal["immune_condition"]) * 0.03) * hours * stage_multiplier * treatment_relief
             damage += disease_damage / max(0.25, float(animal.get("disease_resistance", 1.0)))
         if animal["hunger"] > 0.9:
             damage += (animal["hunger"] - 0.9) * hours * 0.02
@@ -3290,7 +3549,9 @@ class AquariumSimulation:
             animal["energy"] = clamp(animal["energy"] + hours * 0.018, 0, 1)
 
         if animal.get("disease"):
-            animal["behavior"] = "hiding with signs of illness"
+            stage = str(animal.get("disease_stage", "visible"))
+            symptom_text = ", ".join(str(item) for item in animal.get("visible_symptoms", [])[:2])
+            animal["behavior"] = ("isolated in quarantine with %s" if animal.get("quarantined", False) else "hiding with %s") % (symptom_text if symptom_text else stage)
             animal["routine"] = "hide"
         elif float(animal.get("gill_condition", 1.0)) < 0.38:
             animal["behavior"] = "breathing hard with irritated gills"
@@ -3455,6 +3716,11 @@ class AquariumSimulation:
         gasping = sum(1 for a in animals if str(a.get("routine", "")) == "surface" or "rapid gill" in str(a.get("behavior", "")))
         hiding = sum(1 for a in animals if str(a.get("routine", "")) == "hiding" or "hiding" in str(a.get("behavior", "")))
         stressed = sum(1 for a in animals if float(a.get("acute_stress", 0.0)) > 0.45 or float(a.get("chronic_stress", 0.0)) > 0.35)
+        sick = [a for a in animals if a.get("disease")]
+        quarantined = sum(1 for a in animals if a.get("quarantined", False))
+        ecology = self.state.setdefault("disease_ecology", default_disease_ecology())
+        white_spot = max((float(a.get("parasite_load", 0.0)) for a in sick if "spot" in str(a.get("disease", "")) or "ich" in str(a.get("disease", "")) or "parasite" in str(a.get("disease", ""))), default=0.0)
+        fin_damage = max((1.0 - float(a.get("fin_condition", 1.0)) for a in animals), default=0.0)
         self.state["symptoms"] = {
             "cloudiness": clamp(water.get("turbidity", 0.0) + water.get("organic_waste", 0.0) * 0.08, 0.0, 1.0),
             "green_water": clamp(float(biology.get("algae", 0.0)) * 0.85 + max(0.0, water.get("nitrate_mg_l", 0.0) - 25.0) * 0.006 + water.get("phosphate_mg_l", 0.0) * 0.16, 0.0, 1.0),
@@ -3468,6 +3734,11 @@ class AquariumSimulation:
             "pest_snails": clamp(float(maturity.get("pest_snails", 0.0)), 0.0, 1.0),
             "live_food_web": clamp(float(maturity.get("infusoria", 0.0)) * 0.42 + float(maturity.get("copepods", 0.0)) * 0.58, 0.0, 1.0),
             "pathogen_pressure": clamp(max(water.get("parasite_pressure", 0.0), water.get("bacterial_pressure", 0.0)), 0.0, 1.0),
+            "outbreak_pressure": clamp(max(float(ecology.get("free_swimming_parasites", 0.0)), float(ecology.get("encysted_parasites", 0.0)), float(ecology.get("bacterial_bloom", 0.0))), 0.0, 1.0),
+            "white_spot_signs": clamp(white_spot, 0.0, 1.0),
+            "fin_damage": clamp(fin_damage, 0.0, 1.0),
+            "visible_disease": clamp(len(sick) / max(1.0, len(animals)), 0.0, 1.0),
+            "quarantined_animals": quarantined,
             "redox_stress": clamp(max(0.0, 260.0 - float(water.get("redox_mv", 310.0))) / 180.0, 0.0, 1.0),
             "substrate_hypoxia": clamp(float(maturity.get("substrate_hypoxia", 0.0)), 0.0, 1.0),
             "instability": clamp(1.0 - float(stability.get("stability_score", 1.0)), 0.0, 1.0),
@@ -3533,6 +3804,9 @@ class AquariumSimulation:
             risks.append("parasite pressure")
         if water.get("bacterial_pressure", 0.0) > 0.55:
             risks.append("bacterial pressure")
+        ecology = self.state.get("disease_ecology", {})
+        if str(ecology.get("outbreak_stage", "quiet")) in {"watch", "active outbreak"}:
+            risks.append(str(ecology.get("outbreak_stage", "disease watch")))
         if water.get("redox_mv", 310.0) < 230.0:
             risks.append("low redox")
         if self.state.get("maturity", {}).get("anaerobic_pocket_risk", 0.0) > 0.45:

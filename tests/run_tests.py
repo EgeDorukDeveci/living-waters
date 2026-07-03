@@ -594,6 +594,72 @@ def test_named_disease_selection_uses_cause() -> None:
     assert disease == "ich outbreak"
 
 
+def test_pathogen_ecology_builds_from_carriers_and_dirty_water() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    carrier = animal(species, "neon_tetra", "Carrier", 3)
+    carrier["parasite_load"] = 0.65
+    carrier["latent_pathogen_load"] = 0.35
+    state["animals"].append(carrier)
+    state["water"]["organic_waste"] = 2.2
+    state["water"]["detritus"] = 0.7
+    state["water"]["redox_mv"] = 220
+    state["equipment"]["filter"]["enabled"] = False
+    state["maturity"]["beneficial_film"] = 0.05
+    state["disease_ecology"]["free_swimming_parasites"] = 0.02
+    state["disease_ecology"]["bacterial_bloom"] = 0.04
+    before_free = state["disease_ecology"]["free_swimming_parasites"]
+    before_bloom = state["disease_ecology"]["bacterial_bloom"]
+    AquariumSimulation(species, state).advance(48 * 3600, offline=True)
+    assert state["disease_ecology"]["free_swimming_parasites"] > before_free
+    assert state["disease_ecology"]["bacterial_bloom"] > before_bloom
+    assert state["water"]["parasite_pressure"] > 0.025
+    assert state["symptoms"]["outbreak_pressure"] > 0.0
+
+
+def test_quarantine_reduces_display_shedding() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    display_state = default_state(species)
+    quarantine_state = default_state(species)
+    for state, quarantined in ((display_state, False), (quarantine_state, True)):
+        sick = animal(species, "fancy_guppy", "Sick", 4)
+        sick["disease"] = "white spot outbreak"
+        sick["disease_stage"] = "visible"
+        sick["parasite_load"] = 0.72
+        sick["immune_condition"] = 0.2
+        sick["quarantined"] = quarantined
+        sick["quarantine_days_remaining"] = 14.0 if quarantined else 0.0
+        state["animals"].append(sick)
+        state["randomness"]["noise"] = 0.0
+    display_sim = AquariumSimulation(species, display_state)
+    quarantine_sim = AquariumSimulation(species, quarantine_state)
+    display_sim._update_disease_ecology(24.0, display_state["animals"], 1.0)
+    quarantine_sim._update_disease_ecology(24.0, quarantine_state["animals"], 1.0)
+    quarantine_sim._update_symptoms()
+    assert display_state["disease_ecology"]["free_swimming_parasites"] > quarantine_state["disease_ecology"]["free_swimming_parasites"]
+    assert quarantine_state["symptoms"]["quarantined_animals"] == 1
+
+
+def test_treatment_lowers_pathogens_but_disturbs_microfauna() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["disease_ecology"]["free_swimming_parasites"] = 0.72
+    state["disease_ecology"]["bacterial_bloom"] = 0.62
+    state["water"]["parasite_pressure"] = 0.55
+    state["water"]["bacterial_pressure"] = 0.58
+    state["maturity"]["microfauna"] = 0.66
+    state["maturity"]["copepods"] = 0.5
+    before_microfauna = state["maturity"]["microfauna"]
+    before_copepods = state["maturity"]["copepods"]
+    sim = AquariumSimulation(species, state)
+    sim.treat_outbreak(strength=0.65, days=5)
+    assert state["disease_ecology"]["free_swimming_parasites"] < 0.72
+    assert state["disease_ecology"]["bacterial_bloom"] < 0.62
+    assert state["maturity"]["microfauna"] < before_microfauna
+    assert state["maturity"]["copepods"] < before_copepods
+    assert state["disease_ecology"]["treatment_days_remaining"] == 5
+
+
 def test_evaporation_top_off_and_skimmer_change_reef_water() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = clear_state(species, "Reef Evap", "saltwater", 120)
@@ -1065,6 +1131,9 @@ def main() -> int:
         test_water_test_readings_have_realistic_variance,
         test_disease_risk_depends_on_stress_and_dirty_water,
         test_named_disease_selection_uses_cause,
+        test_pathogen_ecology_builds_from_carriers_and_dirty_water,
+        test_quarantine_reduces_display_shedding,
+        test_treatment_lowers_pathogens_but_disturbs_microfauna,
         test_evaporation_top_off_and_skimmer_change_reef_water,
         test_hardscape_materials_change_water_chemistry,
         test_mineral_dosing_replenishes_reef_reserves,
