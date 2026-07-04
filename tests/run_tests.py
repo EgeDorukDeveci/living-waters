@@ -224,6 +224,59 @@ def test_symptoms_publish_visible_tank_state() -> None:
     assert state["symptoms"]["green_water"] > 0.5
 
 
+def test_algae_ecology_has_distinct_drivers_and_effects() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    state["water"]["nitrate_mg_l"] = 42.0
+    state["water"]["phosphate_mg_l"] = 1.1
+    state["water"]["organic_waste"] = 2.0
+    state["water"]["detritus"] = 0.72
+    state["water"]["redox_mv"] = 215.0
+    state["water"]["silicate_mg_l"] = 1.4
+    state["water"]["co2_mg_l"] = 18.0
+    state["stability"]["ph_swing_24h"] = 0.55
+    state["maturity"]["seasoning"] = 0.08
+    before = dict(state["algae_ecology"])
+    before_oxygen = state["water"]["oxygen_mg_l"]
+    sim._update_algae_ecology(96.0, True, 12.0, 2.0, 0.08, {"plant_cover": 0.05, "algae_control": 0.02})
+    algae = state["algae_ecology"]
+    assert algae["green_water"] > before["green_water"]
+    assert algae["hair_algae"] > before["hair_algae"]
+    assert algae["cyanobacteria"] > before["cyanobacteria"]
+    assert algae["black_beard_algae"] > before["black_beard_algae"]
+    assert algae["brown_diatoms"] > before["brown_diatoms"]
+    assert state["water"]["oxygen_mg_l"] < before_oxygen
+    assert state["biology"]["algae"] > 0.1
+
+
+def test_scraping_and_grazing_affect_specific_algae_types() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["algae_ecology"].update({
+        "glass_film": 0.8,
+        "brown_diatoms": 0.7,
+        "hair_algae": 0.62,
+        "cyanobacteria": 0.28,
+        "black_beard_algae": 0.24,
+    })
+    state["maturity"]["glass_algae"] = 0.8
+    state["maturity"]["diatom_film"] = 0.7
+    sim = AquariumSimulation(species, state)
+    before_hair = state["algae_ecology"]["hair_algae"]
+    sim.scrape_algae()
+    assert state["algae_ecology"]["glass_film"] < 0.3
+    assert state["algae_ecology"]["brown_diatoms"] < 0.5
+    assert state["algae_ecology"]["hair_algae"] < before_hair
+    grazer = animal(species, "otocinclus", "Grazer", 9)
+    grazer["hunger"] = 0.8
+    state["animals"].append(grazer)
+    before_hair_after_scrape = state["algae_ecology"]["hair_algae"]
+    sim._cleanup_grazing(state["animals"], 72.0)
+    assert state["algae_ecology"]["hair_algae"] < before_hair_after_scrape
+    assert state["biology"]["cleanup_export"] > 0
+
+
 def test_tank_maturity_changes_with_time_and_neglect() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = clear_state(species, "Old Desk Tank", "freshwater", 60)
@@ -1106,6 +1159,8 @@ def main() -> int:
         test_small_maintenance_actions_reduce_visible_pressure,
         test_overcleaned_filter_disturbs_biofilter,
         test_symptoms_publish_visible_tank_state,
+        test_algae_ecology_has_distinct_drivers_and_effects,
+        test_scraping_and_grazing_affect_specific_algae_types,
         test_tank_maturity_changes_with_time_and_neglect,
         test_tiny_life_web_grows_from_biofilm_and_leftovers,
         test_fish_routine_reflects_surface_stress,

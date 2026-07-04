@@ -1352,6 +1352,7 @@ func _refresh_research_card() -> void:
 	var biology = state.get("biology", {})
 	var food = state.get("food", {})
 	var residue = state.get("action_residue", {})
+	var algae_ecology = state.get("algae_ecology", {})
 	var disease_ecology = state.get("disease_ecology", {})
 	var maintenance = state.get("maintenance", {})
 	var symptoms = state.get("symptoms", {})
@@ -1435,12 +1436,16 @@ func _refresh_research_card() -> void:
 	])
 	right.append("")
 	right.append("Phosphate, silicate, algae")
-	right.append("Food, decay, source water, and mulm raise phosphate. Silicate feeds brown diatom dust, especially in young tanks or with silicate-leaching rocks.")
-	right.append("Current PO4 %.2f, silicate %.2f, green water %.0f%%, diatom dust %.0f%%." % [
+	right.append("Food, decay, source water, and mulm raise phosphate. Silicate feeds brown diatom dust, especially in young tanks or with silicate-leaching rocks. Long light pushes green water and hair algae. Dead flow and organics can favor cyanobacteria.")
+	right.append("Current PO4 %.2f, silicate %.2f, green water %.0f%%, diatoms %.0f%%, hair %.0f%%, cyano %.0f%%, black beard %.0f%%. Main driver: %s." % [
 		float(water.get("phosphate_mg_l", 0.0)),
 		float(water.get("silicate_mg_l", 0.0)),
 		float(symptoms.get("green_water", 0.0)) * 100.0,
-		float(symptoms.get("diatom_dust", 0.0)) * 100.0
+		float(symptoms.get("diatom_dust", 0.0)) * 100.0,
+		float(symptoms.get("hair_algae", 0.0)) * 100.0,
+		float(symptoms.get("cyanobacteria", 0.0)) * 100.0,
+		float(symptoms.get("black_beard_algae", 0.0)) * 100.0,
+		str(algae_ecology.get("last_driver", "balanced"))
 	])
 	right.append("")
 	right.append("Scape effects")
@@ -1508,6 +1513,18 @@ func _refresh_research_card() -> void:
 	pages.append("WOOD AND ROCKS\nWood does not make water alkaline. Driftwood releases tannins, darkens the water, and usually softens or acidifies slowly. Root driftwood is stronger; branch wood is moderate; manzanita is milder.\n\nReef/live rock and mineral stones can raise KH, calcium, hardness, and pH slowly. Lava rock and dragon stone can add silicate, which can feed brown diatom dust.\n\nCurrent tannins %.0f%%, soft-water pressure %.0f%%, KH release %.0f%%, silicate %.2f." % [float(water.get("tannins", 0.0)) * 100.0, float(aquarium.get("soft_water", 0.0)) * 100.0, float(aquarium.get("kh_release", 0.0)) * 100.0, float(water.get("silicate_mg_l", 0.0))])
 	pages.append("SUBSTRATE\nFine sand looks natural and lets bottom fish forage, but deep sand can compact if neglected. Gravel is easy to clean but traps food. Planted soil feeds roots and can grow plants better, but adds maintenance load. Bare bottom is clean but bad for rooted plants.\n\nDeep compacted substrate with mulm can become hypoxic. Some denitrifying biofilm can reduce nitrate, but stagnant pockets also lower redox and can create dangerous reduced chemistry. Clean in sections.\n\nCurrent substrate: %s, %.1f cm. Compaction %.0f%%, hypoxia %.0f%%, anaerobic risk %.0f%%." % [str(aquarium.get("substrate", "unknown")).replace("_", " "), float(aquarium.get("substrate_depth_cm", 0.0)), float(maturity.get("substrate_compaction", 0.0)) * 100.0, float(maturity.get("substrate_hypoxia", 0.0)) * 100.0, float(maturity.get("anaerobic_pocket_risk", 0.0)) * 100.0])
 	pages.append("PLANTS\nPlants use nitrate, phosphate, light, CO2, trace elements, and sometimes root nutrients. They add oxygen in the light and use oxygen at night.\n\nIf one resource is missing, extra of the others does not fix it. If conditions are wrong, plants melt; melt adds organics, ammonia, and phosphate.\n\nCurrent plant cover %.0f%%, shade %.0f%%, algae control %.0f%%, limiting factor: %s." % [float(aquarium.get("plant_cover", 0.0)) * 100.0, float(aquarium.get("surface_shade", 0.0)) * 100.0, float(aquarium.get("algae_control", 0.0)) * 100.0, str(chemistry.get("plant_limiting_factor", "balanced"))])
+	pages.append("ALGAE ECOLOGY\nAlgae is not one problem. Green water is suspended algae from light plus nutrients. Brown diatoms come from silicate and young tanks. Hair algae likes long light and available nitrate/phosphate. Cyanobacteria is a slimy mat favored by dead flow, organics, low redox, and imbalance. Black beard algae follows unstable CO2, old hardscape biofilm, and dead spots.\n\nScraping removes glass film and some diatoms but releases debris. Cleanup animals graze hair algae and diatoms slowly. Plants compete for nutrients, but melting plants can feed algae back.\n\nCurrent green water %.0f%%, brown diatoms %.0f%%, hair %.0f%%, cyanobacteria %.0f%%, black beard %.0f%%, glass film %.0f%%, nutrient memory %.0f%%, light memory %.0f%%, dead spots %.0f%%, main driver: %s." % [
+		float(algae_ecology.get("green_water", 0.0)) * 100.0,
+		float(algae_ecology.get("brown_diatoms", 0.0)) * 100.0,
+		float(algae_ecology.get("hair_algae", 0.0)) * 100.0,
+		float(algae_ecology.get("cyanobacteria", 0.0)) * 100.0,
+		float(algae_ecology.get("black_beard_algae", 0.0)) * 100.0,
+		float(algae_ecology.get("glass_film", 0.0)) * 100.0,
+		float(algae_ecology.get("nutrient_memory", 0.0)) * 100.0,
+		float(algae_ecology.get("light_memory", 0.0)) * 100.0,
+		float(algae_ecology.get("flow_dead_spots", 0.0)) * 100.0,
+		str(algae_ecology.get("last_driver", "balanced"))
+	])
 	pages.append("CORALS AND REEF CHEMISTRY\nSaltwater stability depends on salinity, alkalinity, calcium, magnesium, temperature, flow, light, nitrate, phosphate, and trace elements.\n\nCoral growth consumes alkalinity, calcium, magnesium, and trace reserves. Evaporation raises salinity because water leaves but salt stays. Top-off restores level; mineral dosing restores depleted reserves.\n\nCurrent salinity %.1f ppt, alkalinity %.1f dKH, calcium %.0f, magnesium %.0f, limiting factor: %s." % [float(water.get("salinity_ppt", 0.0)), float(water.get("alkalinity_dkh", water.get("kh_dkh", 0.0))), float(water.get("calcium_mg_l", 0.0)), float(water.get("magnesium_mg_l", 0.0)), str(chemistry.get("coral_limiting_factor", "balanced"))])
 	pages.append("FEEDING AND WASTE\nFood helps body condition, energy, breeding condition, and confidence only when the animal can actually use it. Flakes linger near the surface, wafers reach bottom fish, algae foods suit grazers, frozen foods are rich but dirtier, and reef blends add planktonic nutrition plus nutrients.\n\nWrong foods are not harmless. Poor diet fit leaves shy or specialized animals hungry, lowers digestion quality, adds decay, increases ammonia and phosphate pressure, clouds water, and feeds bacteria.\n\nLast food: %s. Available %.2f, decaying %.2f. Protein %.0f%%, plant matter %.0f%%, digestibility %.0f%%, sinking %.0f%%, clouding %.0f%%, phosphate pressure %.0f%%, diet mismatch %.0f%%." % [
 		str(food.get("last_type", "community_flake")).replace("_", " "),
@@ -1576,7 +1593,7 @@ func _refresh_research_card() -> void:
 		float(residue.get("reagent_trace", 0.0)) * 100.0,
 		float(residue.get("hands_in_tank_stress", 0.0)) * 100.0
 	])
-	var event_lines: Array[String] = ["CURRENT OBSERVATIONS", "Cloudiness %.0f%%, green water %.0f%%, glass algae %.0f%%, diatom dust %.0f%%." % [float(symptoms.get("cloudiness", 0.0)) * 100.0, float(symptoms.get("green_water", 0.0)) * 100.0, float(symptoms.get("glass_algae", 0.0)) * 100.0, float(symptoms.get("diatom_dust", 0.0)) * 100.0], "Maintenance: %s." % ("ok" if maintenance.get("issues", []).is_empty() else str(maintenance.get("issues", [])[0].get("title", "attention needed"))), "", "Recent events:"]
+	var event_lines: Array[String] = ["CURRENT OBSERVATIONS", "Cloudiness %.0f%%, green water %.0f%%, glass algae %.0f%%, diatoms %.0f%%, hair %.0f%%, cyano %.0f%%." % [float(symptoms.get("cloudiness", 0.0)) * 100.0, float(symptoms.get("green_water", 0.0)) * 100.0, float(symptoms.get("glass_algae", 0.0)) * 100.0, float(symptoms.get("diatom_dust", 0.0)) * 100.0, float(symptoms.get("hair_algae", 0.0)) * 100.0, float(symptoms.get("cyanobacteria", 0.0)) * 100.0], "Maintenance: %s." % ("ok" if maintenance.get("issues", []).is_empty() else str(maintenance.get("issues", [])[0].get("title", "attention needed"))), "", "Recent events:"]
 	for event_item in state.get("events", []).slice(0, 5):
 		event_lines.append("- %s: %s" % [str(event_item.get("severity", "info")), str(event_item.get("title", "event"))])
 	pages.append("\n".join(event_lines))
@@ -1941,6 +1958,7 @@ func _draw_aquarium() -> void:
 		draw_rect(Rect2(inner.position, Vector2(inner.size.x, gap_h)), Color("#071013", 0.72), true)
 		draw_line(inner.position + Vector2(18, gap_h), inner.position + Vector2(inner.size.x - 18, gap_h), Color(0.84, 0.96, 1.0, 0.34), 2.0, true)
 	_draw_water_seasoning(inner)
+	_draw_specific_algae(inner)
 	for i in range(3):
 		var y := inner.position.y + 24.0 + i * 18.0 + sin(Time.get_ticks_msec() / 900.0 + i) * 3.0
 		_draw_wave(Vector2(inner.position.x + 18.0, y), inner.size.x - 36.0, Color(0.74, 0.94, 0.98, 0.16), 2.0 + i)
@@ -1964,6 +1982,31 @@ func _draw_day_night_water_overlay(inner: Rect2) -> void:
 		for i in range(4):
 			var y := inner.position.y + 44.0 + i * 42.0 + sin(Time.get_ticks_msec() / 1400.0 + i) * 2.0
 			_draw_wave(Vector2(inner.position.x + 34.0, y), inner.size.x - 68.0, Color(0.48, 0.68, 0.92, 0.055), 1.4 + i * 0.4)
+
+func _draw_specific_algae(inner: Rect2) -> void:
+	var symptoms = state.get("symptoms", {})
+	var hair := float(symptoms.get("hair_algae", 0.0))
+	var cyano := float(symptoms.get("cyanobacteria", 0.0))
+	var bba := float(symptoms.get("black_beard_algae", 0.0))
+	var sand_top := inner.end.y - _substrate_height()
+	if hair > 0.05:
+		for i in range(int(8 + hair * 42.0)):
+			var root := Vector2(inner.position.x + 24.0 + fposmod(i * 67.0, inner.size.x - 48.0), sand_top - 6.0 - fposmod(i * 17.0, 54.0))
+			var height := 10.0 + float(i % 5) * 5.0 + hair * 22.0
+			var sway := sin(Time.get_ticks_msec() / 850.0 + i) * (2.0 + hair * 4.0)
+			draw_line(root, root + Vector2(sway, -height), Color(0.34, 0.62, 0.28, 0.08 + hair * 0.18), 1.4, true)
+	if cyano > 0.04:
+		for i in range(int(4 + cyano * 18.0)):
+			var mat_pos := Vector2(inner.position.x + 28.0 + fposmod(i * 113.0, inner.size.x - 72.0), sand_top - 10.0 - float(i % 4) * 7.0)
+			var mat_size := Vector2(34.0 + cyano * 42.0, 7.0 + cyano * 10.0)
+			draw_rect(Rect2(mat_pos, mat_size), Color(0.08, 0.40, 0.36, 0.06 + cyano * 0.18), true)
+			draw_line(mat_pos + Vector2(4.0, mat_size.y * 0.55), mat_pos + Vector2(mat_size.x - 4.0, mat_size.y * 0.48), Color(0.18, 0.72, 0.62, 0.08 + cyano * 0.18), 1.4, true)
+	if bba > 0.04:
+		for i in range(int(5 + bba * 24.0)):
+			var base := Vector2(inner.position.x + 38.0 + fposmod(i * 91.0, inner.size.x - 76.0), sand_top - 28.0 - fposmod(i * 23.0, inner.size.y * 0.42))
+			for strand in range(4):
+				var angle := -PI * 0.62 + float(strand) * 0.42 + sin(i + strand) * 0.18
+				draw_line(base, base + Vector2(cos(angle), sin(angle)) * (8.0 + bba * 14.0), Color(0.05, 0.08, 0.07, 0.16 + bba * 0.26), 1.3, true)
 
 func _substrate_height() -> float:
 	var aquarium = state.get("aquarium", {})

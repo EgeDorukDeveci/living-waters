@@ -361,6 +361,7 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "source_water": default_source_water("freshwater"),
         "maturity": default_maturity(35.0),
         "action_residue": default_action_residue(),
+        "algae_ecology": default_algae_ecology(),
         "disease_ecology": default_disease_ecology(),
         "stability": default_stability({
             "temperature_c": 23.5,
@@ -487,6 +488,7 @@ def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium"
     state["maturity"] = default_maturity(0.0)
     state["chemistry"] = default_chemistry()
     state["action_residue"] = default_action_residue()
+    state["algae_ecology"] = default_algae_ecology()
     state["disease_ecology"] = default_disease_ecology()
     state["stability"] = default_stability(state["water"])
     state["animals"] = []
@@ -654,6 +656,21 @@ def default_chemistry() -> dict[str, Any]:
         "substrate_warning": "",
         "plant_limiting_factor": "balanced",
         "coral_limiting_factor": "balanced",
+    }
+
+
+def default_algae_ecology() -> dict[str, Any]:
+    return {
+        "green_water": 0.04,
+        "hair_algae": 0.05,
+        "cyanobacteria": 0.0,
+        "black_beard_algae": 0.0,
+        "brown_diatoms": 0.05,
+        "glass_film": 0.02,
+        "nutrient_memory": 0.12,
+        "light_memory": 0.18,
+        "flow_dead_spots": 0.05,
+        "last_driver": "balanced",
     }
 
 
@@ -999,6 +1016,10 @@ class AquariumSimulation:
         clock.setdefault("emergency_pause", False)
         self.state.setdefault("last_test_results", {})
         self.state.setdefault("symptoms", {})
+        algae_defaults = default_algae_ecology()
+        algae_ecology = self.state.setdefault("algae_ecology", algae_defaults.copy())
+        for key, value in algae_defaults.items():
+            algae_ecology.setdefault(key, value)
         disease_defaults = default_disease_ecology()
         disease_ecology = self.state.setdefault("disease_ecology", disease_defaults.copy())
         for key, value in disease_defaults.items():
@@ -1283,8 +1304,13 @@ class AquariumSimulation:
         maturity = self.state.setdefault("maturity", default_maturity())
         bio = self.state["biology"]
         water = self.state["water"]
+        algae = self.state.setdefault("algae_ecology", default_algae_ecology())
         before = float(maturity.get("glass_algae", 0.0))
         maturity["glass_algae"] = clamp(before * 0.22, 0, 1)
+        algae["glass_film"] = clamp(float(algae.get("glass_film", 0.0)) * 0.24, 0.0, 1.0)
+        algae["brown_diatoms"] = clamp(float(algae.get("brown_diatoms", 0.0)) * 0.62, 0.0, 1.0)
+        algae["hair_algae"] = clamp(float(algae.get("hair_algae", 0.0)) * 0.82, 0.0, 1.0)
+        algae["cyanobacteria"] = clamp(float(algae.get("cyanobacteria", 0.0)) * 0.9, 0.0, 1.0)
         bio["algae"] = clamp(float(bio.get("algae", 0.0)) * 0.86, 0, 1)
         water["turbidity"] = clamp(water.get("turbidity", 0.0) + before * 0.06, 0, 1)
         water["organic_waste"] = clamp(water.get("organic_waste", 0.0) + before * 0.04, 0, 5)
@@ -1293,6 +1319,7 @@ class AquariumSimulation:
         residue["filter_biofilm_shed"] = clamp(float(residue.get("filter_biofilm_shed", 0.0)) + before * 0.025, 0.0, 1.0)
         residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + 0.04, 0.0, 1.0)
         residue["last_action"] = "glass scraping"
+        algae["last_driver"] = "manual scraping"
         self.state.setdefault("maintenance", default_maintenance())["last_algae_scrape"] = now_iso()
         self._record("info", "Glass algae scraped", "Algae was removed from the glass; some loosened film entered the water column.")
 
@@ -2443,6 +2470,7 @@ class AquariumSimulation:
         bio = self.state["biology"]
         food = self.state["food"]
         maturity = self.state.setdefault("maturity", default_maturity(float(self.state.get("cycle", {}).get("days_running", 0.0))))
+        algae = self.state.setdefault("algae_ecology", default_algae_ecology())
         pressure = {"algae": 0.0, "detritus": 0.0, "leftovers": 0.0, "biofilm": 0.0}
         for animal in living:
             role = CLEANUP_ROLES.get(str(animal.get("species_id", "")))
@@ -2460,14 +2488,21 @@ class AquariumSimulation:
         algae_removed = min(float(bio.get("algae", 0.0)), pressure["algae"] * hours * 0.0018)
         glass_removed = min(float(maturity.get("glass_algae", 0.0)), pressure["algae"] * hours * 0.0012)
         diatom_removed = min(float(maturity.get("diatom_film", 0.0)), pressure["biofilm"] * hours * 0.0010)
+        hair_removed = min(float(algae.get("hair_algae", 0.0)), pressure["algae"] * hours * 0.0009)
+        cyano_removed = min(float(algae.get("cyanobacteria", 0.0)), pressure["detritus"] * hours * 0.00022)
+        bba_removed = min(float(algae.get("black_beard_algae", 0.0)), pressure["algae"] * hours * 0.00016)
         detritus_removed = min(float(water.get("detritus", 0.0)), pressure["detritus"] * hours * 0.0015)
         leftovers_removed = min(float(food.get("available", 0.0)), pressure["leftovers"] * hours * 0.0045)
         bio["algae"] = clamp(float(bio.get("algae", 0.0)) - algae_removed, 0.0, 1.0)
         maturity["glass_algae"] = clamp(float(maturity.get("glass_algae", 0.0)) - glass_removed, 0.0, 1.0)
         maturity["diatom_film"] = clamp(float(maturity.get("diatom_film", 0.0)) - diatom_removed, 0.0, 1.0)
+        algae["hair_algae"] = clamp(float(algae.get("hair_algae", 0.0)) - hair_removed, 0.0, 1.0)
+        algae["cyanobacteria"] = clamp(float(algae.get("cyanobacteria", 0.0)) - cyano_removed, 0.0, 1.0)
+        algae["black_beard_algae"] = clamp(float(algae.get("black_beard_algae", 0.0)) - bba_removed, 0.0, 1.0)
+        algae["brown_diatoms"] = clamp(float(algae.get("brown_diatoms", maturity.get("diatom_film", 0.0))) - diatom_removed * 0.65, 0.0, 1.0)
         water["detritus"] = clamp(float(water.get("detritus", 0.0)) - detritus_removed, 0.0, 1.0)
         food["available"] = clamp(float(food.get("available", 0.0)) - leftovers_removed, 0.0, 5.0)
-        cleanup_export = algae_removed + glass_removed + diatom_removed + detritus_removed + leftovers_removed
+        cleanup_export = algae_removed + glass_removed + diatom_removed + hair_removed + cyano_removed + bba_removed + detritus_removed + leftovers_removed
         water["organic_waste"] = clamp(float(water.get("organic_waste", 0.0)) + cleanup_export * 0.055, 0.0, 5.0)
         water["phosphate_mg_l"] = clamp(float(water.get("phosphate_mg_l", 0.0)) + cleanup_export * 0.002, 0.0, 10.0)
         bio["grazing_pressure"] = clamp(sum(pressure.values()) / 4.0, 0.0, 3.0)
@@ -2654,6 +2689,80 @@ class AquariumSimulation:
             self._record_once("disease_outbreak_active", "warning", "Disease outbreak pressure is active", "Parasites, bacterial bloom, or multiple sick animals are building enough pressure that observation, quarantine, water quality, and gentle treatment matter.")
         elif ecology["outbreak_stage"] == "new arrival watch":
             self._record_once("new_arrival_pathogen_watch", "info", "New arrival biosecurity watch", "Recently added animals can carry low parasite or bacterial loads even after acclimation. Stable water and quarantine reduce the risk.")
+
+    def _update_algae_ecology(self, hours: float, lights_on: bool, light_hours: float, sunlight_hours: float, effective_flow: float, scape_metrics: dict[str, Any]) -> None:
+        water = self.state["water"]
+        bio = self.state["biology"]
+        maturity = self.state.setdefault("maturity", default_maturity())
+        algae = self.state.setdefault("algae_ecology", default_algae_ecology())
+        stability = self.state.setdefault("stability", default_stability(water))
+        plant_cover = clamp(float(scape_metrics.get("plant_cover", 0.0)), 0.0, 1.0)
+        algae_control = clamp(float(scape_metrics.get("algae_control", 0.0)) + plant_cover * 0.18, 0.0, 1.0)
+        nutrient = clamp(float(water.get("nitrate_mg_l", 0.0)) / 35.0 * 0.46 + float(water.get("phosphate_mg_l", 0.0)) / 0.85 * 0.54, 0.0, 1.8)
+        silicate = clamp(max(0.0, float(water.get("silicate_mg_l", 0.0)) - 0.12) / 1.4, 0.0, 1.6)
+        light_excess = clamp(max(0.0, light_hours + sunlight_hours - 8.0) / 6.0 + sunlight_hours * 0.08, 0.0, 1.8)
+        light_present = (1.0 if lights_on else 0.18) + light_excess * 0.7
+        flow_dead = clamp(0.46 - effective_flow, 0.0, 0.46) / 0.46
+        organic = clamp(float(water.get("organic_waste", 0.0)) * 0.12 + float(water.get("detritus", 0.0)) * 0.24 + float(water.get("surface_film", 0.0)) * 0.16, 0.0, 1.4)
+        co2_instability = clamp(float(stability.get("ph_swing_24h", 0.0)) / 0.45 + abs(float(water.get("co2_mg_l", 4.0)) - 5.0) / 28.0, 0.0, 1.4)
+        young_tank = clamp(1.0 - float(maturity.get("seasoning", 0.0)) * 1.5, 0.0, 1.0)
+        low_nitrate_high_po4 = clamp(max(0.0, 0.18 - float(water.get("nitrate_mg_l", 0.0)) / 35.0) + float(water.get("phosphate_mg_l", 0.0)) / 1.2, 0.0, 1.3)
+
+        algae["nutrient_memory"] = clamp(float(algae.get("nutrient_memory", 0.0)) + (nutrient - float(algae.get("nutrient_memory", 0.0))) * min(1.0, hours * 0.018), 0.0, 1.0)
+        algae["light_memory"] = clamp(float(algae.get("light_memory", 0.0)) + (light_excess - float(algae.get("light_memory", 0.0))) * min(1.0, hours * 0.018), 0.0, 1.0)
+        algae["flow_dead_spots"] = clamp(float(algae.get("flow_dead_spots", 0.0)) + (flow_dead - float(algae.get("flow_dead_spots", 0.0))) * min(1.0, hours * 0.03), 0.0, 1.0)
+
+        green = float(algae.get("green_water", bio.get("algae", 0.0) * 0.55))
+        hair = float(algae.get("hair_algae", bio.get("algae", 0.0) * 0.35))
+        cyano = float(algae.get("cyanobacteria", 0.0))
+        black_beard = float(algae.get("black_beard_algae", 0.0))
+        brown = float(algae.get("brown_diatoms", maturity.get("diatom_film", 0.0)))
+        glass = float(algae.get("glass_film", maturity.get("glass_algae", 0.0)))
+        legacy_aggregate = float(bio.get("algae", 0.0))
+        detailed_aggregate = green * 0.38 + hair * 0.30 + cyano * 0.20 + black_beard * 0.16 + brown * 0.14 + glass * 0.16
+        if legacy_aggregate > detailed_aggregate + 0.12:
+            green = max(green, legacy_aggregate * 0.70)
+            hair = max(hair, legacy_aggregate * 0.32)
+            glass = max(glass, legacy_aggregate * 0.22)
+
+        green = clamp(green + (light_present * nutrient * 0.00155 + float(water.get("ammonia_mg_l", 0.0)) * 0.0009 - effective_flow * 0.00055 - algae_control * 0.00045) * hours, 0.0, 1.0)
+        hair = clamp(hair + ((0.35 + light_excess) * nutrient * 0.00115 + max(0.0, float(water.get("co2_mg_l", 4.0)) - 14.0) * 0.00008 - algae_control * 0.00075) * hours, 0.0, 1.0)
+        cyano = clamp(cyano + (organic * 0.0017 + flow_dead * low_nitrate_high_po4 * 0.00135 + max(0.0, 260.0 - float(water.get("redox_mv", 310.0))) * 0.000006 - effective_flow * 0.00045 - algae_control * 0.00018) * hours, 0.0, 1.0)
+        black_beard = clamp(black_beard + (co2_instability * 0.0009 + flow_dead * 0.00022 + light_excess * nutrient * 0.00025 - algae_control * 0.00016) * hours, 0.0, 1.0)
+        brown = clamp(brown + (silicate * (0.00095 + young_tank * 0.00115) * light_present - algae_control * 0.00038 - effective_flow * 0.00018) * hours, 0.0, 1.0)
+        glass = clamp(glass + (light_present * (nutrient * 0.00065 + brown * 0.00025) - algae_control * 0.00030) * hours, 0.0, 1.0)
+
+        algae["green_water"] = green
+        algae["hair_algae"] = hair
+        algae["cyanobacteria"] = cyano
+        algae["black_beard_algae"] = black_beard
+        algae["brown_diatoms"] = brown
+        algae["glass_film"] = glass
+        maturity["diatom_film"] = clamp(brown, 0.0, 1.0)
+        maturity["glass_algae"] = clamp(glass, 0.0, 1.0)
+        bio["algae"] = clamp(green * 0.38 + hair * 0.30 + cyano * 0.20 + black_beard * 0.16 + brown * 0.14 + glass * 0.16, 0.0, 1.0)
+        if green > 0.18:
+            water["turbidity"] = clamp(float(water.get("turbidity", 0.0)) + green * hours * 0.00045, 0.0, 1.0)
+        if cyano > 0.16:
+            water["oxygen_mg_l"] = clamp(float(water.get("oxygen_mg_l", 7.0)) - cyano * hours * 0.00085, 0.0, 10.0)
+            water["bacterial_pressure"] = clamp(float(water.get("bacterial_pressure", 0.0)) + cyano * hours * 0.00012, 0.0, 1.0)
+        if hair + black_beard > 0.42:
+            bio["plant_health"] = clamp(float(bio.get("plant_health", 0.9)) - (hair + black_beard) * hours * 0.00032, 0.1, 1.0)
+        driver_scores = {
+            "excess light": light_excess,
+            "nutrients": nutrient,
+            "silicate": silicate,
+            "dead flow": flow_dead,
+            "CO2 instability": co2_instability,
+            "organic film": organic,
+        }
+        algae["last_driver"] = max(driver_scores, key=driver_scores.get)
+        if cyano > 0.48:
+            self._record_once("cyanobacteria_bloom", "warning", "Cyanobacteria mats are spreading", "Low flow, organics, phosphate imbalance, or low redox is creating slimy sheets. Improve flow and remove waste gently.")
+        if hair > 0.55:
+            self._record_once("hair_algae_bloom", "warning", "Hair algae is taking hold", "Long light, nutrients, and weak plant competition are feeding stringy algae. Shorten light and control nitrate/phosphate.")
+        if black_beard > 0.42:
+            self._record_once("black_beard_algae", "warning", "Black beard algae is appearing", "CO2 instability, old hardscape biofilm, and flow dead spots are favoring tough brush algae.")
 
     def _tick(self, seconds: float) -> None:
         hours = seconds / 3600.0
@@ -2844,16 +2953,7 @@ class AquariumSimulation:
         self._update_stability_memory(hours)
         light_excess = max(0.0, light_hours + sunlight_hours - 8.0)
         light_shortage = max(0.0, 5.0 - light_hours)
-        bio["algae"] = clamp(
-            bio["algae"]
-            + (0.005 if lights_on else -0.001) * hours
-            + light_excess * hours * 0.0015
-            + water.get("phosphate_mg_l", 0.0) * hours * 0.00035
-            + water["nitrate_mg_l"] * hours * 0.00005
-            - scape_metrics["algae_control"] * hours * 0.002,
-            0,
-            1,
-        )
+        self._update_algae_ecology(hours, lights_on, light_hours, sunlight_hours, effective_flow, scape_metrics)
         bio["plant_health"] = clamp(bio["plant_health"] - light_shortage * hours * 0.0008 + (0.0003 if 6.0 <= light_hours <= 8.5 else 0.0) * hours, 0.1, 1.0)
         self._update_plants_and_corals(hours, lights_on, light_hours)
 
@@ -3691,6 +3791,11 @@ class AquariumSimulation:
             self._record_once("skimmer_cup", "warning", "Skimmer cup needs emptying", "The protein skimmer is losing export efficiency.")
         if self.state["biology"].get("algae", 0.0) > 0.55:
             self._record_once("algae", "warning", "Algae pressure is high", "Reduce light, avoid direct sun, control phosphate/nitrate, and avoid overfeeding.")
+        algae = self.state.get("algae_ecology", {})
+        if float(algae.get("cyanobacteria", 0.0)) > 0.42:
+            self._record_once("cyano_emergency", "warning", "Slimy cyanobacteria mats are visible", "Check dead spots, organics, low redox, and phosphate imbalance. Remove mats gently and improve flow.")
+        if float(algae.get("green_water", 0.0)) > 0.58:
+            self._record_once("green_water_bloom", "warning", "Green water is blooming", "Suspended algae is clouding the tank. Long light and excess nutrients are usually feeding it.")
         if not self.state.get("cycle", {}).get("ready_for_animals", True):
             self._record_once("cycle_not_ready", "warning", "Cycle is not ready", "Wait for ammonia and nitrite to reach zero before adding animals.")
         for issue in self.state.get("planning", {}).get("issues", [])[:3]:
@@ -3704,6 +3809,7 @@ class AquariumSimulation:
         water = self.state["water"]
         biology = self.state["biology"]
         maturity = self.state.get("maturity", {})
+        algae_ecology = self.state.setdefault("algae_ecology", default_algae_ecology())
         stability = self.state.get("stability", {})
         residue = self.state.get("action_residue", {})
         animals = [a for a in self.state.get("animals", []) if a.get("alive", True)]
@@ -3723,12 +3829,15 @@ class AquariumSimulation:
         fin_damage = max((1.0 - float(a.get("fin_condition", 1.0)) for a in animals), default=0.0)
         self.state["symptoms"] = {
             "cloudiness": clamp(water.get("turbidity", 0.0) + water.get("organic_waste", 0.0) * 0.08, 0.0, 1.0),
-            "green_water": clamp(float(biology.get("algae", 0.0)) * 0.85 + max(0.0, water.get("nitrate_mg_l", 0.0) - 25.0) * 0.006 + water.get("phosphate_mg_l", 0.0) * 0.16, 0.0, 1.0),
+            "green_water": clamp(max(float(algae_ecology.get("green_water", 0.0)), float(biology.get("algae", 0.0)) * 0.85) + max(0.0, water.get("nitrate_mg_l", 0.0) - 25.0) * 0.004 + water.get("phosphate_mg_l", 0.0) * 0.08, 0.0, 1.0),
+            "hair_algae": clamp(float(algae_ecology.get("hair_algae", 0.0)), 0.0, 1.0),
+            "cyanobacteria": clamp(float(algae_ecology.get("cyanobacteria", 0.0)), 0.0, 1.0),
+            "black_beard_algae": clamp(float(algae_ecology.get("black_beard_algae", 0.0)), 0.0, 1.0),
             "surface_film": clamp(water.get("surface_film", 0.0), 0.0, 1.0),
             "dirty_substrate": clamp(water.get("detritus", 0.0) + float(maturity.get("mulm", 0.0)) * 0.45, 0.0, 1.0),
             "maintenance_haze": clamp(float(residue.get("suspended_debris", 0.0)) + float(residue.get("filter_biofilm_shed", 0.0)) + float(residue.get("plant_fragments", 0.0)) * 0.45, 0.0, 1.0),
-            "glass_algae": clamp(float(maturity.get("glass_algae", 0.0)), 0.0, 1.0),
-            "diatom_dust": clamp(float(maturity.get("diatom_film", 0.0)) + water.get("silicate_mg_l", 0.0) * 0.04, 0.0, 1.0),
+            "glass_algae": clamp(max(float(maturity.get("glass_algae", 0.0)), float(algae_ecology.get("glass_film", 0.0))), 0.0, 1.0),
+            "diatom_dust": clamp(max(float(maturity.get("diatom_film", 0.0)), float(algae_ecology.get("brown_diatoms", 0.0))) + water.get("silicate_mg_l", 0.0) * 0.04, 0.0, 1.0),
             "biofilm_sheen": clamp(float(maturity.get("beneficial_film", 0.0)) * 0.55 + water.get("surface_film", 0.0) * 0.35, 0.0, 1.0),
             "visible_microfauna": clamp(float(maturity.get("infusoria", 0.0)) * 0.35 + float(maturity.get("copepods", 0.0)) * 0.55 + float(maturity.get("microfauna_bloom", 0.0)) * 0.35, 0.0, 1.0),
             "pest_snails": clamp(float(maturity.get("pest_snails", 0.0)), 0.0, 1.0),
@@ -3817,6 +3926,13 @@ class AquariumSimulation:
             risks.append("maintenance residue")
         if self.state["biology"].get("algae", 0.0) > 0.55:
             risks.append("algae pressure")
+        algae = self.state.get("algae_ecology", {})
+        if float(algae.get("cyanobacteria", 0.0)) > 0.35:
+            risks.append("cyanobacteria")
+        if float(algae.get("hair_algae", 0.0)) > 0.45:
+            risks.append("hair algae")
+        if float(algae.get("black_beard_algae", 0.0)) > 0.35:
+            risks.append("black beard algae")
         if not self.state.get("cycle", {}).get("ready_for_animals", True):
             risks.append("cycle not ready")
         for issue in self.state.get("planning", {}).get("issues", [])[:2]:
