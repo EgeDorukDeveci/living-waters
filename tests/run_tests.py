@@ -1161,6 +1161,68 @@ def test_parameter_swings_leave_stability_debt_and_welfare_risk() -> None:
     assert any(issue["key"] == "unstable_parameters" for issue in state["welfare"]["issues"])
 
 
+def test_water_change_maintenance_memory_tracks_mismatch_and_conditioner_residue() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["source_water"]["chloramine_mg_l"] = 0.35
+    state["source_water"]["tds_mg_l"] = 520.0
+    state["source_water"]["kh_dkh"] = 10.0
+    state["animals"] = [animal(species, "neon_tetra", "Care Memory", 16)]
+    sim = AquariumSimulation(species, state)
+    sim.water_change(
+        0.55,
+        conditioner_used=True,
+        replacement_temp_c=13.0,
+        replacement_ph=8.8,
+        replacement_gh_dgh=24.0,
+        disturbed_substrate=True,
+        conditioner_dose=1.6,
+    )
+    memory = state["maintenance_ecology"]
+    assert memory["source_mismatch_debt"] > 0.45
+    assert memory["conditioner_residue"] > 0.12
+    assert memory["substrate_disturbance_debt"] > 0.2
+    assert memory["biofilter_handling_debt"] > 0.08
+    assert memory["chloramine_ammonia_debt"] > 0.05
+    assert memory["last_mismatch_driver"] != "none"
+    assert "disturbing" in memory["last_care_style"]
+    sim._summarize()
+    assert any(issue["key"] == "recent_maintenance_disturbance" for issue in state["welfare"]["issues"])
+
+
+def test_maintenance_ecology_decays_but_temporarily_affects_water() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["maintenance_ecology"].update({
+        "change_frequency_debt": 0.7,
+        "conditioner_residue": 0.55,
+        "source_mismatch_debt": 0.65,
+        "substrate_disturbance_debt": 0.6,
+        "biofilter_handling_debt": 0.45,
+        "chloramine_ammonia_debt": 0.18,
+    })
+    state["water"]["turbidity"] = 0.0
+    state["water"]["dissolved_organics"] = 0.0
+    state["water"]["ammonia_mg_l"] = 0.0
+    state["water"]["redox_mv"] = 340.0
+    sim = AquariumSimulation(species, state)
+    before_ammonia_bacteria = state["biology"]["ammonia_bacteria"]
+    sim._update_maintenance_ecology(12.0)
+    sim._update_symptoms()
+    memory = state["maintenance_ecology"]
+    assert memory["change_frequency_debt"] < 0.7
+    assert memory["conditioner_residue"] < 0.55
+    assert memory["source_mismatch_debt"] < 0.65
+    assert memory["substrate_disturbance_debt"] < 0.6
+    assert memory["chloramine_ammonia_debt"] < 0.18
+    assert state["water"]["turbidity"] > 0.0
+    assert state["water"]["dissolved_organics"] > 0.0
+    assert state["water"]["ammonia_mg_l"] > 0.0
+    assert state["water"]["redox_mv"] < 340.0
+    assert state["biology"]["ammonia_bacteria"] < before_ammonia_bacteria
+    assert state["symptoms"]["care_instability"] > 0.0
+
+
 def test_cleanup_animals_graze_algae_detritus_and_leftovers() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -1321,6 +1383,8 @@ def main() -> int:
         test_parameter_swings_leave_stability_debt_and_welfare_risk,
         test_cleanup_animals_graze_algae_detritus_and_leftovers,
         test_metabolic_load_depends_on_temperature_activity_and_condition,
+        test_water_change_maintenance_memory_tracks_mismatch_and_conditioner_residue,
+        test_maintenance_ecology_decays_but_temporarily_affects_water,
         test_filter_service_creates_temporary_maintenance_residue,
         test_trimmed_plant_fragments_decay_if_left_in_tank,
         test_water_testing_leaves_small_temporary_reagent_trace,

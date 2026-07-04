@@ -1355,6 +1355,7 @@ func _refresh_research_card() -> void:
 	var algae_ecology = state.get("algae_ecology", {})
 	var disease_ecology = state.get("disease_ecology", {})
 	var maintenance = state.get("maintenance", {})
+	var maintenance_ecology = state.get("maintenance_ecology", {})
 	var symptoms = state.get("symptoms", {})
 	var summary = state.get("summary", {})
 	var current_litres := float(aquarium.get("effective_litres", 0.0))
@@ -1502,6 +1503,16 @@ func _refresh_research_card() -> void:
 	pages.append("COMPATIBILITY CHECKLIST\nSame water type matters first. Then compare adult size, minimum group, preferred group, swim layer, territoriality, fin nipping, predator mouth size, activity level, hiding needs, and nitrate tolerance.\n\nSchooling fish are not decoration: they need their group before mixed community ideas matter. Territorial fish need broken sight lines and space. Bottom fish need substrate and hiding routes. Long-finned fish dislike strong current and fin nippers.")
 	pages.append("NITROGEN CYCLE\nFish waste and uneaten food become total ammonia, usually written TAN. Mature bacteria convert ammonia to nitrite, then nitrite to nitrate.\n\nThe toxic part is free un-ionized NH3. The same TAN is much more dangerous in warm alkaline water and less dangerous in cool acidic water. Nitrite also hurts oxygen transport.\n\nCurrent free ammonia fraction %.3f%%, toxicity index %.2f." % [float(chemistry.get("free_ammonia_fraction", 0.0)) * 100.0, float(water.get("nitrogen_toxicity_index", 0.0))])
 	pages.append("WATER CHANGES\nA water change dilutes ammonia, nitrite, nitrate, phosphate, organics, turbidity, surface film, and detritus.\n\nIt can also add whatever is in the source water: nitrate, phosphate, chlorine, chloramine, silicate, KH, GH, TDS, calcium, magnesium, salinity, and trace elements.\n\nLarge, fast, cold, hot, untreated, pH-mismatched, hardness-mismatched, or substrate-disturbing changes cause shock. Disturbing the bed can remove compacted waste, but it can also release mulm and organics.")
+	pages.append("MAINTENANCE CHEMISTRY MEMORY\nA real tank remembers care. A large water change may test fine afterward but still leave animals dealing with source-water mismatch, conditioner residue, disturbed mulm, reduced biofilter margin, or chloramine-derived ammonia load.\n\nThe safest rhythm is small, matched, conditioned changes with the substrate cleaned in sections. Repeated big changes can create fatigue even when each one was meant to help.\n\nCurrent care style: %s. Last driver: %s. Change debt %.0f%%, mismatch %.0f%%, conditioner %.0f%%, substrate %.0f%%, biofilter %.0f%%, chloramine nitrogen %.0f%%." % [
+		str(maintenance_ecology.get("last_care_style", "settled")),
+		str(maintenance_ecology.get("last_mismatch_driver", "none")),
+		float(maintenance_ecology.get("change_frequency_debt", 0.0)) * 100.0,
+		float(maintenance_ecology.get("source_mismatch_debt", 0.0)) * 100.0,
+		float(maintenance_ecology.get("conditioner_residue", 0.0)) * 100.0,
+		float(maintenance_ecology.get("substrate_disturbance_debt", 0.0)) * 100.0,
+		float(maintenance_ecology.get("biofilter_handling_debt", 0.0)) * 100.0,
+		float(maintenance_ecology.get("chloramine_ammonia_debt", 0.0)) * 100.0
+	])
 	pages.append("STABILITY MEMORY\nReal aquariums do not reset biologically after one good test. The app remembers 24-hour temperature, pH, salinity, and TDS swings plus water-change shock debt.\n\nFish, plants, corals, disease pressure, and welfare react to this history. Stability recovers slowly with time, gentle maintenance, steady temperature, and small matched water changes.\n\nCurrent stability %.0f%%. 24h swings: %.2f C, %.2f pH, %.2f ppt salinity, %.0f TDS. Main pressure: %s." % [
 		float(stability.get("stability_score", 1.0)) * 100.0,
 		float(stability.get("temperature_swing_24h", 0.0)),
@@ -1657,7 +1668,7 @@ func _refresh_research_card() -> void:
 		float(residue.get("reagent_trace", 0.0)) * 100.0,
 		float(residue.get("hands_in_tank_stress", 0.0)) * 100.0
 	])
-	var event_lines: Array[String] = ["CURRENT OBSERVATIONS", "Cloudiness %.0f%%, green water %.0f%%, glass algae %.0f%%, diatoms %.0f%%, hair %.0f%%, cyano %.0f%%." % [float(symptoms.get("cloudiness", 0.0)) * 100.0, float(symptoms.get("green_water", 0.0)) * 100.0, float(symptoms.get("glass_algae", 0.0)) * 100.0, float(symptoms.get("diatom_dust", 0.0)) * 100.0, float(symptoms.get("hair_algae", 0.0)) * 100.0, float(symptoms.get("cyanobacteria", 0.0)) * 100.0], "Maintenance: %s." % ("ok" if maintenance.get("issues", []).is_empty() else str(maintenance.get("issues", [])[0].get("title", "attention needed"))), "", "Recent events:"]
+	var event_lines: Array[String] = ["CURRENT OBSERVATIONS", "Cloudiness %.0f%%, green water %.0f%%, glass algae %.0f%%, diatoms %.0f%%, hair %.0f%%, cyano %.0f%%." % [float(symptoms.get("cloudiness", 0.0)) * 100.0, float(symptoms.get("green_water", 0.0)) * 100.0, float(symptoms.get("glass_algae", 0.0)) * 100.0, float(symptoms.get("diatom_dust", 0.0)) * 100.0, float(symptoms.get("hair_algae", 0.0)) * 100.0, float(symptoms.get("cyanobacteria", 0.0)) * 100.0], "Maintenance: %s. Care memory %.0f%%." % [("ok" if maintenance.get("issues", []).is_empty() else str(maintenance.get("issues", [])[0].get("title", "attention needed"))), float(symptoms.get("care_instability", 0.0)) * 100.0], "", "Recent events:"]
 	for event_item in state.get("events", []).slice(0, 5):
 		event_lines.append("- %s: %s" % [str(event_item.get("severity", "info")), str(event_item.get("title", "event"))])
 	pages.append("\n".join(event_lines))
@@ -3325,8 +3336,23 @@ func _refresh_ui() -> void:
 		planning_label.text = plan_text
 	if maintenance_label:
 		var maintenance = state.get("maintenance", {})
+		var maintenance_ecology = state.get("maintenance_ecology", {})
 		var maint_issues: Array = maintenance.get("issues", [])
+		var care_pressure: float = clamp(
+			float(maintenance_ecology.get("source_mismatch_debt", 0.0)) * 0.42
+			+ float(maintenance_ecology.get("substrate_disturbance_debt", 0.0)) * 0.34
+			+ float(maintenance_ecology.get("biofilter_handling_debt", 0.0)) * 0.40
+			+ float(maintenance_ecology.get("change_frequency_debt", 0.0)) * 0.28
+			+ float(maintenance_ecology.get("chloramine_ammonia_debt", 0.0)) * 1.1,
+			0.0,
+			1.0
+		)
 		maintenance_label.text = "Maintenance: %s" % ("ok" if maint_issues.is_empty() else maint_issues[0].get("title", "attention needed"))
+		if care_pressure > 0.04:
+			maintenance_label.text += " - care memory %.0f%% (%s)" % [
+				care_pressure * 100.0,
+				str(maintenance_ecology.get("last_mismatch_driver", "settled"))
+			]
 	if randomness_label:
 		var randomness = state.get("randomness", {})
 		var nursery: Array = state.get("nursery", [])

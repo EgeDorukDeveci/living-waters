@@ -361,6 +361,7 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "source_water": default_source_water("freshwater"),
         "maturity": default_maturity(35.0),
         "action_residue": default_action_residue(),
+        "maintenance_ecology": default_maintenance_ecology(),
         "algae_ecology": default_algae_ecology(),
         "disease_ecology": default_disease_ecology(),
         "stability": default_stability({
@@ -488,6 +489,7 @@ def clear_state(species: dict[str, dict[str, Any]], name: str = "Clear Aquarium"
     state["maturity"] = default_maturity(0.0)
     state["chemistry"] = default_chemistry()
     state["action_residue"] = default_action_residue()
+    state["maintenance_ecology"] = default_maintenance_ecology()
     state["algae_ecology"] = default_algae_ecology()
     state["disease_ecology"] = default_disease_ecology()
     state["stability"] = default_stability(state["water"])
@@ -722,6 +724,20 @@ def default_action_residue() -> dict[str, Any]:
         "filter_biofilm_shed": 0.0,
         "hands_in_tank_stress": 0.0,
         "last_action": "",
+    }
+
+
+def default_maintenance_ecology() -> dict[str, Any]:
+    return {
+        "change_frequency_debt": 0.0,
+        "conditioner_residue": 0.0,
+        "source_mismatch_debt": 0.0,
+        "substrate_disturbance_debt": 0.0,
+        "biofilter_handling_debt": 0.0,
+        "chloramine_ammonia_debt": 0.0,
+        "last_change_fraction": 0.0,
+        "last_mismatch_driver": "none",
+        "last_care_style": "settled",
     }
 
 
@@ -979,6 +995,10 @@ class AquariumSimulation:
         residue = self.state.setdefault("action_residue", residue_defaults.copy())
         for key, value in residue_defaults.items():
             residue.setdefault(key, value)
+        maintenance_ecology_defaults = default_maintenance_ecology()
+        maintenance_ecology = self.state.setdefault("maintenance_ecology", maintenance_ecology_defaults.copy())
+        for key, value in maintenance_ecology_defaults.items():
+            maintenance_ecology.setdefault(key, value)
         stability_defaults = default_stability(water)
         stability = self.state.setdefault("stability", stability_defaults.copy())
         for key, value in stability_defaults.items():
@@ -1280,6 +1300,39 @@ class AquariumSimulation:
             1.0,
         )
         maturity["last_water_change_shock"] = shock
+        maintenance = self.state.setdefault("maintenance", default_maintenance())
+        previous_change_days = days_since(maintenance.get("last_water_change", ""), 999.0)
+        mismatch_scores = {
+            "temperature": abs(replacement_temp_c - old_temp) / 7.0,
+            "pH": abs(replacement_ph - old_ph) / 1.2,
+            "hardness": (abs(replacement_gh_dgh - old_gh) + abs(replacement_kh - old_kh) * 0.7) / 18.0,
+            "TDS": abs(replacement_tds - old_tds) / (6500.0 if water.get("system") == "saltwater" else 360.0),
+            "salinity": abs(float(source.get("salinity_ppt", old_salinity)) - old_salinity) / 3.2 if water.get("system") == "saltwater" else 0.0,
+            "disinfectant": 1.0 if water.get("chlorine_mg_l", 0.0) > 0.02 or water.get("chloramine_mg_l", 0.0) > 0.02 else 0.0,
+            "substrate": 0.42 if disturbed_substrate else 0.0,
+        }
+        top_driver = max(mismatch_scores, key=mismatch_scores.get)
+        care_style = "gentle matched change"
+        if disturbed_substrate:
+            care_style = "substrate-disturbing change"
+        elif shock > 0.38:
+            care_style = "mismatched change"
+        elif fraction > 0.32:
+            care_style = "large matched change"
+        ecology_memory = self.state.setdefault("maintenance_ecology", default_maintenance_ecology())
+        repeat_debt = max(0.0, (2.0 - previous_change_days) / 2.0) * fraction * 0.24
+        conditioner_residue = conditioner_dose * fraction * 0.16 if conditioner_used else 0.0
+        if conditioner_used and conditioner_dose > 1.15:
+            conditioner_residue += (conditioner_dose - 1.0) * fraction * 0.14
+        ecology_memory["last_change_fraction"] = fraction
+        ecology_memory["change_frequency_debt"] = clamp(float(ecology_memory.get("change_frequency_debt", 0.0)) + max(0.0, fraction - 0.22) * 0.35 + fraction * 0.10 + repeat_debt, 0.0, 1.5)
+        ecology_memory["conditioner_residue"] = clamp(float(ecology_memory.get("conditioner_residue", 0.0)) + conditioner_residue, 0.0, 1.5)
+        ecology_memory["source_mismatch_debt"] = clamp(float(ecology_memory.get("source_mismatch_debt", 0.0)) + shock * 0.70 + clamp(mismatch_scores[top_driver], 0.0, 1.0) * 0.12, 0.0, 1.5)
+        ecology_memory["substrate_disturbance_debt"] = clamp(float(ecology_memory.get("substrate_disturbance_debt", 0.0)) + fraction * (0.42 if disturbed_substrate else 0.045), 0.0, 1.5)
+        ecology_memory["biofilter_handling_debt"] = clamp(float(ecology_memory.get("biofilter_handling_debt", 0.0)) + shock * 0.09 + mismatch_scores["disinfectant"] * 0.30 + fraction * 0.025, 0.0, 1.0)
+        ecology_memory["chloramine_ammonia_debt"] = clamp(float(ecology_memory.get("chloramine_ammonia_debt", 0.0)) + source_chloramine * fraction * (0.24 if conditioner_used else 0.08) * max(0.35, conditioner_dose), 0.0, 1.0)
+        ecology_memory["last_mismatch_driver"] = top_driver if mismatch_scores[top_driver] > 0.08 else "none"
+        ecology_memory["last_care_style"] = care_style
         self._register_parameter_swing(
             temperature_delta=float(water.get("temperature_c", old_temp)) - old_temp,
             ph_delta=float(water.get("ph", old_ph)) - old_ph,
@@ -1315,7 +1368,6 @@ class AquariumSimulation:
             self.state["biology"]["ammonia_bacteria"] = clamp(self.state["biology"]["ammonia_bacteria"] * (1.0 - shock * 0.035), 0.03, 1.0)
             self.state["biology"]["nitrite_bacteria"] = clamp(self.state["biology"]["nitrite_bacteria"] * (1.0 - shock * 0.035), 0.03, 1.0)
             self._record_once("water_change_shock", "warning", "Water change caused stress", "Replacement temperature, pH, hardness, size, chlorine, or disturbed substrate created measurable shock.")
-        maintenance = self.state.setdefault("maintenance", default_maintenance())
         maintenance["last_water_change"] = now_iso()
         maintenance["water_conditioner_used"] = bool(conditioner_used)
         maintenance["last_conditioner_dose"] = conditioner_dose
@@ -2152,15 +2204,23 @@ class AquariumSimulation:
         stability = self.state.get("stability", default_stability(water))
         stability_score = float(stability.get("stability_score", 1.0))
         residue = self.state.get("action_residue", {})
+        maintenance_ecology = self.state.get("maintenance_ecology", {})
         handling_stress = float(residue.get("hands_in_tank_stress", 0.0))
         maintenance_haze = float(residue.get("suspended_debris", 0.0)) + float(residue.get("filter_biofilm_shed", 0.0))
-        if handling_stress > 0.28 or maintenance_haze > 0.42:
-            severity = clamp(handling_stress * 0.75 + maintenance_haze * 0.35, 0.0, 1.0)
+        care_debt = (
+            float(maintenance_ecology.get("change_frequency_debt", 0.0)) * 0.35
+            + float(maintenance_ecology.get("conditioner_residue", 0.0)) * 0.22
+            + float(maintenance_ecology.get("source_mismatch_debt", 0.0)) * 0.46
+            + float(maintenance_ecology.get("substrate_disturbance_debt", 0.0)) * 0.35
+            + float(maintenance_ecology.get("biofilter_handling_debt", 0.0)) * 0.42
+        )
+        if handling_stress > 0.28 or maintenance_haze > 0.42 or care_debt > 0.28:
+            severity = clamp(handling_stress * 0.75 + maintenance_haze * 0.35 + care_debt * 0.62, 0.0, 1.0)
             issues.append({
                 "key": "recent_maintenance_disturbance",
                 "severity": "warning",
                 "title": "Recent maintenance disturbed the tank",
-                "details": "Hands, tools, suspended debris, or filter dust are still affecting visibility and animal confidence.",
+                "details": f"Hands, tools, suspended debris, source-water mismatch, or substrate disturbance are still affecting the tank. Last style: {maintenance_ecology.get('last_care_style', 'recent care')}.",
             })
             for animal in living:
                 shy = 1.0 - float(animal.get("boldness", 0.5))
@@ -2611,6 +2671,65 @@ class AquariumSimulation:
         if debris + biofilm_shed > 0.28:
             self._record_once("maintenance_haze", "info", "Maintenance haze is clearing", "Loose debris and biofilm dust are temporarily clouding the water after recent care.")
 
+    def _update_maintenance_ecology(self, hours: float) -> None:
+        ecology = self.state.setdefault("maintenance_ecology", default_maintenance_ecology())
+        water = self.state["water"]
+        bio = self.state["biology"]
+        stability = self.state.setdefault("stability", default_stability(water))
+        equipment = self.state.setdefault("equipment", {})
+        filter_state = equipment.setdefault("filter", default_filter())
+        effective_flow = clamp(float(filter_state.get("effective_flow", filter_state.get("flow", 0.6))) if filter_state.get("enabled", True) else 0.0, 0.0, 1.0)
+        media = filter_state.setdefault("media", default_filter()["media"])
+        biological = media.setdefault("biological", default_filter()["media"]["biological"].copy())
+
+        change_debt = float(ecology.get("change_frequency_debt", 0.0))
+        conditioner = float(ecology.get("conditioner_residue", 0.0))
+        mismatch = float(ecology.get("source_mismatch_debt", 0.0))
+        substrate = float(ecology.get("substrate_disturbance_debt", 0.0))
+        biofilter = float(ecology.get("biofilter_handling_debt", 0.0))
+        chloramine_debt = float(ecology.get("chloramine_ammonia_debt", 0.0))
+        if change_debt + conditioner + mismatch + substrate + biofilter + chloramine_debt <= 0.0001:
+            return
+
+        water["turbidity"] = clamp(float(water.get("turbidity", 0.0)) + substrate * hours * 0.0032 + conditioner * hours * 0.00045, 0.0, 1.0)
+        water["dissolved_organics"] = clamp(float(water.get("dissolved_organics", 0.0)) + (conditioner * 0.0015 + substrate * 0.0011) * hours, 0.0, 2.5)
+        water["organic_waste"] = clamp(float(water.get("organic_waste", 0.0)) + substrate * hours * 0.0014, 0.0, 5.0)
+        water["detritus"] = clamp(float(water.get("detritus", 0.0)) + substrate * hours * 0.00055, 0.0, 1.0)
+        water["surface_film"] = clamp(float(water.get("surface_film", 0.0)) + conditioner * hours * 0.00042, 0.0, 1.0)
+        water["oxygen_mg_l"] = clamp(float(water.get("oxygen_mg_l", 7.0)) - (conditioner * 0.0014 + substrate * 0.0018 + biofilter * 0.0008) * hours, 0.0, 10.0)
+        water["redox_mv"] = clamp(float(water.get("redox_mv", 310.0)) - (conditioner * 0.09 + substrate * 0.16 + biofilter * 0.11) * hours, 120.0, 460.0)
+        water["bacterial_pressure"] = clamp(float(water.get("bacterial_pressure", 0.0)) + (substrate * 0.0013 + conditioner * 0.00045 + biofilter * 0.00065) * hours, 0.0, 1.0)
+        stability["water_change_debt"] = clamp(float(stability.get("water_change_debt", 0.0)) + (change_debt * 0.0016 + mismatch * 0.0022) * hours, 0.0, 1.5)
+
+        converted = min(chloramine_debt, hours * 0.0025 + chloramine_debt * hours * 0.014)
+        if converted > 0.0:
+            ecology["chloramine_ammonia_debt"] = max(0.0, chloramine_debt - converted)
+            water["ammonia_mg_l"] = clamp(float(water.get("ammonia_mg_l", 0.0)) + converted * 0.085, 0.0, 5.0)
+            water["dissolved_organics"] = clamp(float(water.get("dissolved_organics", 0.0)) + converted * 0.018, 0.0, 2.5)
+
+        bacteria_damage = min(0.025, (biofilter * 0.0018 + conditioner * 0.00045 + mismatch * 0.00035) * hours)
+        if bacteria_damage > 0.0:
+            bio["ammonia_bacteria"] = clamp(float(bio.get("ammonia_bacteria", 0.5)) - bacteria_damage, 0.01, 1.0)
+            bio["nitrite_bacteria"] = clamp(float(bio.get("nitrite_bacteria", 0.5)) - bacteria_damage * 0.92, 0.01, 1.0)
+            biological["maturity"] = clamp(float(biological.get("maturity", 0.8)) - bacteria_damage * 0.42, 0.02, 1.0)
+
+        ecology["change_frequency_debt"] = max(0.0, change_debt - hours * 0.010)
+        ecology["conditioner_residue"] = max(0.0, conditioner - hours * (0.011 + effective_flow * 0.005))
+        ecology["source_mismatch_debt"] = max(0.0, mismatch - hours * 0.012)
+        ecology["substrate_disturbance_debt"] = max(0.0, substrate - hours * (0.007 + effective_flow * 0.003))
+        ecology["biofilter_handling_debt"] = max(0.0, biofilter - hours * 0.010)
+        self._score_stability()
+        if ecology["change_frequency_debt"] > 0.55:
+            self._record_once("frequent_water_change_fatigue", "warning", "Frequent large changes are fatiguing the tank", "Repeated or oversized water changes are keeping stability debt alive. Smaller matched changes are gentler.")
+        if ecology["conditioner_residue"] > 0.42:
+            self._record_once("conditioner_residue", "info", "Conditioner residue is still clearing", "Extra conditioner is not lethal here, but it adds a short-lived chemical footprint and oxygen/redox load.")
+        if ecology["source_mismatch_debt"] > 0.48:
+            self._record_once("source_mismatch_debt", "warning", "Replacement water mismatch is lingering", "The tank still remembers mismatched temperature, pH, hardness, salinity, or TDS from the recent water change.")
+        if ecology["substrate_disturbance_debt"] > 0.42:
+            self._record_once("substrate_disturbance_debt", "warning", "Disturbed substrate is still releasing load", "Mulm disturbed during maintenance is clearing slowly through filtration and bacterial processing.")
+        if ecology["chloramine_ammonia_debt"] > 0.06:
+            self._record_once("chloramine_ammonia_debt", "info", "Chloramine treatment left nitrogen load", "Conditioned chloramine can still leave a small ammonia load for the biofilter to process.")
+
     def _update_minerals_pathogens_and_film(self, hours: float, lights_on: bool, total_bioload: float, scape_metrics: dict[str, Any]) -> None:
         water = self.state["water"]
         maturity = self.state.setdefault("maturity", default_maturity(float(self.state.get("cycle", {}).get("days_running", 0.0))))
@@ -2868,6 +2987,7 @@ class AquariumSimulation:
             self._record_once("overfeeding", "warning", "Uneaten food is decaying", "Overfeeding is producing extra ammonia risk. Feed less and remove leftovers.")
         self._cleanup_grazing(living, hours)
         self._update_action_residue(hours)
+        self._update_maintenance_ecology(hours)
         substrate_depth = float(self.state["aquarium"].get("substrate_depth_cm", 5.0))
         substrate_trap = clamp((substrate_depth - 3.0) / 5.0, 0.0, 0.55)
         waste_input = (
@@ -4057,6 +4177,15 @@ class AquariumSimulation:
         residue = self.state.get("action_residue", {})
         if float(residue.get("plant_fragments", 0.0)) > 0.22:
             self._record_once("loose_plant_fragments", "warning", "Loose plant clippings remain", "Plant cuttings left in the water are slowly becoming dissolved organics, ammonia, and phosphate.")
+        maintenance_ecology = self.state.get("maintenance_ecology", {})
+        if float(maintenance_ecology.get("source_mismatch_debt", 0.0)) > 0.55:
+            self._record_once("care_source_mismatch", "warning", "Recent water change mismatch is lingering", "Replacement water mismatch is still creating stability debt. Match temperature, pH, hardness, salinity, and TDS more closely next time.")
+        if float(maintenance_ecology.get("substrate_disturbance_debt", 0.0)) > 0.48:
+            self._record_once("care_substrate_debt", "warning", "Substrate disturbance is still clearing", "A recent siphon or rescape disturbed mulm. Filtration will clear it slowly; avoid another deep disturbance immediately.")
+        if float(maintenance_ecology.get("biofilter_handling_debt", 0.0)) > 0.38:
+            self._record_once("care_biofilter_debt", "warning", "Biofilter margin is reduced", "Recent care, disinfectant, or shock slightly reduced bacterial margin. Feed lightly and watch ammonia/nitrite.")
+        if float(maintenance_ecology.get("chloramine_ammonia_debt", 0.0)) > 0.08:
+            self._record_once("care_chloramine_debt", "info", "Chloramine nitrogen load is processing", "Conditioned chloramine can leave a small ammonia burden for mature filters to consume.")
         scape = self.state.get("aquarium", {}).get("scape", {})
         plants = list(scape.get("plants", [])) + [obj for obj in scape.get("objects", []) if obj.get("category") == "plants"]
         if any(float(plant.get("health", 1.0)) < 0.32 or float(plant.get("melt_debt", 0.0)) > 0.38 for plant in plants):
@@ -4090,6 +4219,7 @@ class AquariumSimulation:
         algae_ecology = self.state.setdefault("algae_ecology", default_algae_ecology())
         stability = self.state.get("stability", {})
         residue = self.state.get("action_residue", {})
+        maintenance_ecology = self.state.get("maintenance_ecology", {})
         animals = [a for a in self.state.get("animals", []) if a.get("alive", True)]
         plants = self.state.get("aquarium", {}).get("scape", {}).get("plants", [])
         corals = self.state.get("aquarium", {}).get("scape", {}).get("corals", [])
@@ -4113,7 +4243,15 @@ class AquariumSimulation:
             "black_beard_algae": clamp(float(algae_ecology.get("black_beard_algae", 0.0)), 0.0, 1.0),
             "surface_film": clamp(water.get("surface_film", 0.0), 0.0, 1.0),
             "dirty_substrate": clamp(water.get("detritus", 0.0) + float(maturity.get("mulm", 0.0)) * 0.45, 0.0, 1.0),
-            "maintenance_haze": clamp(float(residue.get("suspended_debris", 0.0)) + float(residue.get("filter_biofilm_shed", 0.0)) + float(residue.get("plant_fragments", 0.0)) * 0.45, 0.0, 1.0),
+            "maintenance_haze": clamp(
+                float(residue.get("suspended_debris", 0.0))
+                + float(residue.get("filter_biofilm_shed", 0.0))
+                + float(residue.get("plant_fragments", 0.0)) * 0.45
+                + float(maintenance_ecology.get("substrate_disturbance_debt", 0.0)) * 0.38
+                + float(maintenance_ecology.get("conditioner_residue", 0.0)) * 0.16,
+                0.0,
+                1.0,
+            ),
             "glass_algae": clamp(max(float(maturity.get("glass_algae", 0.0)), float(algae_ecology.get("glass_film", 0.0))), 0.0, 1.0),
             "diatom_dust": clamp(max(float(maturity.get("diatom_film", 0.0)), float(algae_ecology.get("brown_diatoms", 0.0))) + water.get("silicate_mg_l", 0.0) * 0.04, 0.0, 1.0),
             "biofilm_sheen": clamp(float(maturity.get("beneficial_film", 0.0)) * 0.55 + water.get("surface_film", 0.0) * 0.35, 0.0, 1.0),
@@ -4129,6 +4267,14 @@ class AquariumSimulation:
             "redox_stress": clamp(max(0.0, 260.0 - float(water.get("redox_mv", 310.0))) / 180.0, 0.0, 1.0),
             "substrate_hypoxia": clamp(float(maturity.get("substrate_hypoxia", 0.0)), 0.0, 1.0),
             "instability": clamp(1.0 - float(stability.get("stability_score", 1.0)), 0.0, 1.0),
+            "care_instability": clamp(
+                float(maintenance_ecology.get("change_frequency_debt", 0.0)) * 0.34
+                + float(maintenance_ecology.get("source_mismatch_debt", 0.0)) * 0.44
+                + float(maintenance_ecology.get("biofilter_handling_debt", 0.0)) * 0.38
+                + float(maintenance_ecology.get("chloramine_ammonia_debt", 0.0)) * 1.2,
+                0.0,
+                1.0,
+            ),
             "active_grazing": clamp(float(biology.get("grazing_pressure", 0.0)) / 2.0, 0.0, 1.0),
             "free_ammonia_toxicity": clamp(float(water.get("free_ammonia_mg_l", 0.0)) / 0.05, 0.0, 1.0),
             "plant_melt": clamp(plant_melt, 0.0, 1.0),
@@ -4202,6 +4348,13 @@ class AquariumSimulation:
             risks.append("recent parameter swings")
         if self.state.get("action_residue", {}).get("suspended_debris", 0.0) > 0.28 or self.state.get("action_residue", {}).get("plant_fragments", 0.0) > 0.22:
             risks.append("maintenance residue")
+        maintenance_ecology = self.state.get("maintenance_ecology", {})
+        if (
+            float(maintenance_ecology.get("source_mismatch_debt", 0.0)) > 0.38
+            or float(maintenance_ecology.get("substrate_disturbance_debt", 0.0)) > 0.38
+            or float(maintenance_ecology.get("biofilter_handling_debt", 0.0)) > 0.32
+        ):
+            risks.append("care chemistry memory")
         if self.state["biology"].get("algae", 0.0) > 0.55:
             risks.append("algae pressure")
         algae = self.state.get("algae_ecology", {})
