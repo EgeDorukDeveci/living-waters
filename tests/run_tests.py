@@ -153,6 +153,49 @@ def test_sinking_food_reaches_bottom_fish_better_than_flake() -> None:
     assert wafer_share > 0.2
 
 
+def test_grazer_food_builds_better_nutrition_memory_than_rich_wrong_food() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    good_state = default_state(species)
+    bad_state = default_state(species)
+    good_fish = animal(species, "otocinclus", "Good Oto", 2)
+    bad_fish = animal(species, "otocinclus", "Bad Oto", 2)
+    for fish in (good_fish, bad_fish):
+        fish["hunger"] = 0.82
+        fish["nutrition_reserve"] = 0.52
+        fish["fiber_balance"] = 0.38
+    good_state["animals"] = [good_fish]
+    bad_state["animals"] = [bad_fish]
+    good_sim = AquariumSimulation(species, good_state)
+    bad_sim = AquariumSimulation(species, bad_state)
+    good_sim.feed(0.8, "algae_wafer")
+    bad_sim.feed(0.8, "frozen_invertebrates")
+    good_sim.advance(18 * 3600)
+    bad_sim.advance(18 * 3600)
+    assert good_fish["recent_meal_quality"] > bad_fish["recent_meal_quality"]
+    assert good_fish["fiber_balance"] > bad_fish["fiber_balance"]
+    assert good_fish["nutrition_reserve"] >= bad_fish["nutrition_reserve"]
+    assert good_state["food"]["nutrition_quality_ewma"] > bad_state["food"]["nutrition_quality_ewma"]
+
+
+def test_rich_mismatched_food_creates_digestive_waste_and_water_load() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    fish = animal(species, "otocinclus", "Waste Oto", 3)
+    fish["hunger"] = 0.9
+    state["animals"] = [fish]
+    state["water"]["organic_waste"] = 0.0
+    state["water"]["ammonia_mg_l"] = 0.0
+    state["water"]["phosphate_mg_l"] = 0.0
+    sim = AquariumSimulation(species, state)
+    sim.feed(1.0, "frozen_invertebrates")
+    sim.advance(2 * 3600)
+    assert fish["waste_production"] > 0.0
+    assert state["food"]["digested_waste_ewma"] > 0.0
+    assert state["water"]["organic_waste"] > 0.0
+    assert state["water"]["phosphate_mg_l"] > 0.0
+    assert state["symptoms"]["digestive_waste"] > 0.0
+
+
 def test_day_night_clock_fields_are_published() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -892,13 +935,19 @@ def test_feeding_competition_can_leave_shy_fish_hungry() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
     dominant = animal(species, "zebra_danio", "Dominant", 1)
-    shy = animal(species, "fancy_guppy", "Shy", 2)
+    shy = animal(species, "zebra_danio", "Shy", 2)
     dominant["feeding_rank"] = 1.0
     dominant["boldness"] = 1.0
     dominant["hunger"] = 0.9
+    dominant["appetite_bias"] = 1.0
+    dominant["fullness"] = 0.0
+    dominant["gut_load"] = 0.0
     shy["feeding_rank"] = 0.1
     shy["boldness"] = 0.1
     shy["hunger"] = 0.9
+    shy["appetite_bias"] = 1.0
+    shy["fullness"] = 0.0
+    shy["gut_load"] = 0.0
     state["animals"] = [dominant, shy]
     sim = AquariumSimulation(species, state)
     shares = sim._feeding_distribution([dominant, shy], 0.5)
@@ -1324,6 +1373,8 @@ def main() -> int:
         test_food_profiles_change_waste_pressure,
         test_diet_match_distinguishes_grazers_from_meaty_food,
         test_sinking_food_reaches_bottom_fish_better_than_flake,
+        test_grazer_food_builds_better_nutrition_memory_than_rich_wrong_food,
+        test_rich_mismatched_food_creates_digestive_waste_and_water_load,
         test_day_night_clock_fields_are_published,
         test_source_water_and_conditioner_affect_water_changes,
         test_small_maintenance_actions_reduce_visible_pressure,

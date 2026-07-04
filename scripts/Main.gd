@@ -1588,17 +1588,25 @@ func _refresh_research_card() -> void:
 		bleach_max * 100.0,
 		"\n".join(coral_drivers.slice(0, 8)) if coral_drivers.size() > 0 else "No corals placed."
 	])
-	pages.append("FEEDING AND WASTE\nFood helps body condition, energy, breeding condition, and confidence only when the animal can actually use it. Flakes linger near the surface, wafers reach bottom fish, algae foods suit grazers, frozen foods are rich but dirtier, and reef blends add planktonic nutrition plus nutrients.\n\nWrong foods are not harmless. Poor diet fit leaves shy or specialized animals hungry, lowers digestion quality, adds decay, increases ammonia and phosphate pressure, clouds water, and feeds bacteria.\n\nLast food: %s. Available %.2f, decaying %.2f. Protein %.0f%%, plant matter %.0f%%, digestibility %.0f%%, sinking %.0f%%, clouding %.0f%%, phosphate pressure %.0f%%, diet mismatch %.0f%%." % [
+	pages.append("FEEDING AND WASTE\nFood helps body condition, energy, breeding condition, and confidence only when the animal can actually use it. Flakes linger near the surface, wafers reach bottom fish, algae foods suit grazers, frozen foods are rich but dirtier, and reef blends add planktonic nutrition plus nutrients.\n\nWrong foods are not harmless. Poor diet fit leaves shy or specialized animals hungry, lowers digestion quality, drains vitamin/fiber reserves, adds fecal waste, increases ammonia and phosphate pressure, clouds water, and feeds bacteria.\n\nLast food: %s. Available %.2f, decaying %.2f, consumed %.2f. Protein %.0f%%, fat %.0f%%, fiber %.0f%%, plant matter %.0f%%, vitamins %.0f%%, minerals %.0f%%, digestibility %.0f%%, sinking %.0f%%, spoilage %.0f%%, clouding %.0f%%, phosphate pressure %.0f%%. Nutrition quality %.0f%%, diet mismatch %.0f%%, digestive waste %.0f%%." % [
 		str(food.get("last_type", "community_flake")).replace("_", " "),
 		float(food.get("available", 0.0)),
 		float(food.get("decaying", 0.0)),
+		float(food.get("last_consumed", 0.0)),
 		float(food.get("protein", 0.42)) * 100.0,
+		float(food.get("fat", 0.18)) * 100.0,
+		float(food.get("fiber", 0.16)) * 100.0,
 		float(food.get("plant", 0.18)) * 100.0,
+		float(food.get("vitamin", 0.62)) * 100.0,
+		float(food.get("mineral", 0.46)) * 100.0,
 		float(food.get("digestibility", 0.72)) * 100.0,
 		float(food.get("sinking", 0.35)) * 100.0,
+		float(food.get("spoilage", 0.74)) * 100.0,
 		float(food.get("clouding", 0.9)) * 100.0,
 		float(food.get("phosphate_factor", 1.0)) * 100.0,
-		float(food.get("diet_mismatch_ewma", 0.0)) * 100.0
+		float(food.get("nutrition_quality_ewma", 0.72)) * 100.0,
+		float(food.get("diet_mismatch_ewma", 0.0)) * 100.0,
+		float(symptoms.get("digestive_waste", 0.0)) * 100.0
 	])
 	var behavior_samples := []
 	for animal in state.get("animals", []):
@@ -1668,7 +1676,7 @@ func _refresh_research_card() -> void:
 		float(residue.get("reagent_trace", 0.0)) * 100.0,
 		float(residue.get("hands_in_tank_stress", 0.0)) * 100.0
 	])
-	var event_lines: Array[String] = ["CURRENT OBSERVATIONS", "Cloudiness %.0f%%, green water %.0f%%, glass algae %.0f%%, diatoms %.0f%%, hair %.0f%%, cyano %.0f%%." % [float(symptoms.get("cloudiness", 0.0)) * 100.0, float(symptoms.get("green_water", 0.0)) * 100.0, float(symptoms.get("glass_algae", 0.0)) * 100.0, float(symptoms.get("diatom_dust", 0.0)) * 100.0, float(symptoms.get("hair_algae", 0.0)) * 100.0, float(symptoms.get("cyanobacteria", 0.0)) * 100.0], "Maintenance: %s. Care memory %.0f%%." % [("ok" if maintenance.get("issues", []).is_empty() else str(maintenance.get("issues", [])[0].get("title", "attention needed"))), float(symptoms.get("care_instability", 0.0)) * 100.0], "", "Recent events:"]
+	var event_lines: Array[String] = ["CURRENT OBSERVATIONS", "Cloudiness %.0f%%, green water %.0f%%, glass algae %.0f%%, diatoms %.0f%%, hair %.0f%%, cyano %.0f%%." % [float(symptoms.get("cloudiness", 0.0)) * 100.0, float(symptoms.get("green_water", 0.0)) * 100.0, float(symptoms.get("glass_algae", 0.0)) * 100.0, float(symptoms.get("diatom_dust", 0.0)) * 100.0, float(symptoms.get("hair_algae", 0.0)) * 100.0, float(symptoms.get("cyanobacteria", 0.0)) * 100.0], "Feeding: nutrition stress %.0f%%, digestive waste %.0f%%, diet mismatch %.0f%%." % [float(symptoms.get("nutrition_stress", 0.0)) * 100.0, float(symptoms.get("digestive_waste", 0.0)) * 100.0, float(food.get("diet_mismatch_ewma", 0.0)) * 100.0], "Maintenance: %s. Care memory %.0f%%." % [("ok" if maintenance.get("issues", []).is_empty() else str(maintenance.get("issues", [])[0].get("title", "attention needed"))), float(symptoms.get("care_instability", 0.0)) * 100.0], "", "Recent events:"]
 	for event_item in state.get("events", []).slice(0, 5):
 		event_lines.append("- %s: %s" % [str(event_item.get("severity", "info")), str(event_item.get("title", "event"))])
 	pages.append("\n".join(event_lines))

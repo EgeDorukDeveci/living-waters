@@ -169,9 +169,14 @@ FOOD_PROFILES: dict[str, dict[str, Any]] = {
         "diet_tags": ["prepared_food", "prepared_micro_food", "small_insects", "zooplankton"],
         "protein": 0.42,
         "plant": 0.18,
+        "fat": 0.18,
+        "fiber": 0.16,
+        "vitamin": 0.62,
+        "mineral": 0.46,
         "digestibility": 0.72,
         "phosphate_factor": 1.0,
         "clouding": 0.9,
+        "spoilage": 0.74,
         "sinking": 0.35,
     },
     "micro_pellet": {
@@ -179,9 +184,14 @@ FOOD_PROFILES: dict[str, dict[str, Any]] = {
         "diet_tags": ["prepared_micro_food", "prepared_food", "small_crustaceans"],
         "protein": 0.48,
         "plant": 0.12,
+        "fat": 0.20,
+        "fiber": 0.10,
+        "vitamin": 0.70,
+        "mineral": 0.52,
         "digestibility": 0.78,
         "phosphate_factor": 0.88,
         "clouding": 0.62,
+        "spoilage": 0.58,
         "sinking": 0.48,
     },
     "sinking_wafer": {
@@ -189,9 +199,14 @@ FOOD_PROFILES: dict[str, dict[str, Any]] = {
         "diet_tags": ["sinking_pellet", "benthic_invertebrates", "detritus", "prepared_food"],
         "protein": 0.36,
         "plant": 0.26,
+        "fat": 0.14,
+        "fiber": 0.30,
+        "vitamin": 0.54,
+        "mineral": 0.58,
         "digestibility": 0.68,
         "phosphate_factor": 1.08,
         "clouding": 0.72,
+        "spoilage": 0.78,
         "sinking": 0.92,
     },
     "frozen_invertebrates": {
@@ -199,9 +214,14 @@ FOOD_PROFILES: dict[str, dict[str, Any]] = {
         "diet_tags": ["worms", "insect_larvae", "small_crustaceans", "micro_crustaceans", "benthic_crustaceans"],
         "protein": 0.72,
         "plant": 0.02,
+        "fat": 0.34,
+        "fiber": 0.04,
+        "vitamin": 0.48,
+        "mineral": 0.42,
         "digestibility": 0.64,
         "phosphate_factor": 1.34,
         "clouding": 1.28,
+        "spoilage": 1.32,
         "sinking": 0.58,
     },
     "algae_wafer": {
@@ -209,9 +229,14 @@ FOOD_PROFILES: dict[str, dict[str, Any]] = {
         "diet_tags": ["algae", "biofilm", "vegetable_food", "detritus", "shrimp_food"],
         "protein": 0.24,
         "plant": 0.62,
+        "fat": 0.10,
+        "fiber": 0.56,
+        "vitamin": 0.76,
+        "mineral": 0.62,
         "digestibility": 0.70,
         "phosphate_factor": 0.76,
         "clouding": 0.78,
+        "spoilage": 0.70,
         "sinking": 0.95,
     },
     "reef_plankton": {
@@ -219,9 +244,14 @@ FOOD_PROFILES: dict[str, dict[str, Any]] = {
         "diet_tags": ["prepared_marine_food", "zooplankton", "planktonic_crustaceans", "small_crustaceans"],
         "protein": 0.58,
         "plant": 0.06,
+        "fat": 0.26,
+        "fiber": 0.06,
+        "vitamin": 0.58,
+        "mineral": 0.66,
         "digestibility": 0.66,
         "phosphate_factor": 1.18,
         "clouding": 1.08,
+        "spoilage": 1.06,
         "sinking": 0.42,
     },
 }
@@ -752,11 +782,23 @@ def default_food() -> dict[str, Any]:
         "diet_tags": list(profile["diet_tags"]),
         "protein": float(profile["protein"]),
         "plant": float(profile["plant"]),
+        "fat": float(profile["fat"]),
+        "fiber": float(profile["fiber"]),
+        "vitamin": float(profile["vitamin"]),
+        "mineral": float(profile["mineral"]),
         "digestibility": float(profile["digestibility"]),
         "phosphate_factor": float(profile["phosphate_factor"]),
         "clouding": float(profile["clouding"]),
+        "spoilage": float(profile["spoilage"]),
         "sinking": float(profile["sinking"]),
         "diet_mismatch_ewma": 0.0,
+        "nutrition_quality_ewma": 0.72,
+        "feeding_response_ewma": 0.0,
+        "rich_food_ewma": 0.0,
+        "fiber_shortfall_ewma": 0.0,
+        "vitamin_shortfall_ewma": 0.0,
+        "digested_waste_ewma": 0.0,
+        "last_consumed": 0.0,
     }
 
 
@@ -792,10 +834,19 @@ def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
         "size_cm": spec["adult_cm"] * rng.uniform(0.72, 0.98),
         "energy": rng.uniform(0.78, 0.96),
         "hunger": rng.uniform(0.08, 0.25),
+        "fullness": rng.uniform(0.08, 0.24),
+        "gut_load": rng.uniform(0.02, 0.12),
         "acute_stress": rng.uniform(0.01, 0.06),
         "chronic_stress": rng.uniform(0.01, 0.05),
         "health": rng.uniform(0.91, 0.99),
         "body_condition": rng.uniform(0.82, 0.98),
+        "nutrition_reserve": rng.uniform(0.68, 0.92),
+        "vitamin_reserve": rng.uniform(0.62, 0.9),
+        "mineral_reserve": rng.uniform(0.62, 0.9),
+        "fiber_balance": rng.uniform(0.55, 0.85),
+        "recent_meal_quality": rng.uniform(0.62, 0.86),
+        "last_intake": 0.0,
+        "waste_production": 0.0,
         "gill_condition": rng.uniform(0.88, 1.0),
         "fin_condition": rng.uniform(0.86, 1.0),
         "parasite_load": rng.uniform(0.0, 0.06),
@@ -1116,6 +1167,15 @@ class AquariumSimulation:
             animal.setdefault("stress_sensitivity", 1.0)
             animal.setdefault("disease_resistance", 1.0)
             animal.setdefault("body_condition", 0.9)
+            animal.setdefault("fullness", 0.15)
+            animal.setdefault("gut_load", 0.05)
+            animal.setdefault("nutrition_reserve", 0.75)
+            animal.setdefault("vitamin_reserve", 0.72)
+            animal.setdefault("mineral_reserve", 0.72)
+            animal.setdefault("fiber_balance", 0.68)
+            animal.setdefault("recent_meal_quality", 0.7)
+            animal.setdefault("last_intake", 0.0)
+            animal.setdefault("waste_production", 0.0)
             animal.setdefault("gill_condition", 0.95)
             animal.setdefault("fin_condition", 0.95)
             animal.setdefault("parasite_load", 0.02)
@@ -1214,10 +1274,18 @@ class AquariumSimulation:
         food["diet_tags"] = list(profile["diet_tags"])
         food["protein"] = float(profile["protein"])
         food["plant"] = float(profile["plant"])
+        food["fat"] = float(profile["fat"])
+        food["fiber"] = float(profile["fiber"])
+        food["vitamin"] = float(profile["vitamin"])
+        food["mineral"] = float(profile["mineral"])
         food["digestibility"] = float(profile["digestibility"])
         food["phosphate_factor"] = float(profile["phosphate_factor"])
         food["clouding"] = float(profile["clouding"])
+        food["spoilage"] = float(profile["spoilage"])
         food["sinking"] = float(profile["sinking"])
+        food["rich_food_ewma"] = clamp(float(food.get("rich_food_ewma", 0.0)) * 0.85 + max(0.0, float(profile["protein"]) + float(profile["fat"]) - 0.72) * amount * 0.18, 0.0, 1.0)
+        food["fiber_shortfall_ewma"] = clamp(float(food.get("fiber_shortfall_ewma", 0.0)) * 0.9 + max(0.0, 0.24 - float(profile["fiber"])) * amount * 0.12, 0.0, 1.0)
+        food["vitamin_shortfall_ewma"] = clamp(float(food.get("vitamin_shortfall_ewma", 0.0)) * 0.9 + max(0.0, 0.56 - float(profile["vitamin"])) * amount * 0.10, 0.0, 1.0)
         residue = self.state.setdefault("action_residue", default_action_residue())
         residue["suspended_debris"] = clamp(float(residue.get("suspended_debris", 0.0)) + amount * 0.018 * float(profile["clouding"]), 0.0, 1.0)
         residue["last_action"] = "feeding"
@@ -2225,6 +2293,23 @@ class AquariumSimulation:
             for animal in living:
                 shy = 1.0 - float(animal.get("boldness", 0.5))
                 self._add_animal_risk(animal_risks, animal, 0.04 + severity * (0.08 + shy * 0.16), severity * 0.0015, "recent maintenance disturbance")
+        nutrition_cases = [
+            animal for animal in living
+            if float(animal.get("nutrition_reserve", 0.75)) < 0.36
+            or float(animal.get("vitamin_reserve", 0.72)) < 0.32
+            or float(animal.get("fiber_balance", 0.68)) < (0.30 if self.species[animal["species_id"]].get("diet", []) else 0.18)
+            or float(animal.get("recent_meal_quality", 0.7)) < 0.34
+        ]
+        if nutrition_cases:
+            severity = clamp(len(nutrition_cases) / max(1.0, len(living)) + max(0.0, float(self.state.get("food", {}).get("diet_mismatch_ewma", 0.0)) - 0.22), 0.0, 1.0)
+            issues.append({
+                "key": "nutrition_mismatch",
+                "severity": "critical" if severity > 0.65 else "warning",
+                "title": "Diet is not supporting every animal",
+                "details": "One or more animals have low meal quality, vitamin reserve, fiber balance, or nutrition reserve. Match food type, sinking behavior, and diet tags to the species.",
+            })
+            for animal in nutrition_cases:
+                self._add_animal_risk(animal_risks, animal, 0.11 + severity * 0.22, 0.001 + severity * 0.0025, "poor nutrition or unsuitable feeding")
         if stability_score < 0.72:
             severity = clamp((0.72 - stability_score) / 0.52, 0.0, 1.0)
             issues.append({
@@ -2966,17 +3051,26 @@ class AquariumSimulation:
         appetite_demand = sum(max(0.0, a["hunger"] - 0.2) * float(a.get("appetite_bias", 1.0)) for a in living)
         digestibility = clamp(float(food.get("digestibility", 0.72)), 0.25, 0.95)
         protein = clamp(float(food.get("protein", 0.42)), 0.0, 1.0)
+        fat = clamp(float(food.get("fat", 0.18)), 0.0, 1.0)
+        fiber = clamp(float(food.get("fiber", 0.16)), 0.0, 1.0)
+        vitamin = clamp(float(food.get("vitamin", 0.62)), 0.0, 1.0)
+        mineral = clamp(float(food.get("mineral", 0.46)), 0.0, 1.0)
         phosphate_factor = clamp(float(food.get("phosphate_factor", 1.0)), 0.3, 2.0)
         clouding = clamp(float(food.get("clouding", 0.9)), 0.2, 2.0)
+        spoilage = clamp(float(food.get("spoilage", 0.74)), 0.25, 1.6)
         consumed = min(food["available"], appetite_demand * hours * (0.26 + digestibility * 0.12) * self._noise_multiplier(variability * 0.65, "feeding"))
         feeding_shares = self._feeding_distribution(living, consumed)
         food["available"] -= consumed
         if living and consumed > 0:
             weighted_match = sum(self._diet_match(self.species.get(a.get("species_id", ""), {}), food) * feeding_shares.get(a["id"], 0.0) for a in living) / max(consumed, 0.001)
             food["diet_mismatch_ewma"] = clamp(float(food.get("diet_mismatch_ewma", 0.0)) * 0.88 + (1.0 - weighted_match) * 0.12, 0.0, 1.0)
+            nutrition_quality = clamp(weighted_match * 0.42 + digestibility * 0.20 + vitamin * 0.16 + mineral * 0.10 + (1.0 - abs(fiber - 0.28) / 0.55) * 0.08 + (1.0 - max(0.0, fat - 0.34) / 0.5) * 0.04, 0.0, 1.0)
+            food["nutrition_quality_ewma"] = clamp(float(food.get("nutrition_quality_ewma", 0.72)) * 0.86 + nutrition_quality * 0.14, 0.0, 1.0)
+            food["feeding_response_ewma"] = clamp(float(food.get("feeding_response_ewma", 0.0)) * 0.82 + consumed * 0.18, 0.0, 2.0)
+            food["last_consumed"] = consumed
         leftover_decay = min(
             food["available"],
-            max(0.0, food["available"] - 0.08) * hours * 0.018 * clouding * (1.08 - digestibility * 0.18) * self._noise_multiplier(variability * 0.45, "food_decay"),
+            max(0.0, food["available"] - 0.08) * hours * 0.018 * clouding * spoilage * (1.08 - digestibility * 0.18) * self._noise_multiplier(variability * 0.45, "food_decay"),
         )
         food["available"] = max(0.0, food["available"] - leftover_decay)
         food["decaying"] += leftover_decay
@@ -2992,18 +3086,19 @@ class AquariumSimulation:
         substrate_trap = clamp((substrate_depth - 3.0) / 5.0, 0.0, 0.55)
         waste_input = (
             total_bioload * 0.00055 * hours
-            + mineralized_food * (0.035 + protein * 0.055 + (1.0 - digestibility) * 0.04)
+            + mineralized_food * (0.035 + protein * 0.055 + fat * 0.026 + (1.0 - digestibility) * 0.04)
             + water["organic_waste"] * hours * 0.00035
         ) * self._noise_multiplier(variability * 0.5, "waste_input")
         water["organic_waste"] = clamp(water["organic_waste"] + waste_input * 0.45 + leftover_decay * 0.35 * clouding + mineralized_food * (0.22 + (1.0 - digestibility) * 0.28) + scape_metrics["maintenance_load"] * hours * 0.0012, 0, 5)
         water["organic_waste"] = clamp(water["organic_waste"] + substrate_trap * water["organic_waste"] * hours * 0.001, 0, 5)
         water["detritus"] = clamp(water.get("detritus", 0.0) + (leftover_decay + waste_input) * hours * 0.018 + substrate_trap * hours * 0.00035, 0, 1)
-        water["surface_film"] = clamp(water.get("surface_film", 0.0) + (food["available"] + food["decaying"] + water["organic_waste"]) * hours * 0.00075 - scape_metrics["surface_agitation"] * hours * 0.0022, 0, 1)
+        water["surface_film"] = clamp(water.get("surface_film", 0.0) + (food["available"] + food["decaying"] + water["organic_waste"]) * hours * 0.00075 + fat * mineralized_food * 0.004 - scape_metrics["surface_agitation"] * hours * 0.0022, 0, 1)
         water["ammonia_mg_l"] += waste_input
         maturity = self.state.get("maturity", {})
         water["phosphate_mg_l"] = clamp(
             water.get("phosphate_mg_l", 0.0)
             + mineralized_food * 0.010 * phosphate_factor
+            + max(0.0, protein - 0.45) * mineralized_food * 0.004
             + water["organic_waste"] * hours * 0.00012
             + float(maturity.get("mulm", 0.0)) * hours * 0.00016,
             0,
@@ -3414,6 +3509,7 @@ class AquariumSimulation:
             hunger = max(0.0, float(animal.get("hunger", 0.0)) - 0.12)
             rank = float(animal.get("feeding_rank", 0.55))
             boldness = float(animal.get("boldness", 0.5))
+            fullness = clamp(float(animal.get("fullness", 0.0)) + float(animal.get("gut_load", 0.0)) * 0.35, 0.0, 1.0)
             stress_penalty = 1.0 - clamp(float(animal.get("acute_stress", 0.0)) * 0.55 + float(animal.get("injury", 0.0)) * 0.35, 0.0, 0.82)
             zone = spec.get("swim_zone")
             if zone == "bottom":
@@ -3423,7 +3519,7 @@ class AquariumSimulation:
             else:
                 zone_bonus = 0.95 + (0.5 - abs(sinking - 0.5)) * 0.22
             diet_match = self._diet_match(spec, food)
-            score = max(0.001, hunger * float(animal.get("appetite_bias", 1.0)) * (0.55 + rank * 0.55 + boldness * 0.35) * stress_penalty * zone_bonus * (0.52 + diet_match * 0.56))
+            score = max(0.001, hunger * (1.0 - fullness * 0.55) * float(animal.get("appetite_bias", 1.0)) * (0.55 + rank * 0.55 + boldness * 0.35) * stress_penalty * zone_bonus * (0.52 + diet_match * 0.56))
             scores[animal["id"]] = score
             total += score
         shares: dict[str, float] = {}
@@ -3912,20 +4008,49 @@ class AquariumSimulation:
         water = self.state["water"]
         aquarium = self.state["aquarium"]
         animal["age_days"] += hours / 24
-        animal["hunger"] = clamp(animal["hunger"] + hours * 0.018, 0, 1)
+        fullness = clamp(float(animal.get("fullness", 0.0)), 0.0, 1.0)
+        gut_load = clamp(float(animal.get("gut_load", 0.0)), 0.0, 1.0)
+        animal["hunger"] = clamp(animal["hunger"] + hours * 0.018 * (1.0 - fullness * 0.38), 0, 1)
+        animal["fullness"] = max(0.0, fullness - hours * 0.055)
+        animal["gut_load"] = max(0.0, gut_load - hours * 0.030)
         food = self.state.get("food", default_food())
         diet_match = self._diet_match(spec, food)
         animal["last_diet_match"] = diet_match
+        protein = clamp(float(food.get("protein", 0.42)), 0.0, 1.0)
+        fat = clamp(float(food.get("fat", 0.18)), 0.0, 1.0)
+        fiber = clamp(float(food.get("fiber", 0.16)), 0.0, 1.0)
+        vitamin = clamp(float(food.get("vitamin", 0.62)), 0.0, 1.0)
+        mineral = clamp(float(food.get("mineral", 0.46)), 0.0, 1.0)
+        digestibility = clamp(float(food.get("digestibility", 0.72)), 0.25, 0.95)
+        diet_tags = {str(tag) for tag in spec.get("diet", [])}
+        grazer_tags = {"algae", "biofilm", "detritus", "vegetable_food", "shrimp_food"}
+        carnivore_tags = {"worms", "insect_larvae", "small_crustaceans", "micro_crustaceans", "small_invertebrates", "benthic_invertebrates", "zooplankton", "planktonic_crustaceans", "benthic_crustaceans"}
+        grazer_need = 1.0 if diet_tags.intersection(grazer_tags) else 0.0
+        carnivore_need = 1.0 if diet_tags.intersection(carnivore_tags) else 0.0
+        fiber_target = 0.46 if grazer_need else 0.18 if carnivore_need else 0.28
+        protein_target = 0.62 if carnivore_need else 0.30 if grazer_need else 0.44
+        fiber_fit = clamp(1.0 - abs(fiber - fiber_target) / 0.55, 0.0, 1.0)
+        protein_fit = clamp(1.0 - abs(protein - protein_target) / 0.62, 0.0, 1.0)
+        rich_penalty = clamp(max(0.0, protein + fat - (0.86 if carnivore_need else 0.68)) / 0.7, 0.0, 1.0)
         if consumed > 0 and animal["hunger"] > 0.18:
             intake_rate = consumed / max(hours, 0.001)
             meal_strength = clamp(intake_rate / max(0.015, float(spec.get("bioload", 0.5)) * 0.18), 0.12, 1.8)
-            nutrition = clamp(0.35 + diet_match * 0.75, 0.25, 1.12)
+            nutrition = clamp(diet_match * 0.40 + digestibility * 0.18 + protein_fit * 0.14 + fiber_fit * 0.12 + vitamin * 0.10 + mineral * 0.06 - rich_penalty * 0.14, 0.05, 1.12)
             animal["hunger"] = clamp(animal["hunger"] - hours * 0.055 * meal_strength * (0.55 + diet_match * 0.55), 0, 1)
             animal["energy"] = clamp(animal["energy"] + hours * 0.025 * meal_strength * nutrition, 0, 1)
             animal["body_condition"] = clamp(float(animal.get("body_condition", 0.9)) + hours * 0.0018 * min(1.0, meal_strength) * nutrition, 0, 1.15)
-            animal["digestion_quality"] = clamp(float(animal.get("digestion_quality", 0.75)) + (diet_match - float(animal.get("digestion_quality", 0.75))) * min(1.0, hours * 0.12), 0, 1)
+            animal["fullness"] = clamp(float(animal.get("fullness", 0.0)) + meal_strength * 0.18, 0, 1.0)
+            animal["gut_load"] = clamp(float(animal.get("gut_load", 0.0)) + consumed * (0.42 + (1.0 - digestibility) * 0.46), 0, 1.0)
+            animal["nutrition_reserve"] = clamp(float(animal.get("nutrition_reserve", 0.75)) + (nutrition - 0.55) * meal_strength * hours * 0.006, 0, 1)
+            animal["vitamin_reserve"] = clamp(float(animal.get("vitamin_reserve", 0.72)) + (vitamin - 0.45) * meal_strength * hours * 0.004, 0, 1)
+            animal["mineral_reserve"] = clamp(float(animal.get("mineral_reserve", 0.72)) + (mineral - 0.42) * meal_strength * hours * 0.0035, 0, 1)
+            animal["fiber_balance"] = clamp(float(animal.get("fiber_balance", 0.68)) + (fiber_fit - 0.55) * meal_strength * hours * 0.006, 0, 1)
+            animal["recent_meal_quality"] = clamp(float(animal.get("recent_meal_quality", 0.7)) * 0.78 + nutrition * 0.22, 0, 1)
+            animal["last_intake"] = consumed
+            animal["digestion_quality"] = clamp(float(animal.get("digestion_quality", 0.75)) + (nutrition - rich_penalty * 0.22 - float(animal.get("digestion_quality", 0.75))) * min(1.0, hours * 0.12), 0, 1)
+        else:
+            animal["last_intake"] = 0.0
         maturity = self.state.get("maturity", {})
-        diet_tags = {str(tag) for tag in spec.get("diet", [])}
         live_food_match = 0.0
         if diet_tags.intersection({"small_invertebrates", "micro_crustaceans", "zooplankton", "small_crustaceans", "insect_larvae"}):
             live_food_match += float(maturity.get("copepods", 0.0)) * 0.55 + float(maturity.get("infusoria", 0.0)) * 0.18
@@ -3938,6 +4063,27 @@ class AquariumSimulation:
             animal["foraging_support"] = clamp(live_food_match, 0, 1)
         else:
             animal["foraging_support"] = clamp(float(animal.get("foraging_support", 0.0)) - hours * 0.01, 0, 1)
+
+        nutrition_reserve = clamp(float(animal.get("nutrition_reserve", 0.75)), 0.0, 1.0)
+        vitamin_reserve = clamp(float(animal.get("vitamin_reserve", 0.72)), 0.0, 1.0)
+        mineral_reserve = clamp(float(animal.get("mineral_reserve", 0.72)), 0.0, 1.0)
+        fiber_balance = clamp(float(animal.get("fiber_balance", 0.68)), 0.0, 1.0)
+        animal["nutrition_reserve"] = max(0.0, nutrition_reserve - hours * (0.0011 + max(0.0, animal["hunger"] - 0.55) * 0.0018))
+        animal["vitamin_reserve"] = max(0.0, vitamin_reserve - hours * 0.00075)
+        animal["mineral_reserve"] = max(0.0, mineral_reserve - hours * 0.00055)
+        animal["fiber_balance"] = max(0.0, fiber_balance - hours * (0.00045 + grazer_need * 0.00055))
+        digestion_quality = clamp(float(animal.get("digestion_quality", 0.75)), 0.0, 1.0)
+        digestive_waste = clamp(float(animal.get("gut_load", 0.0)) * (1.0 - digestion_quality) * (0.5 + rich_penalty * 0.9) * hours * 0.0045, 0.0, 0.035)
+        if digestive_waste > 0.0:
+            animal["gut_load"] = max(0.0, float(animal.get("gut_load", 0.0)) - digestive_waste * 3.2)
+            animal["waste_production"] = clamp(float(animal.get("waste_production", 0.0)) * 0.72 + digestive_waste * 6.0, 0.0, 1.0)
+            food["digested_waste_ewma"] = clamp(float(food.get("digested_waste_ewma", 0.0)) * 0.88 + digestive_waste * 0.12, 0.0, 1.0)
+            water["organic_waste"] = clamp(float(water.get("organic_waste", 0.0)) + digestive_waste * 0.42, 0.0, 5.0)
+            water["ammonia_mg_l"] = clamp(float(water.get("ammonia_mg_l", 0.0)) + digestive_waste * (0.018 + protein * 0.030), 0.0, 5.0)
+            water["phosphate_mg_l"] = clamp(float(water.get("phosphate_mg_l", 0.0)) + digestive_waste * float(food.get("phosphate_factor", 1.0)) * 0.010, 0.0, 10.0)
+            water["detritus"] = clamp(float(water.get("detritus", 0.0)) + digestive_waste * 0.08, 0.0, 1.0)
+        else:
+            animal["waste_production"] = clamp(float(animal.get("waste_production", 0.0)) * max(0.0, 1.0 - hours * 0.06), 0.0, 1.0)
 
         temp_stress = range_stress(water["temperature_c"], spec["temperature_c"]["ideal"], spec["temperature_c"]["tolerated"])
         ph_stress = range_stress(water["ph"], spec["ph"]["ideal"], spec["ph"]["tolerated"])
@@ -3968,11 +4114,15 @@ class AquariumSimulation:
         animal["acute_stress"] = clamp(animal["acute_stress"] + (stress_target - animal["acute_stress"]) * min(1, hours * 0.3), 0, 1)
         animal["chronic_stress"] = clamp(animal["chronic_stress"] + (animal["acute_stress"] - 0.2) * hours * 0.012, 0, 1)
         animal["fear_memory"] = clamp(float(animal.get("fear_memory", 0.0)) + max(0.0, animal["acute_stress"] - 0.42) * hours * 0.02 - hours * 0.004 * float(animal.get("boldness", 0.5)), 0, 1)
-        animal["immune_condition"] = clamp(animal["immune_condition"] - animal["chronic_stress"] * hours * 0.004 / max(0.35, float(animal.get("disease_resistance", 1.0))) + hours * 0.0004, 0, 1)
+        nutrition_deficit = max(0.0, 0.42 - float(animal.get("nutrition_reserve", 0.75)))
+        vitamin_deficit = max(0.0, 0.38 - float(animal.get("vitamin_reserve", 0.72)))
+        mineral_deficit = max(0.0, 0.34 - float(animal.get("mineral_reserve", 0.72)))
+        fiber_deficit = max(0.0, 0.34 - float(animal.get("fiber_balance", 0.68))) if grazer_need else max(0.0, 0.22 - float(animal.get("fiber_balance", 0.68)))
+        animal["immune_condition"] = clamp(animal["immune_condition"] - animal["chronic_stress"] * hours * 0.004 / max(0.35, float(animal.get("disease_resistance", 1.0))) - (nutrition_deficit * 0.0024 + vitamin_deficit * 0.0032) * hours + hours * 0.0004, 0, 1)
         underfed = max(0.0, animal["hunger"] - 0.7)
         diet_deficit = max(0.0, 0.48 - float(animal.get("last_diet_match", 0.7)))
         overfed_water = max(0.0, float(self.state.get("food", {}).get("daily_amount_ewma", 0.0)) - 0.65) * 0.018
-        animal["body_condition"] = clamp(float(animal.get("body_condition", 0.9)) - underfed * hours * 0.004 - diet_deficit * hours * 0.0014 - animal["chronic_stress"] * hours * 0.0009, 0.0, 1.15)
+        animal["body_condition"] = clamp(float(animal.get("body_condition", 0.9)) - underfed * hours * 0.004 - diet_deficit * hours * 0.0014 - nutrition_deficit * hours * 0.0022 - animal["chronic_stress"] * hours * 0.0009, 0.0, 1.15)
         animal["gill_condition"] = clamp(float(animal.get("gill_condition", 0.95)) - (nitrogen_stress * 0.014 + oxygen_stress * 0.008 + co2_stress * 0.004) * hours + hours * 0.0006, 0.0, 1.0)
         dirty_pressure = clamp(water.get("bacterial_pressure", 0.0) + max(0.0, 240.0 - water.get("redox_mv", 310.0)) / 300.0 + water.get("dissolved_organics", 0.0) * 0.08, 0.0, 1.0)
         animal["fin_condition"] = clamp(float(animal.get("fin_condition", 0.95)) - (float(animal.get("injury", 0.0)) * 0.010 + dirty_pressure) * hours * 0.35 + hours * 0.0007, 0.0, 1.0)
@@ -3993,6 +4143,8 @@ class AquariumSimulation:
             damage += (animal["hunger"] - 0.9) * hours * 0.02
         if diet_deficit > 0.0 and animal.get("body_condition", 0.9) < 0.65:
             damage += diet_deficit * hours * 0.004
+        if nutrition_deficit + vitamin_deficit + mineral_deficit + fiber_deficit > 0.18:
+            damage += (nutrition_deficit * 0.008 + vitamin_deficit * 0.006 + mineral_deficit * 0.003 + fiber_deficit * 0.004) * hours
         if animal.get("body_condition", 0.9) < 0.45:
             damage += (0.45 - float(animal.get("body_condition", 0.9))) * hours * 0.018
         if animal.get("gill_condition", 1.0) < 0.45:
@@ -4033,6 +4185,9 @@ class AquariumSimulation:
             animal["routine"] = "hide"
         elif float(animal.get("body_condition", 0.9)) < 0.48:
             animal["behavior"] = "thin and conserving energy"
+            animal["routine"] = "hang_back"
+        elif float(animal.get("nutrition_reserve", 0.75)) < 0.34 or float(animal.get("vitamin_reserve", 0.72)) < 0.30:
+            animal["behavior"] = "dull from poor nutrition"
             animal["routine"] = "hang_back"
         elif diet_deficit > 0.12 and animal["hunger"] > 0.45:
             animal["behavior"] = "picking at unsuitable food"
@@ -4177,6 +4332,11 @@ class AquariumSimulation:
         residue = self.state.get("action_residue", {})
         if float(residue.get("plant_fragments", 0.0)) > 0.22:
             self._record_once("loose_plant_fragments", "warning", "Loose plant clippings remain", "Plant cuttings left in the water are slowly becoming dissolved organics, ammonia, and phosphate.")
+        animals = [animal for animal in self.state.get("animals", []) if animal.get("alive", True)]
+        if any(float(animal.get("nutrition_reserve", 0.75)) < 0.32 or float(animal.get("recent_meal_quality", 0.7)) < 0.28 for animal in animals):
+            self._record_once("nutrition_mismatch", "warning", "Some animals are not using the food well", "Diet fit, sinking behavior, feeding rank, vitamins, fiber, or excess rich food is leaving animals under-supported.")
+        if float(self.state.get("food", {}).get("digested_waste_ewma", 0.0)) > 0.012:
+            self._record_once("digestion_waste", "info", "Digestion is adding waste load", "Rich, poorly matched, or low-digestibility foods are producing more fecal waste, ammonia, phosphate, and detritus.")
         maintenance_ecology = self.state.get("maintenance_ecology", {})
         if float(maintenance_ecology.get("source_mismatch_debt", 0.0)) > 0.55:
             self._record_once("care_source_mismatch", "warning", "Recent water change mismatch is lingering", "Replacement water mismatch is still creating stability debt. Match temperature, pH, hardness, salinity, and TDS more closely next time.")
@@ -4235,6 +4395,14 @@ class AquariumSimulation:
         ecology = self.state.setdefault("disease_ecology", default_disease_ecology())
         white_spot = max((float(a.get("parasite_load", 0.0)) for a in sick if "spot" in str(a.get("disease", "")) or "ich" in str(a.get("disease", "")) or "parasite" in str(a.get("disease", ""))), default=0.0)
         fin_damage = max((1.0 - float(a.get("fin_condition", 1.0)) for a in animals), default=0.0)
+        nutrition_stress = max((
+            max(0.0, 0.48 - float(a.get("nutrition_reserve", 0.75)))
+            + max(0.0, 0.42 - float(a.get("vitamin_reserve", 0.72)))
+            + max(0.0, 0.38 - float(a.get("fiber_balance", 0.68))) * 0.7
+            + max(0.0, 0.46 - float(a.get("recent_meal_quality", 0.7)))
+            for a in animals
+        ), default=0.0)
+        digestive_waste = max((float(a.get("waste_production", 0.0)) for a in animals), default=0.0)
         self.state["symptoms"] = {
             "cloudiness": clamp(water.get("turbidity", 0.0) + water.get("organic_waste", 0.0) * 0.08, 0.0, 1.0),
             "green_water": clamp(max(float(algae_ecology.get("green_water", 0.0)), float(biology.get("algae", 0.0)) * 0.85) + max(0.0, water.get("nitrate_mg_l", 0.0) - 25.0) * 0.004 + water.get("phosphate_mg_l", 0.0) * 0.08, 0.0, 1.0),
@@ -4262,6 +4430,8 @@ class AquariumSimulation:
             "outbreak_pressure": clamp(max(float(ecology.get("free_swimming_parasites", 0.0)), float(ecology.get("encysted_parasites", 0.0)), float(ecology.get("bacterial_bloom", 0.0))), 0.0, 1.0),
             "white_spot_signs": clamp(white_spot, 0.0, 1.0),
             "fin_damage": clamp(fin_damage, 0.0, 1.0),
+            "nutrition_stress": clamp(nutrition_stress, 0.0, 1.0),
+            "digestive_waste": clamp(digestive_waste, 0.0, 1.0),
             "visible_disease": clamp(len(sick) / max(1.0, len(animals)), 0.0, 1.0),
             "quarantined_animals": quarantined,
             "redox_stress": clamp(max(0.0, 260.0 - float(water.get("redox_mv", 310.0))) / 180.0, 0.0, 1.0),
@@ -4348,6 +4518,10 @@ class AquariumSimulation:
             risks.append("recent parameter swings")
         if self.state.get("action_residue", {}).get("suspended_debris", 0.0) > 0.28 or self.state.get("action_residue", {}).get("plant_fragments", 0.0) > 0.22:
             risks.append("maintenance residue")
+        if self.state.get("symptoms", {}).get("nutrition_stress", 0.0) > 0.28:
+            risks.append("nutrition stress")
+        if self.state.get("symptoms", {}).get("digestive_waste", 0.0) > 0.22:
+            risks.append("digestive waste")
         maintenance_ecology = self.state.get("maintenance_ecology", {})
         if (
             float(maintenance_ecology.get("source_mismatch_debt", 0.0)) > 0.38
