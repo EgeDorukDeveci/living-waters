@@ -1538,6 +1538,19 @@ func _refresh_research_card() -> void:
 		float(food.get("phosphate_factor", 1.0)) * 100.0,
 		float(food.get("diet_mismatch_ewma", 0.0)) * 100.0
 	])
+	var behavior_samples := []
+	for animal in state.get("animals", []):
+		if not bool(animal.get("alive", true)):
+			continue
+		behavior_samples.append("%s: %s, confidence %.0f%%, school %.0f%%, territory %.0f%%, rest %.0f%%" % [
+			str(animal.get("name", "animal")),
+			str(animal.get("behavior", "observing")),
+			float(animal.get("confidence", 0.0)) * 100.0,
+			float(animal.get("school_cohesion", 0.0)) * 100.0,
+			float(animal.get("territory_pressure", 0.0)) * 100.0,
+			float(animal.get("rest_quality", 0.0)) * 100.0
+		])
+	pages.append("FISH ROUTINES AND PERSONALITY\nFish are not just water-test meters. Each animal carries confidence, fear memory, feeding opportunity, rest quality, school cohesion, territory pressure, and a preferred comfort zone.\n\nSchooling fish tighten formation when the group is large, calm, and given open water. Shy or outcompeted animals hang back. Territorial animals guard a favorite area when cover is poor, space is tight, or breeding condition rises. Night rest improves with cover and stable water, and worsens with stress or cloudy water.\n\nCurrent observations:\n%s" % ("\n".join(behavior_samples.slice(0, 8)) if behavior_samples.size() > 0 else "No animals in this aquarium yet."))
 	pages.append("CLEANUP CREWS\nShrimp, otocinclus, plecos, blennies, and cleaner shrimp do useful work, but they are not magic filters. They graze algae, biofilm, detritus, and leftovers, then turn some of that into ordinary animal waste.\n\nThey work best when healthy and hungry. Stress, bad water, wrong salinity, or poor group sizes reduce grazing.\n\nCurrent grazing pressure %.0f%%, recent cleanup export %.3f, metabolic load %.2f." % [
 		float(biology.get("grazing_pressure", 0.0)) * 100.0,
 		float(biology.get("cleanup_export", 0.0)),
@@ -1787,12 +1800,15 @@ func _animate_animals(delta: float) -> void:
 			visual["target"] = _routine_target(animal, spec, visual, school_centers)
 			target = visual["target"]
 		var speed: float = lerp(18.0, 58.0, activity)
+		speed *= lerp(0.62, 1.18, clamp(float(animal.get("activity_drive", 0.55)), 0.0, 1.0))
+		speed *= lerp(0.78, 1.08, clamp(float(animal.get("confidence", 0.55)), 0.0, 1.0))
+		speed *= lerp(1.04, 0.68, clamp(float(animal.get("fear_memory", 0.0)), 0.0, 1.0))
 		if routine in ["rest", "hide", "hang_back"]:
 			speed *= 0.42
 		elif routine in ["flee", "pace"]:
 			speed *= 1.45
 		elif routine == "school":
-			speed *= 0.92
+			speed *= lerp(0.78, 1.02, clamp(float(animal.get("school_cohesion", 0.55)), 0.0, 1.0))
 		var next := pos.move_toward(target, speed * delta)
 		visual["facing"] = 1.0 if target.x >= pos.x else -1.0
 		visual["pos"] = next
@@ -1836,8 +1852,10 @@ func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, s
 		"forage":
 			return Vector2(inner.position.x + 50.0 + fposmod(seed * 71.0 + Time.get_ticks_msec() / 24.0, inner.size.x - 100.0), inner.end.y - _substrate_height() - 22.0 - fposmod(seed * 11.0, 34.0))
 		"school":
-			var center: Vector2 = school_centers.get(str(animal.get("species_id", "")), _moving_target(seed, zone))
-			var offset := Vector2(sin(seed) * 46.0, cos(seed * 0.7) * 22.0)
+			var center: Vector2 = school_centers.get(str(animal.get("species_id", "")), _moving_target(seed, zone)) as Vector2
+			var cohesion: float = clamp(float(animal.get("school_cohesion", 0.55)), 0.0, 1.0)
+			var spread: float = lerp(72.0, 28.0, cohesion)
+			var offset: Vector2 = Vector2(sin(seed) * spread, cos(seed * 0.7) * spread * 0.45)
 			return Vector2(clamp(center.x + offset.x, inner.position.x + 52, inner.end.x - 52), clamp(center.y + offset.y, inner.position.y + 54, inner.end.y - _substrate_height() - 38))
 		"flee":
 			return Vector2(inner.position.x + 42.0 + fposmod(seed * 91.0, inner.size.x - 84.0), inner.position.y + inner.size.y * 0.72)
@@ -2964,6 +2982,7 @@ func _fish_sprite_size(species_id: String) -> Vector2:
 			return Vector2(clamp(adult_cm * 9.0, 48.0, 96.0), clamp(adult_cm * 4.8, 28.0, 52.0))
 
 func _draw_health_marks(animal: Dictionary, pos: Vector2, facing: float) -> void:
+	_draw_behavior_marks(animal, pos, facing)
 	if bool(animal.get("quarantined", false)):
 		draw_arc(pos + Vector2(0, 2), 28.0, 0.05, TAU - 0.05, 36, Color(0.70, 0.88, 1.0, 0.22), 1.4, true)
 	var disease := str(animal.get("disease", ""))
@@ -2980,6 +2999,24 @@ func _draw_health_marks(animal: Dictionary, pos: Vector2, facing: float) -> void
 		draw_line(pos + Vector2(-24.0 * facing, 4.0), pos + Vector2(-35.0 * facing, 10.0), Color(0.92, 0.78, 0.68, alpha), 1.5, true)
 	if disease.contains("gill"):
 		draw_arc(pos + Vector2(11.0 * facing, 0), 7.0, -PI * 0.35, PI * 0.35, 8, Color(1.0, 0.45, 0.40, alpha), 1.6, true)
+
+func _draw_behavior_marks(animal: Dictionary, pos: Vector2, facing: float) -> void:
+	var routine: String = str(animal.get("routine", ""))
+	var fear: float = clamp(float(animal.get("fear_memory", 0.0)), 0.0, 1.0)
+	var cohesion: float = clamp(float(animal.get("school_cohesion", 0.0)), 0.0, 1.0)
+	var territory: float = clamp(float(animal.get("territory_pressure", 0.0)), 0.0, 1.0)
+	var confidence: float = clamp(float(animal.get("confidence", 0.5)), 0.0, 1.0)
+	if routine == "school" and cohesion > 0.42:
+		draw_arc(pos + Vector2(0, 2), 24.0, PI * 0.08, PI * 0.92, 18, Color(0.68, 0.92, 1.0, 0.08 + cohesion * 0.12), 1.1, true)
+	if routine == "hide" or fear > 0.58 or confidence < 0.24:
+		var alpha: float = 0.08 + max(fear, 1.0 - confidence) * 0.16
+		draw_circle(pos + Vector2(-8.0 * facing, 2.0), 18.0, Color(0.10, 0.16, 0.14, alpha))
+	if territory > 0.52 and routine in ["display", "patrol"]:
+		draw_arc(pos, 31.0, 0.1, TAU - 0.1, 36, Color(1.0, 0.78, 0.34, 0.10 + territory * 0.14), 1.8, true)
+		draw_line(pos + Vector2(-20.0 * facing, -16.0), pos + Vector2(18.0 * facing, -16.0), Color(1.0, 0.72, 0.30, 0.10 + territory * 0.18), 1.2, true)
+	if routine == "rest":
+		var rest: float = clamp(float(animal.get("rest_quality", 0.75)), 0.0, 1.0)
+		draw_arc(pos + Vector2(-7.0 * facing, -12.0), 12.0, PI * 1.02, PI * 1.78, 10, Color(0.78, 0.88, 1.0, 0.08 + rest * 0.14), 1.3, true)
 
 func _fish_points(pos: Vector2, facing: float, length: float, height: float) -> PackedVector2Array:
 	return PackedVector2Array([

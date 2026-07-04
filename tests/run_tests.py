@@ -786,6 +786,49 @@ def test_animal_personality_fields_drive_routines() -> None:
     assert fish["behavior"] not in {"", None}
 
 
+def test_schooling_fish_build_cohesion_from_group_and_open_water() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["animals"] = []
+    state["aquarium"]["open_swimming"] = 0.82
+    state["aquarium"]["hiding_cover"] = 0.56
+    state["equipment"]["filter"]["effective_flow"] = 0.62
+    sim = AquariumSimulation(species, state)
+    for index in range(8):
+        fish = animal(species, "neon_tetra", f"Neon {index}", 20 + index)
+        fish["school_cohesion"] = 0.08
+        fish["sociability"] = 1.0
+        fish["acute_stress"] = 0.02
+        fish["hunger"] = 0.18
+        state["animals"].append(fish)
+    for fish in state["animals"]:
+        sim._update_behavior_memory(fish, species["neon_tetra"], len(state["animals"]), {}, False, 18.0)
+    cohesions = [float(fish["school_cohesion"]) for fish in state["animals"]]
+    assert min(cohesions) > 0.55
+    assert any("tight school" in " ".join(fish.get("behavior_notes", [])) for fish in state["animals"])
+
+
+def test_territorial_fish_remember_pressure_from_cramped_cover() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Territory Test", "freshwater", 24)
+    state["aquarium"]["hiding_cover"] = 0.08
+    state["aquarium"]["open_swimming"] = 0.30
+    state["animals"] = []
+    sim = AquariumSimulation(species, state)
+    for index in range(2):
+        fish = animal(species, "betta_splendens", f"Betta {index}", 80 + index)
+        fish["territory_pressure"] = 0.0
+        fish["breeding_condition"] = 0.95
+        fish["acute_stress"] = 0.08
+        fish["hunger"] = 0.18
+        state["animals"].append(fish)
+    for fish in state["animals"]:
+        sim._update_behavior_memory(fish, species["betta_splendens"], len(state["animals"]), {}, False, 16.0)
+    pressures = [float(fish["territory_pressure"]) for fish in state["animals"]]
+    assert max(pressures) > 0.52
+    assert any("territory" in " ".join(fish.get("behavior_notes", [])) for fish in state["animals"])
+
+
 def test_tiny_life_supports_natural_foraging() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     rich_state = default_state(species)
@@ -1193,6 +1236,8 @@ def main() -> int:
         test_hardscape_materials_change_water_chemistry,
         test_mineral_dosing_replenishes_reef_reserves,
         test_animal_personality_fields_drive_routines,
+        test_schooling_fish_build_cohesion_from_group_and_open_water,
+        test_territorial_fish_remember_pressure_from_cramped_cover,
         test_tiny_life_supports_natural_foraging,
         test_saltwater_switch_species_and_reefscape_rules,
         test_scape_placement_rules_and_relocation,
