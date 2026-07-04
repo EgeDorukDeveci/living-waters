@@ -1513,6 +1513,32 @@ func _refresh_research_card() -> void:
 	pages.append("WOOD AND ROCKS\nWood does not make water alkaline. Driftwood releases tannins, darkens the water, and usually softens or acidifies slowly. Root driftwood is stronger; branch wood is moderate; manzanita is milder.\n\nReef/live rock and mineral stones can raise KH, calcium, hardness, and pH slowly. Lava rock and dragon stone can add silicate, which can feed brown diatom dust.\n\nCurrent tannins %.0f%%, soft-water pressure %.0f%%, KH release %.0f%%, silicate %.2f." % [float(water.get("tannins", 0.0)) * 100.0, float(aquarium.get("soft_water", 0.0)) * 100.0, float(aquarium.get("kh_release", 0.0)) * 100.0, float(water.get("silicate_mg_l", 0.0))])
 	pages.append("SUBSTRATE\nFine sand looks natural and lets bottom fish forage, but deep sand can compact if neglected. Gravel is easy to clean but traps food. Planted soil feeds roots and can grow plants better, but adds maintenance load. Bare bottom is clean but bad for rooted plants.\n\nDeep compacted substrate with mulm can become hypoxic. Some denitrifying biofilm can reduce nitrate, but stagnant pockets also lower redox and can create dangerous reduced chemistry. Clean in sections.\n\nCurrent substrate: %s, %.1f cm. Compaction %.0f%%, hypoxia %.0f%%, anaerobic risk %.0f%%." % [str(aquarium.get("substrate", "unknown")).replace("_", " "), float(aquarium.get("substrate_depth_cm", 0.0)), float(maturity.get("substrate_compaction", 0.0)) * 100.0, float(maturity.get("substrate_hypoxia", 0.0)) * 100.0, float(maturity.get("anaerobic_pocket_risk", 0.0)) * 100.0])
 	pages.append("PLANTS\nPlants use nitrate, phosphate, light, CO2, trace elements, and sometimes root nutrients. They add oxygen in the light and use oxygen at night.\n\nIf one resource is missing, extra of the others does not fix it. If conditions are wrong, plants melt; melt adds organics, ammonia, and phosphate.\n\nCurrent plant cover %.0f%%, shade %.0f%%, algae control %.0f%%, limiting factor: %s." % [float(aquarium.get("plant_cover", 0.0)) * 100.0, float(aquarium.get("surface_shade", 0.0)) * 100.0, float(aquarium.get("algae_control", 0.0)) * 100.0, str(chemistry.get("plant_limiting_factor", "balanced"))])
+	var plant_items = []
+	var scape_data = aquarium.get("scape", {})
+	for plant in scape_data.get("plants", []):
+		plant_items.append(plant)
+	for obj in scape_data.get("objects", []):
+		if str(obj.get("category", "")) == "plants":
+			plant_items.append(obj)
+	var root_sum: float = 0.0
+	var reserve_sum: float = 0.0
+	var melt_max: float = 0.0
+	var smother_max: float = 0.0
+	var plant_drivers = []
+	for plant in plant_items:
+		root_sum += float(plant.get("root_establishment", 0.0))
+		reserve_sum += float(plant.get("nutrient_reserve", 0.0))
+		melt_max = max(melt_max, float(plant.get("melt_debt", 0.0)))
+		smother_max = max(smother_max, float(plant.get("algae_smothering", 0.0)))
+		plant_drivers.append("%s: %s" % [str(plant.get("type", "plant")).replace("_", " "), str(plant.get("last_growth_driver", "settling"))])
+	var plant_count: float = max(1.0, float(plant_items.size()))
+	pages.append("PLANT MEMORY\nPlants now remember whether they are rooted, fed, shaded, smothered, or melting. Good substrate and stable water build root establishment. Light plus nitrate, phosphate, trace elements, and root access build reserves. Shade, algae, poor substrate, shocks, and low reserves create melt debt.\n\nCurrent average rooting %.0f%%, reserve %.0f%%, worst melt debt %.0f%%, worst algae smothering %.0f%%.\n\nDrivers:\n%s" % [
+		root_sum / plant_count * 100.0,
+		reserve_sum / plant_count * 100.0,
+		melt_max * 100.0,
+		smother_max * 100.0,
+		"\n".join(plant_drivers.slice(0, 8)) if plant_drivers.size() > 0 else "No plants placed."
+	])
 	pages.append("ALGAE ECOLOGY\nAlgae is not one problem. Green water is suspended algae from light plus nutrients. Brown diatoms come from silicate and young tanks. Hair algae likes long light and available nitrate/phosphate. Cyanobacteria is a slimy mat favored by dead flow, organics, low redox, and imbalance. Black beard algae follows unstable CO2, old hardscape biofilm, and dead spots.\n\nScraping removes glass film and some diatoms but releases debris. Cleanup animals graze hair algae and diatoms slowly. Plants compete for nutrients, but melting plants can feed algae back.\n\nCurrent green water %.0f%%, brown diatoms %.0f%%, hair %.0f%%, cyanobacteria %.0f%%, black beard %.0f%%, glass film %.0f%%, nutrient memory %.0f%%, light memory %.0f%%, dead spots %.0f%%, main driver: %s." % [
 		float(algae_ecology.get("green_water", 0.0)) * 100.0,
 		float(algae_ecology.get("brown_diatoms", 0.0)) * 100.0,
@@ -1526,6 +1552,31 @@ func _refresh_research_card() -> void:
 		str(algae_ecology.get("last_driver", "balanced"))
 	])
 	pages.append("CORALS AND REEF CHEMISTRY\nSaltwater stability depends on salinity, alkalinity, calcium, magnesium, temperature, flow, light, nitrate, phosphate, and trace elements.\n\nCoral growth consumes alkalinity, calcium, magnesium, and trace reserves. Evaporation raises salinity because water leaves but salt stays. Top-off restores level; mineral dosing restores depleted reserves.\n\nCurrent salinity %.1f ppt, alkalinity %.1f dKH, calcium %.0f, magnesium %.0f, limiting factor: %s." % [float(water.get("salinity_ppt", 0.0)), float(water.get("alkalinity_dkh", water.get("kh_dkh", 0.0))), float(water.get("calcium_mg_l", 0.0)), float(water.get("magnesium_mg_l", 0.0)), str(chemistry.get("coral_limiting_factor", "balanced"))])
+	var coral_items = []
+	for coral in scape_data.get("corals", []):
+		coral_items.append(coral)
+	for obj in scape_data.get("objects", []):
+		if str(obj.get("category", "")) == "corals":
+			coral_items.append(obj)
+	var polyp_sum: float = 0.0
+	var tissue_sum: float = 0.0
+	var bleach_max: float = 0.0
+	var flow_sum: float = 0.0
+	var coral_drivers = []
+	for coral in coral_items:
+		polyp_sum += float(coral.get("polyp_extension", 0.0))
+		tissue_sum += float(coral.get("tissue_reserve", 0.0))
+		bleach_max = max(bleach_max, float(coral.get("bleaching_debt", 0.0)))
+		flow_sum += float(coral.get("flow_comfort", 0.0))
+		coral_drivers.append("%s: %s" % [str(coral.get("type", "coral")).replace("_", " "), str(coral.get("last_stress_driver", "settling"))])
+	var coral_count: float = max(1.0, float(coral_items.size()))
+	pages.append("CORAL POLYP MEMORY\nCorals now react with polyp extension, tissue reserve, flow comfort, feeding response, and bleaching debt. Good light, moderate flow, stable reef minerals, and plankton feeding help tissue reserves. Bad flow, low alkalinity/calcium/magnesium, unstable salinity, excess nutrients, or weak light retract polyps and build bleaching debt.\n\nCurrent polyp extension %.0f%%, tissue reserve %.0f%%, flow comfort %.0f%%, worst bleaching debt %.0f%%.\n\nDrivers:\n%s" % [
+		polyp_sum / coral_count * 100.0,
+		tissue_sum / coral_count * 100.0,
+		flow_sum / coral_count * 100.0,
+		bleach_max * 100.0,
+		"\n".join(coral_drivers.slice(0, 8)) if coral_drivers.size() > 0 else "No corals placed."
+	])
 	pages.append("FEEDING AND WASTE\nFood helps body condition, energy, breeding condition, and confidence only when the animal can actually use it. Flakes linger near the surface, wafers reach bottom fish, algae foods suit grazers, frozen foods are rich but dirtier, and reef blends add planktonic nutrition plus nutrients.\n\nWrong foods are not harmless. Poor diet fit leaves shy or specialized animals hungry, lowers digestion quality, adds decay, increases ammonia and phosphate pressure, clouds water, and feeds bacteria.\n\nLast food: %s. Available %.2f, decaying %.2f. Protein %.0f%%, plant matter %.0f%%, digestibility %.0f%%, sinking %.0f%%, clouding %.0f%%, phosphate pressure %.0f%%, diet mismatch %.0f%%." % [
 		str(food.get("last_type", "community_flake")).replace("_", " "),
 		float(food.get("available", 0.0)),
@@ -2213,6 +2264,8 @@ func _draw_corals() -> void:
 		var quantity := int(item.get("quantity", 0))
 		var kind := str(item.get("type", "zoanthids"))
 		var health: float = clamp(float(item.get("health", 0.82)), 0.0, 1.0)
+		var polyp_extension: float = clamp(float(item.get("polyp_extension", 0.65)), 0.15, 1.0)
+		var tissue_reserve: float = clamp(float(item.get("tissue_reserve", 0.68)), 0.0, 1.2)
 		var visible_quantity: int = max(1, int(round(float(quantity) * lerp(0.35, 1.0, health))))
 		for n in range(visible_quantity):
 			var seed := coral_index + n + kind.length() * 3
@@ -2221,10 +2274,10 @@ func _draw_corals() -> void:
 				sand_top - 8.0 + fposmod(float(seed) * 13.0, 28.0)
 			)
 			pos = _object_pos(item, pos)
-			var draw_size: Vector2 = (Vector2(74, 58) if kind != "torch_coral" else Vector2(88, 92)) * lerp(0.55, 1.0, health)
-			var tint := Color.WHITE.lerp(Color("#ddd3bd") if bool(item.get("bleached", false)) else Color("#b79b82"), 1.0 - health)
+			var draw_size: Vector2 = (Vector2(74, 58) if kind != "torch_coral" else Vector2(88, 92)) * lerp(0.42, 1.0, min(health, polyp_extension))
+			var tint := Color.WHITE.lerp(Color("#ddd3bd") if bool(item.get("bleached", false)) else Color("#b79b82"), clamp(1.0 - min(health, tissue_reserve), 0.0, 1.0))
 			if not _draw_scape_sprite(kind, pos, draw_size, seed % 2 == 0, tint):
-				_draw_coral_fallback(kind, pos, seed, health)
+				_draw_coral_fallback(kind, pos, seed, min(health, polyp_extension))
 		coral_index += quantity
 
 func _draw_coral_fallback(kind: String, pos: Vector2, seed: int, health: float) -> void:

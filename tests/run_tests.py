@@ -1005,6 +1005,71 @@ def test_plants_melt_when_root_feeders_have_bad_substrate() -> None:
     assert any("melting" in event["title"] for event in state["events"])
 
 
+def test_plant_memory_tracks_rooting_reserves_shade_and_melt_debt() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Plant Memory", "freshwater", 80)
+    state["aquarium"]["substrate"] = "bare_bottom"
+    state["aquarium"]["substrate_depth_cm"] = 1.2
+    state["aquarium"]["surface_shade"] = 0.72
+    state["aquarium"]["scape"]["plants"] = [{
+        "type": "amazon_sword",
+        "quantity": 5,
+        "health": 0.72,
+        "root_establishment": 0.78,
+        "nutrient_reserve": 0.62,
+        "melt_debt": 0.0,
+    }]
+    state["water"]["nitrate_mg_l"] = 0.2
+    state["water"]["phosphate_mg_l"] = 0.02
+    state["water"]["trace_elements"] = 0.12
+    state["biology"]["algae"] = 0.72
+    sim = AquariumSimulation(species, state)
+    state["aquarium"]["surface_shade"] = 0.72
+    plant = state["aquarium"]["scape"]["plants"][0]
+    before_health = plant["health"]
+    before_root = plant["root_establishment"]
+    sim._update_plants_and_corals(72.0, True, 4.0)
+    assert plant["root_establishment"] < before_root
+    assert plant["nutrient_reserve"] < 0.45
+    assert plant["shade_received"] > 0.4
+    assert plant["algae_smothering"] > 0.3
+    assert plant["melt_debt"] > 0.25
+    assert plant["health"] < before_health
+    assert state["action_residue"]["plant_fragments"] > 0
+
+
+def test_coral_memory_tracks_polyp_extension_tissue_and_bleaching_debt() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Coral Memory", "saltwater", 120)
+    state["aquarium"]["scape"]["corals"] = [{
+        "type": "torch_coral",
+        "quantity": 2,
+        "health": 0.86,
+        "polyp_extension": 0.82,
+        "tissue_reserve": 0.78,
+        "bleaching_debt": 0.0,
+    }]
+    state["water"]["salinity_ppt"] = 30.0
+    state["water"]["alkalinity_dkh"] = 5.2
+    state["water"]["calcium_mg_l"] = 315.0
+    state["water"]["magnesium_mg_l"] = 960.0
+    state["water"]["nitrate_mg_l"] = 42.0
+    state["water"]["phosphate_mg_l"] = 0.72
+    state["equipment"]["filter"]["effective_flow"] = 0.08
+    state["equipment"]["light"]["health"] = 0.45
+    state["equipment"]["light"]["plant_spectrum"] = 0.42
+    sim = AquariumSimulation(species, state)
+    coral = state["aquarium"]["scape"]["corals"][0]
+    before_polyp = coral["polyp_extension"]
+    before_tissue = coral["tissue_reserve"]
+    sim._update_plants_and_corals(72.0, True, 3.5)
+    assert coral["polyp_extension"] < before_polyp
+    assert coral["tissue_reserve"] < before_tissue
+    assert coral["bleaching_debt"] > 0.55
+    assert coral["bleached"] is True
+    assert state["water"]["organic_waste"] > 0
+
+
 def test_nursery_recruits_when_conditions_remain_stable() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -1247,6 +1312,8 @@ def main() -> int:
         test_heater_calibration_offset_changes_temperature,
         test_skimmer_neck_fouling_reduces_export,
         test_plants_melt_when_root_feeders_have_bad_substrate,
+        test_plant_memory_tracks_rooting_reserves_shade_and_melt_debt,
+        test_coral_memory_tracks_polyp_extension_tissue_and_bleaching_debt,
         test_nursery_recruits_when_conditions_remain_stable,
         test_microfauna_improves_fry_survival_chance,
         test_free_ammonia_depends_on_ph_and_temperature,

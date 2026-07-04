@@ -674,6 +674,29 @@ def default_algae_ecology() -> dict[str, Any]:
     }
 
 
+def normalize_plant_piece(plant: dict[str, Any]) -> dict[str, Any]:
+    plant.setdefault("health", 0.82)
+    plant.setdefault("root_establishment", 0.35)
+    plant.setdefault("nutrient_reserve", 0.55)
+    plant.setdefault("melt_debt", 0.0)
+    plant.setdefault("propagation_pressure", 0.0)
+    plant.setdefault("shade_received", 0.0)
+    plant.setdefault("algae_smothering", 0.0)
+    plant.setdefault("last_growth_driver", "settling")
+    return plant
+
+
+def normalize_coral_piece(coral: dict[str, Any]) -> dict[str, Any]:
+    coral.setdefault("health", 0.82)
+    coral.setdefault("polyp_extension", 0.52)
+    coral.setdefault("tissue_reserve", 0.68)
+    coral.setdefault("bleaching_debt", 0.0)
+    coral.setdefault("flow_comfort", 0.62)
+    coral.setdefault("feeding_response", 0.2)
+    coral.setdefault("last_stress_driver", "settling")
+    return coral
+
+
 def default_disease_ecology() -> dict[str, Any]:
     return {
         "free_swimming_parasites": 0.0,
@@ -895,6 +918,25 @@ class AquariumSimulation:
         aquarium = self.state.setdefault("aquarium", {})
         aquarium.setdefault("aquascape_style", "greenscape")
         aquarium.setdefault("scape", default_scape())
+        scape = aquarium.setdefault("scape", default_scape())
+        scape.setdefault("rocks", [])
+        scape.setdefault("wood", [])
+        scape.setdefault("plants", [])
+        scape.setdefault("corals", [])
+        scape.setdefault("objects", [])
+        for plant in scape.get("plants", []):
+            if isinstance(plant, dict):
+                normalize_plant_piece(plant)
+        for coral in scape.get("corals", []):
+            if isinstance(coral, dict):
+                normalize_coral_piece(coral)
+        for obj in scape.get("objects", []):
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("category") == "plants":
+                normalize_plant_piece(obj)
+            elif obj.get("category") == "corals":
+                normalize_coral_piece(obj)
         aquarium.setdefault("substrate_depth_cm", 5.0)
         water = self.state.setdefault("water", {})
         water.setdefault("system", "saltwater" if water.get("salinity_ppt", 0) > 5 else "freshwater")
@@ -1754,6 +1796,10 @@ class AquariumSimulation:
             "scale": clamp(scale, 0.45, 1.8),
             "health": 0.86 if category in {"plants", "corals"} else 1.0,
         }
+        if category == "plants":
+            normalize_plant_piece(obj)
+        elif category == "corals":
+            normalize_coral_piece(obj)
         scape.setdefault("objects", []).append(obj)
         self.state["aquarium"].update(self._scape_metrics())
         self._record("info", "Scape placed", f"{item_type.replace('_', ' ')} was placed in the aquarium.")
@@ -1841,12 +1887,14 @@ class AquariumSimulation:
             if item.get("type") == item_type:
                 item["quantity"] = int(item.get("quantity", 0)) + quantity
                 if category == "plants":
+                    normalize_plant_piece(item)
                     item["health"] = max(float(item.get("health", 0.8)), 0.82)
                 break
         else:
             item = {"type": item_type, "quantity": quantity, "scale": 1.0}
             if category == "plants":
                 item["health"] = 0.86
+                normalize_plant_piece(item)
             items.append(item)
         self.state["aquarium"].update(self._scape_metrics())
         name = catalogue[item_type]["name"]
@@ -3363,6 +3411,105 @@ class AquariumSimulation:
             water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) + load * 0.05, 0, 10)
             water["turbidity"] = clamp(water["turbidity"] + load * 0.04, 0, 1)
 
+    def _update_plant_piece(
+        self,
+        plant: dict[str, Any],
+        hours: float,
+        light_balance: float,
+        nutrient: float,
+        trace_balance: float,
+        substrate: str,
+        depth: float,
+        stability_penalty: float,
+        algae: float,
+        surface_shade: float,
+    ) -> None:
+        water = self.state["water"]
+        residue = self.state.setdefault("action_residue", default_action_residue())
+        normalize_plant_piece(plant)
+        plant_type = str(plant.get("type", ""))
+        info = PLANT_TYPES.get(plant_type, {})
+        zone = str(info.get("zone", "midground"))
+        quantity = max(1.0, float(plant.get("quantity", 1)))
+        health = float(plant.get("health", 0.82))
+
+        if zone == "surface":
+            root_target = 1.0
+        else:
+            substrate_score = {
+                "planted_soil": 1.0,
+                "fine_sand": 0.78,
+                "reef_sand": 0.68,
+                "rounded_gravel": 0.42,
+                "bare_bottom": 0.08,
+            }.get(substrate, 0.55)
+            depth_score = clamp((depth - 2.4) / 4.2, 0.0, 1.0)
+            root_target = clamp(substrate_score * (0.35 + depth_score * 0.65), 0.0, 1.0)
+            if not info.get("root_feeder"):
+                root_target = max(root_target, 0.62)
+        shock = float(self.state.get("maturity", {}).get("last_water_change_shock", 0.0))
+        root_establishment = clamp(
+            float(plant.get("root_establishment", 0.35))
+            + (root_target - float(plant.get("root_establishment", 0.35))) * min(1.0, hours * 0.028)
+            - shock * hours * 0.0007,
+            0.0,
+            1.0,
+        )
+        plant["root_establishment"] = root_establishment
+
+        shade_sensitivity = {
+            "carpet": 1.18,
+            "foreground": 1.05,
+            "midground": 0.82,
+            "background": 0.58,
+            "floating_or_planted": 0.45 if float(plant.get("y", 0.8)) > 0.55 else 0.08,
+            "surface": 0.0,
+        }.get(zone, 0.75)
+        shade_received = clamp(surface_shade * shade_sensitivity + max(0.0, quantity - 36.0) * 0.004, 0.0, 1.0)
+        plant["shade_received"] = shade_received
+        smother_target = clamp(algae * 0.62 + max(0.0, shade_received - 0.55) * 0.2, 0.0, 1.0)
+        plant["algae_smothering"] = clamp(float(plant.get("algae_smothering", 0.0)) + (smother_target - float(plant.get("algae_smothering", 0.0))) * min(1.0, hours * 0.045), 0.0, 1.0)
+
+        root_nutrient = root_establishment if info.get("root_feeder") else max(root_establishment, 0.58)
+        reserve_target = clamp(nutrient * 0.48 + trace_balance * 0.22 + root_nutrient * 0.25 + health * 0.08 - shade_received * 0.20 - float(plant.get("algae_smothering", 0.0)) * 0.22, 0.0, 1.2)
+        plant["nutrient_reserve"] = clamp(float(plant.get("nutrient_reserve", 0.55)) + (reserve_target - float(plant.get("nutrient_reserve", 0.55))) * min(1.0, hours * 0.05), 0.0, 1.2)
+        usable_light = clamp(light_balance * (1.0 - shade_received * 0.72), 0.0, 1.0)
+        root_penalty = max(0.0, 0.52 - root_establishment) * (0.74 if info.get("root_feeder") else 0.32)
+        melt_pressure = (
+            root_penalty
+            + stability_penalty
+            + float(plant.get("algae_smothering", 0.0)) * 0.32
+            + max(0.0, 0.35 - float(plant.get("nutrient_reserve", 0.55))) * 0.36
+            + max(0.0, 0.35 - usable_light) * 0.34
+            + max(0.0, 0.35 - trace_balance) * 0.16
+        )
+        growth_pressure = clamp(float(plant.get("nutrient_reserve", 0.55)) * usable_light * (0.55 + root_establishment * 0.45) * (1.0 - float(plant.get("algae_smothering", 0.0)) * 0.5), 0.0, 1.3)
+        health = clamp(health + (growth_pressure * 0.0065 - melt_pressure * 0.0125) * hours, 0.0, 1.0)
+        plant["health"] = health
+        plant["melt_debt"] = clamp(float(plant.get("melt_debt", 0.0)) + max(0.0, melt_pressure - growth_pressure) * hours * 0.007 - growth_pressure * hours * 0.0028, 0.0, 1.0)
+        plant["propagation_pressure"] = clamp(float(plant.get("propagation_pressure", 0.0)) + max(0.0, growth_pressure - 0.34) * health * hours * 0.006 - max(0.0, melt_pressure - 0.28) * hours * 0.003, 0.0, 1.6)
+        if health > 0.68 and plant["propagation_pressure"] > 1.0:
+            added = 1 if quantity < 55 else 0
+            if added:
+                plant["quantity"] = int(clamp(quantity + added, 1, 140))
+                plant["propagation_pressure"] *= 0.42
+        if plant["melt_debt"] > 0.48 or health < 0.24:
+            melt_load = quantity * hours * (0.00010 + plant["melt_debt"] * 0.00016)
+            water["organic_waste"] = clamp(water["organic_waste"] + melt_load, 0, 5)
+            water["ammonia_mg_l"] = clamp(water["ammonia_mg_l"] + melt_load * 0.16, 0, 5)
+            water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) + melt_load * 0.09, 0, 10)
+            residue["plant_fragments"] = clamp(float(residue.get("plant_fragments", 0.0)) + melt_load * 0.28, 0.0, 1.0)
+            self._record_once(f"plant_melt_{plant_type}", "warning", f"{info.get('name', plant_type)} is melting", "Rooting, shade, light, nutrients, algae, or stability pressure is causing plant tissue to fail and feed the water column.")
+
+        driver_scores = {
+            "rooting": max(0.0, 0.7 - root_establishment),
+            "shade": shade_received,
+            "nutrient reserve": max(0.0, 0.55 - float(plant.get("nutrient_reserve", 0.55))),
+            "algae smothering": float(plant.get("algae_smothering", 0.0)),
+            "growth": growth_pressure,
+        }
+        plant["last_growth_driver"] = max(driver_scores, key=driver_scores.get)
+
     def _update_plants_and_corals(self, hours: float, lights_on: bool, light_hours: float) -> None:
         water = self.state["water"]
         aquarium = self.state["aquarium"]
@@ -3377,27 +3524,11 @@ class AquariumSimulation:
         light_balance = (1.0 - clamp(abs(light_hours - 7.0) / 7.0, 0.0, 1.0)) * spectrum * par_output
         algae = float(bio.get("algae", 0.0))
         stability_penalty = max(0.0, 0.74 - float(self.state.get("stability", {}).get("stability_score", 1.0))) * 0.28
-        for group_name in ("plants",):
-            for plant in aquarium["scape"].get(group_name, []):
-                plant_type = str(plant.get("type", ""))
-                info = PLANT_TYPES.get(plant_type, {})
-                health = float(plant.get("health", 0.82))
-                quantity = max(1.0, float(plant.get("quantity", 1)))
-                root_penalty = 0.0
-                if info.get("root_feeder") and (substrate in {"bare_bottom", "rounded_gravel"} or depth < 3.5):
-                    root_penalty = 0.32
-                shade_penalty = clamp(float(aquarium.get("surface_shade", 0.0)) * 0.45, 0.0, 0.45)
-                melt_pressure = root_penalty + stability_penalty + max(0.0, algae - 0.45) * 0.35 + max(0.0, 0.25 - nutrient) * 0.25 + max(0.0, 0.42 - light_balance) * 0.35 + max(0.0, 0.35 - trace_balance) * 0.18
-                growth_pressure = max(0.0, nutrient - 0.2) * light_balance * trace_balance * (1.0 - algae * 0.45)
-                health = clamp(health + (growth_pressure * 0.006 - melt_pressure * 0.012) * hours, 0.0, 1.0)
-                if health > 0.7 and growth_pressure > 0.25:
-                    plant["quantity"] = int(clamp(quantity + hours * 0.008 * growth_pressure, 1, 120))
-                if health < 0.28:
-                    water["organic_waste"] = clamp(water["organic_waste"] + quantity * hours * 0.00025, 0, 5)
-                    water["ammonia_mg_l"] = clamp(water["ammonia_mg_l"] + quantity * hours * 0.000035, 0, 5)
-                    water["phosphate_mg_l"] = clamp(water.get("phosphate_mg_l", 0.0) + quantity * hours * 0.00002, 0, 10)
-                    self._record_once(f"plant_melt_{plant_type}", "warning", f"{info.get('name', plant_type)} is melting", "Plant health is falling because light, nutrients, algae, or substrate conditions are wrong.")
-                plant["health"] = health
+        for plant in aquarium["scape"].get("plants", []):
+            self._update_plant_piece(plant, hours, light_balance, nutrient, trace_balance, substrate, depth, stability_penalty, algae, float(aquarium.get("surface_shade", 0.0)))
+        for obj in aquarium["scape"].get("objects", []):
+            if obj.get("category") == "plants":
+                self._update_plant_piece(obj, hours, light_balance, nutrient, trace_balance, substrate, depth, stability_penalty, algae, float(aquarium.get("surface_shade", 0.0)))
         if water.get("system") == "saltwater":
             temp_stress = range_stress(water["temperature_c"], [24.0, 26.5], [22.5, 29.0])
             salinity_stress = range_stress(water.get("salinity_ppt", 35.0), [34.0, 36.0], [31.0, 38.0])
@@ -3419,26 +3550,46 @@ class AquariumSimulation:
 
     def _update_coral_piece(self, coral: dict[str, Any], hours: float, light_hours: float, water_stress: float) -> None:
         water = self.state["water"]
+        food = self.state.get("food", default_food())
+        normalize_coral_piece(coral)
         info = CORAL_TYPES.get(str(coral.get("type", "")), {})
         light_need = float(info.get("light_need", 0.55))
         light = self.state.get("equipment", {}).get("light", {})
         light_quality = clamp(float(light.get("effective_spectrum", light.get("plant_spectrum", 0.82))) * float(light.get("par_output", light.get("health", 1.0))), 0.0, 1.0)
         light_match = (1.0 - clamp(abs((light_hours / 10.0) - light_need), 0.0, 1.0)) * light_quality
         flow = float(self.state.get("equipment", {}).get("filter", {}).get("effective_flow", 0.6))
-        flow_stress = max(0.0, 0.26 - flow) + max(0.0, flow - 0.94) * 0.8
+        flow_comfort_target = clamp(1.0 - abs(flow - (0.62 if str(coral.get("type", "")) != "torch_coral" else 0.48)) / 0.55, 0.0, 1.0)
+        coral["flow_comfort"] = clamp(float(coral.get("flow_comfort", 0.62)) + (flow_comfort_target - float(coral.get("flow_comfort", 0.62))) * min(1.0, hours * 0.08), 0.0, 1.0)
+        flow_stress = max(0.0, 0.30 - float(coral.get("flow_comfort", 0.62))) + max(0.0, flow - 0.94) * 0.8
+        feeding_target = 0.74 if str(food.get("last_type", "")) == "reef_plankton" and float(food.get("available", 0.0)) > 0.02 else 0.18
+        coral["feeding_response"] = clamp(float(coral.get("feeding_response", 0.2)) + (feeding_target - float(coral.get("feeding_response", 0.2))) * min(1.0, hours * 0.12), 0.0, 1.0)
         stress = clamp(max(water_stress, flow_stress, max(0.0, 0.42 - light_match)), 0.0, 1.0)
         health = float(coral.get("health", 0.8))
-        if stress <= 0.08:
-            health = clamp(health + hours * 0.0015 * light_match, 0, 1)
-            coral["quantity"] = int(clamp(float(coral.get("quantity", 1)) + hours * 0.002, 1, 80))
+        coral["polyp_extension"] = clamp(float(coral.get("polyp_extension", 0.52)) + ((1.0 - stress) * 0.56 + light_match * 0.28 + float(coral.get("feeding_response", 0.2)) * 0.16 - float(coral.get("polyp_extension", 0.52))) * min(1.0, hours * 0.09), 0.0, 1.0)
+        reserve_target = clamp(light_match * 0.48 + float(coral.get("feeding_response", 0.2)) * 0.25 + float(coral.get("flow_comfort", 0.62)) * 0.14 + health * 0.18 - stress * 0.36, 0.0, 1.2)
+        coral["tissue_reserve"] = clamp(float(coral.get("tissue_reserve", 0.68)) + (reserve_target - float(coral.get("tissue_reserve", 0.68))) * min(1.0, hours * 0.045), 0.0, 1.2)
+        coral["bleaching_debt"] = clamp(float(coral.get("bleaching_debt", 0.0)) + max(0.0, stress - 0.22) * hours * 0.012 + max(0.0, 0.34 - float(coral.get("tissue_reserve", 0.68))) * hours * 0.006 - max(0.0, float(coral.get("tissue_reserve", 0.68)) - 0.62) * hours * 0.004, 0.0, 1.0)
+        if stress <= 0.10 and float(coral.get("tissue_reserve", 0.68)) > 0.62:
+            health = clamp(health + hours * 0.0012 * light_match * float(coral.get("polyp_extension", 0.52)), 0, 1)
+            if float(coral.get("tissue_reserve", 0.68)) > 0.82:
+                coral["quantity"] = int(clamp(float(coral.get("quantity", 1)) + hours * 0.0014, 1, 80))
         else:
-            health = clamp(health - stress * hours * 0.012, 0, 1)
-        if health < 0.35:
+            health = clamp(health - (stress * 0.009 + float(coral.get("bleaching_debt", 0.0)) * 0.006) * hours, 0, 1)
+        if health < 0.35 or float(coral.get("bleaching_debt", 0.0)) > 0.62:
             coral["bleached"] = True
-            water["organic_waste"] = clamp(water["organic_waste"] + hours * 0.0008 * float(coral.get("quantity", 1)), 0, 5)
-            self._record_once(f"coral_stress_{coral.get('type', '')}", "warning", f"{info.get('name', 'Coral')} is stressed", "Coral health is falling from light, flow, salinity, nutrient, or temperature pressure.")
+            water["organic_waste"] = clamp(water["organic_waste"] + hours * 0.00065 * float(coral.get("quantity", 1)), 0, 5)
+            water["phosphate_mg_l"] = clamp(float(water.get("phosphate_mg_l", 0.0)) + hours * 0.000018 * float(coral.get("quantity", 1)), 0, 10)
+            self._record_once(f"coral_stress_{coral.get('type', '')}", "warning", f"{info.get('name', 'Coral')} is stressed", "Polyp extension, tissue reserves, flow, light, or reef chemistry is failing. Bleaching debt is now affecting the coral.")
         elif health > 0.62:
             coral["bleached"] = False
+        driver_scores = {
+            "water chemistry": water_stress,
+            "flow": flow_stress,
+            "light": max(0.0, 0.42 - light_match),
+            "tissue reserve": max(0.0, 0.55 - float(coral.get("tissue_reserve", 0.68))),
+            "feeding": float(coral.get("feeding_response", 0.2)),
+        }
+        coral["last_stress_driver"] = max(driver_scores, key=driver_scores.get)
         coral["health"] = health
 
     def _maybe_update_disease(self, animal: dict[str, Any], hours: float) -> None:
@@ -3906,6 +4057,13 @@ class AquariumSimulation:
         residue = self.state.get("action_residue", {})
         if float(residue.get("plant_fragments", 0.0)) > 0.22:
             self._record_once("loose_plant_fragments", "warning", "Loose plant clippings remain", "Plant cuttings left in the water are slowly becoming dissolved organics, ammonia, and phosphate.")
+        scape = self.state.get("aquarium", {}).get("scape", {})
+        plants = list(scape.get("plants", [])) + [obj for obj in scape.get("objects", []) if obj.get("category") == "plants"]
+        if any(float(plant.get("health", 1.0)) < 0.32 or float(plant.get("melt_debt", 0.0)) > 0.38 for plant in plants):
+            self._record_once("plants_melting", "warning", "Plants are melting", "One or more plants are losing tissue. Check rooting, shade, algae smothering, trace elements, and recent water-change shock.")
+        corals = list(scape.get("corals", [])) + [obj for obj in scape.get("objects", []) if obj.get("category") == "corals"]
+        if any(float(coral.get("bleaching_debt", 0.0)) > 0.48 or bool(coral.get("bleached", False)) for coral in corals):
+            self._record_once("coral_bleaching_debt", "warning", "Coral bleaching debt is rising", "A coral is retracting or bleaching. Check salinity, alkalinity, calcium, magnesium, nutrients, light, and flow comfort.")
         skimmer = self.state.get("equipment", {}).get("protein_skimmer", {})
         if water.get("system") == "saltwater" and skimmer.get("enabled", False) and float(skimmer.get("cup_fullness", 0.0)) > 0.88:
             self._record_once("skimmer_cup", "warning", "Skimmer cup needs emptying", "The protein skimmer is losing export efficiency.")
