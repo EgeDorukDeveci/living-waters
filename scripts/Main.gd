@@ -25,6 +25,17 @@ const FOOD_OPTIONS := [
 	{"id": "algae_wafer", "label": "Algae wafer", "hint": "grazers and shrimp, sinks fast"},
 	{"id": "reef_plankton", "label": "Reef plankton", "hint": "marine fish/corals, nutrient rich"}
 ]
+const PLANT_SCAPE_TYPES := [
+	"dwarf_hairgrass", "java_fern", "anubias", "vallisneria", "red_root_floaters",
+	"amazon_sword", "cryptocoryne_wendtii", "java_moss", "hornwort",
+	"halimeda_macroalgae", "turtle_grass"
+]
+const CORAL_SCAPE_TYPES := ["zoanthids", "mushroom_coral", "green_star_polyps", "torch_coral", "pulsing_xenia", "kenya_tree_coral"]
+const DISTURBING_ACTIONS := [
+	"water_change", "weekly_maintenance", "remove_uneaten_food", "scrape_algae", "trim_plants",
+	"service_filter", "set_substrate", "add_animal", "remove_animal", "place_scape_item",
+	"move_scape_item", "remove_scape_item", "reset_scape", "clear_scape", "quarantine_animal", "treat_outbreak"
+]
 
 var root_dir: String
 var state_path: String
@@ -76,6 +87,11 @@ var notebook_next_button: Button
 var notebook_panel: PanelContainer
 var notebook_button: Button
 var scape_label: Label
+var scape_selection_label: Label
+var scape_scale_spin: SpinBox
+var scape_rotation_spin: SpinBox
+var scape_layer_select: OptionButton
+var scape_flip_check: CheckBox
 var filter_label: Label
 var cycle_label: Label
 var planning_label: Label
@@ -181,13 +197,19 @@ func _gui_input(event: InputEvent) -> void:
 			return
 		var hit := _hit_scape_object(mouse)
 		if selected_scape_tool.is_empty() and hit != "":
-			selected_scape_object_id = hit
-			if tool_label:
-				tool_label.text = "Selected scape object. Click another valid spot to move it, or remove it."
+			_select_scape_object(hit)
 			return
 		if selected_scape_object_id != "":
 			if _client_position_valid("", "", normalized):
-				_write_command({"action": "move_scape_item", "object_id": selected_scape_object_id, "x": normalized.x, "y": normalized.y})
+				var move_command := _scape_object_action_command("move_scape_item", selected_scape_object_id)
+				move_command["x"] = normalized.x
+				move_command["y"] = normalized.y
+				var move_transform: Dictionary = _scape_transform_values()
+				for key in move_transform:
+					move_command[key] = move_transform[key]
+				_write_command(move_command)
+				if tool_label:
+					tool_label.text = "Relocated the selected piece with its current object-editor settings."
 			return
 		if selected_scape_tool.is_empty():
 			return
@@ -195,7 +217,13 @@ func _gui_input(event: InputEvent) -> void:
 		var item_type := str(selected_scape_tool.get("type", ""))
 		if not _client_position_valid(category, item_type, normalized):
 			return
-		_write_command({"action": "place_scape_item", "category": category, "type": item_type, "x": normalized.x, "y": normalized.y, "scale": 1.0})
+		var place_command := {"action": "place_scape_item", "category": category, "type": item_type, "x": normalized.x, "y": normalized.y}
+		var place_transform: Dictionary = _scape_transform_values()
+		for key in place_transform:
+			place_command[key] = place_transform[key]
+		_write_command(place_command)
+		if tool_label:
+			tool_label.text = "Placed %s. Select it to keep shaping the composition." % str(selected_scape_tool.get("label", "piece"))
 
 func _client_position_valid(category: String, item_type: String, normalized: Vector2, quiet: bool = false) -> bool:
 	if category == "":
@@ -236,35 +264,41 @@ func _add_action_effect(kind: String, command: Dictionary = {}) -> void:
 func _effect_duration(kind: String) -> float:
 	match kind:
 		"feed":
-			return 2.6
+			return 4.2
 		"water_change":
-			return 3.2
+			return 4.6
 		"weekly_maintenance":
-			return 3.4
+			return 5.0
 		"remove_uneaten_food", "scrape_algae", "trim_plants":
-			return 2.7
+			return 3.6
 		"top_off", "empty_skimmer_cup":
-			return 2.6
+			return 3.3
 		"service_filter":
-			return 3.0
+			return 4.0
 		"test_water":
-			return 2.3
+			return 3.4
 		"dose_ammonia", "dose_minerals":
-			return 2.5
+			return 3.5
 		"set_substrate":
-			return 2.8
+			return 4.0
 		"add_animal", "remove_animal":
-			return 2.6
-		"place_scape_item", "move_scape_item", "remove_scape_item":
-			return 2.4
+			return 4.0
+		"place_scape_item", "move_scape_item", "duplicate_scape_item", "remove_scape_item":
+			return 3.5
 		"reset_scape", "clear_scape":
-			return 2.7
+			return 3.7
 		"set_equipment":
-			return 2.0
+			return 3.2
 		"switch_system":
-			return 2.8
+			return 4.2
 		"create_aquarium", "select_aquarium":
-			return 1.8
+			return 2.6
+		"quarantine_animal":
+			return 3.8
+		"treat_outbreak":
+			return 4.0
+		"install_safeguards":
+			return 4.2
 	return 1.6
 
 func _update_action_effects(delta: float) -> void:
@@ -282,11 +316,15 @@ func _draw() -> void:
 	_draw_room()
 	_draw_aquarium()
 	_draw_hardscape()
+	_draw_custom_scape_objects(0)
 	_draw_corals()
+	_draw_custom_scape_objects(1)
 	_draw_plants()
+	_draw_custom_scape_objects(2)
 	_draw_bubbles()
 	_draw_animals()
 	_draw_action_effects()
+	_draw_scape_editor_overlay()
 	_draw_front_glass()
 
 func _draw_opening_screen() -> void:
@@ -418,7 +456,7 @@ func _draw_opening_scape(glass: Rect2, system: String, index: int, animals: int)
 	for fish in range(min(animals, 7)):
 		var pos := Vector2(glass.position.x + 38 + fposmod(fish * 41 + index * 11, glass.size.x - 76), glass.position.y + 44 + fposmod(fish * 23, glass.size.y - 86))
 		var color := Color("#df7d55") if system == "saltwater" else Color("#63c3d9")
-		draw_ellipse(pos, 8.0, 3.0, color)
+		_draw_ellipse(pos, 8.0, 3.0, color)
 		draw_polygon(PackedVector2Array([pos + Vector2(-8, 0), pos + Vector2(-15, -5), pos + Vector2(-15, 5)]), [color.darkened(0.15), color.darkened(0.15), color.darkened(0.15)])
 
 func _draw_opening_filter(glass: Rect2, index: int) -> void:
@@ -905,6 +943,12 @@ func _build_ui() -> void:
 	_style_button(dose_ammonia, "ghost")
 	dose_ammonia.pressed.connect(func(): _write_command(COMMAND_DOSE_AMMONIA.duplicate()))
 	equipment_box.add_child(dose_ammonia)
+	var safeguards := Button.new()
+	safeguards.text = "Fit safety & outage kit"
+	safeguards.custom_minimum_size = Vector2(322, 34)
+	_style_button(safeguards, "ghost")
+	safeguards.pressed.connect(func(): _write_command({"action": "install_safeguards"}))
+	equipment_box.add_child(safeguards)
 
 	var life_tab := _add_tab(tabs, "Life")
 	var species_box := _make_section(life_tab, "Livestock bench", "Choose an animal here, then use the full keeper journal for research before acclimation.")
@@ -961,60 +1005,132 @@ func _build_ui() -> void:
 	health_row.add_child(treat)
 
 	var scape_tab := _add_tab(tabs, "Scape")
-	var scape_box := _make_section(scape_tab, "Scape studio", "Pick a piece, then place it in the tank. Rooted plants need substrate, floaters need surface.")
+	var scape_box := _make_section(scape_tab, "Scape studio", "Compose the aquarium piece by piece. Rooted plants need substrate, floaters need surface, and every placed piece stays editable.")
 	scape_label = _make_label("", 12, Color("#9fb5b1"), true)
 	scape_box.add_child(scape_label)
-	tool_label = _make_label("Choose a piece, then click inside the tank.", 12, Color("#e1cd87"), true)
+	tool_label = _make_label("Choose a piece, set its shape, then place it on the canvas.", 12, Color("#e1cd87"), true)
 	scape_box.add_child(tool_label)
-	var scape_grid := GridContainer.new()
-	scape_grid.columns = 2
-	scape_grid.add_theme_constant_override("h_separation", 8)
-	scape_grid.add_theme_constant_override("v_separation", 8)
-	scape_box.add_child(scape_grid)
-	_add_scape_button(scape_grid, "River stone", "rocks", "river_stone")
-	_add_scape_button(scape_grid, "Moss stone", "rocks", "moss_stone")
-	_add_scape_button(scape_grid, "Slate stack", "rocks", "slate_stack")
-	_add_scape_button(scape_grid, "Lava rock", "rocks", "lava_rock")
-	_add_scape_button(scape_grid, "Live rock", "rocks", "live_rock")
-	_add_scape_button(scape_grid, "Reef arch", "rocks", "reef_arch")
-	_add_scape_button(scape_grid, "Branch log", "wood", "branch_driftwood")
-	_add_scape_button(scape_grid, "Root wood", "wood", "root_driftwood")
-	_add_scape_button(scape_grid, "Manzanita", "wood", "manzanita_branch")
-	_add_scape_button(scape_grid, "Hairgrass", "plants", "dwarf_hairgrass")
-	_add_scape_button(scape_grid, "Vallisneria", "plants", "vallisneria")
-	_add_scape_button(scape_grid, "Java fern", "plants", "java_fern")
-	_add_scape_button(scape_grid, "Amazon sword", "plants", "amazon_sword")
-	_add_scape_button(scape_grid, "Crypt", "plants", "cryptocoryne_wendtii")
-	_add_scape_button(scape_grid, "Java moss", "plants", "java_moss")
-	_add_scape_button(scape_grid, "Hornwort", "plants", "hornwort")
-	_add_scape_button(scape_grid, "Floaters", "plants", "red_root_floaters")
-	_add_scape_button(scape_grid, "Halimeda", "plants", "halimeda_macroalgae")
-	_add_scape_button(scape_grid, "Zoanthids", "corals", "zoanthids")
-	_add_scape_button(scape_grid, "Mushroom coral", "corals", "mushroom_coral")
-	_add_scape_button(scape_grid, "Torch coral", "corals", "torch_coral")
-	_add_scape_button(scape_grid, "Xenia", "corals", "pulsing_xenia")
-	_add_scape_button(scape_grid, "Kenya tree", "corals", "kenya_tree_coral")
-	var scape_actions := HBoxContainer.new()
-	scape_actions.add_theme_constant_override("separation", 8)
-	scape_box.add_child(scape_actions)
-	var reset_scape := Button.new()
-	reset_scape.text = "Starter scape"
-	reset_scape.custom_minimum_size = Vector2(101, 34)
-	_style_button(reset_scape)
-	reset_scape.pressed.connect(func(): _write_command({"action": "reset_scape"}))
-	scape_actions.add_child(reset_scape)
-	var clear_scape_button := Button.new()
-	clear_scape_button.text = "Clear"
-	clear_scape_button.custom_minimum_size = Vector2(101, 34)
-	_style_button(clear_scape_button, "danger")
-	clear_scape_button.pressed.connect(func(): _write_command({"action": "clear_scape"}))
-	scape_actions.add_child(clear_scape_button)
+
+	var transform_box := _make_section(scape_tab, "Object editor", "Use these settings for a new piece or select an existing piece in the aquarium to transform it.")
+	scape_selection_label = _make_label("No piece selected. Placement settings are ready.", 12, Color("#d8eee9"), true)
+	transform_box.add_child(scape_selection_label)
+	var transform_grid := GridContainer.new()
+	transform_grid.columns = 2
+	transform_grid.add_theme_constant_override("h_separation", 8)
+	transform_grid.add_theme_constant_override("v_separation", 8)
+	transform_box.add_child(transform_grid)
+	scape_scale_spin = SpinBox.new()
+	scape_scale_spin.min_value = 0.35
+	scape_scale_spin.max_value = 2.4
+	scape_scale_spin.step = 0.05
+	scape_scale_spin.value = 1.0
+	scape_scale_spin.suffix = "x scale"
+	_style_field(scape_scale_spin, Vector2(154, 32))
+	transform_grid.add_child(scape_scale_spin)
+	scape_rotation_spin = SpinBox.new()
+	scape_rotation_spin.min_value = -180
+	scape_rotation_spin.max_value = 180
+	scape_rotation_spin.step = 5
+	scape_rotation_spin.value = 0
+	scape_rotation_spin.suffix = " deg"
+	_style_field(scape_rotation_spin, Vector2(154, 32))
+	transform_grid.add_child(scape_rotation_spin)
+	scape_layer_select = OptionButton.new()
+	_style_field(scape_layer_select, Vector2(154, 32))
+	scape_layer_select.add_item("Back layer")
+	scape_layer_select.set_item_metadata(0, 0)
+	scape_layer_select.add_item("Mid layer")
+	scape_layer_select.set_item_metadata(1, 1)
+	scape_layer_select.add_item("Front layer")
+	scape_layer_select.set_item_metadata(2, 2)
+	scape_layer_select.select(1)
+	transform_grid.add_child(scape_layer_select)
+	scape_flip_check = CheckBox.new()
+	scape_flip_check.text = "Mirror piece"
+	scape_flip_check.custom_minimum_size = Vector2(154, 32)
+	transform_grid.add_child(scape_flip_check)
+	var transform_actions := HBoxContainer.new()
+	transform_actions.add_theme_constant_override("separation", 8)
+	transform_box.add_child(transform_actions)
+	var apply_transform := Button.new()
+	apply_transform.text = "Apply"
+	apply_transform.custom_minimum_size = Vector2(101, 34)
+	_style_button(apply_transform, "primary")
+	apply_transform.pressed.connect(func(): _apply_selected_scape_transform())
+	transform_actions.add_child(apply_transform)
+	var duplicate_scape := Button.new()
+	duplicate_scape.text = "Duplicate"
+	duplicate_scape.custom_minimum_size = Vector2(101, 34)
+	_style_button(duplicate_scape)
+	duplicate_scape.pressed.connect(func(): _duplicate_selected_scape())
+	transform_actions.add_child(duplicate_scape)
 	var remove_scape := Button.new()
 	remove_scape.text = "Remove"
 	remove_scape.custom_minimum_size = Vector2(101, 34)
 	_style_button(remove_scape, "danger")
 	remove_scape.pressed.connect(func(): _remove_selected_scape())
-	scape_actions.add_child(remove_scape)
+	transform_actions.add_child(remove_scape)
+
+	var hardscape_box := _make_section(scape_tab, "Hardscape library")
+	var hardscape_grid := GridContainer.new()
+	hardscape_grid.columns = 2
+	hardscape_grid.add_theme_constant_override("h_separation", 8)
+	hardscape_grid.add_theme_constant_override("v_separation", 8)
+	hardscape_box.add_child(hardscape_grid)
+	_add_scape_button(hardscape_grid, "River stone", "rocks", "river_stone")
+	_add_scape_button(hardscape_grid, "Moss stone", "rocks", "moss_stone")
+	_add_scape_button(hardscape_grid, "Slate stack", "rocks", "slate_stack")
+	_add_scape_button(hardscape_grid, "Lava rock", "rocks", "lava_rock")
+	_add_scape_button(hardscape_grid, "Live rock", "rocks", "live_rock")
+	_add_scape_button(hardscape_grid, "Reef arch", "rocks", "reef_arch")
+	_add_scape_button(hardscape_grid, "Branch log", "wood", "branch_driftwood")
+	_add_scape_button(hardscape_grid, "Root wood", "wood", "root_driftwood")
+	_add_scape_button(hardscape_grid, "Manzanita", "wood", "manzanita_branch")
+
+	var plant_box := _make_section(scape_tab, "Plant library")
+	var plant_grid := GridContainer.new()
+	plant_grid.columns = 2
+	plant_grid.add_theme_constant_override("h_separation", 8)
+	plant_grid.add_theme_constant_override("v_separation", 8)
+	plant_box.add_child(plant_grid)
+	_add_scape_button(plant_grid, "Hairgrass", "plants", "dwarf_hairgrass")
+	_add_scape_button(plant_grid, "Vallisneria", "plants", "vallisneria")
+	_add_scape_button(plant_grid, "Java fern", "plants", "java_fern")
+	_add_scape_button(plant_grid, "Amazon sword", "plants", "amazon_sword")
+	_add_scape_button(plant_grid, "Crypt", "plants", "cryptocoryne_wendtii")
+	_add_scape_button(plant_grid, "Java moss", "plants", "java_moss")
+	_add_scape_button(plant_grid, "Hornwort", "plants", "hornwort")
+	_add_scape_button(plant_grid, "Floaters", "plants", "red_root_floaters")
+	_add_scape_button(plant_grid, "Halimeda", "plants", "halimeda_macroalgae")
+
+	var coral_box := _make_section(scape_tab, "Reef library")
+	var coral_grid := GridContainer.new()
+	coral_grid.columns = 2
+	coral_grid.add_theme_constant_override("h_separation", 8)
+	coral_grid.add_theme_constant_override("v_separation", 8)
+	coral_box.add_child(coral_grid)
+	_add_scape_button(coral_grid, "Zoanthids", "corals", "zoanthids")
+	_add_scape_button(coral_grid, "Mushroom coral", "corals", "mushroom_coral")
+	_add_scape_button(coral_grid, "Star polyps", "corals", "green_star_polyps")
+	_add_scape_button(coral_grid, "Torch coral", "corals", "torch_coral")
+	_add_scape_button(coral_grid, "Xenia", "corals", "pulsing_xenia")
+	_add_scape_button(coral_grid, "Kenya tree", "corals", "kenya_tree_coral")
+
+	var scape_actions := HBoxContainer.new()
+	scape_actions.add_theme_constant_override("separation", 8)
+	scape_tab.add_child(scape_actions)
+	var reset_scape := Button.new()
+	reset_scape.text = "Starter scape"
+	reset_scape.custom_minimum_size = Vector2(154, 34)
+	_style_button(reset_scape)
+	reset_scape.pressed.connect(func(): _clear_scape_editor(); _write_command({"action": "reset_scape"}))
+	scape_actions.add_child(reset_scape)
+	var clear_scape_button := Button.new()
+	clear_scape_button.text = "Clear canvas"
+	clear_scape_button.custom_minimum_size = Vector2(154, 34)
+	_style_button(clear_scape_button, "danger")
+	clear_scape_button.pressed.connect(func(): _clear_scape_editor(); _write_command({"action": "clear_scape"}))
+	scape_actions.add_child(clear_scape_button)
 
 	var journal_tab := _add_tab(tabs, "Journal")
 	var readings_box := _make_section(journal_tab, "Readings", "The same information appears as sensors on the tank, but this gives exact values.")
@@ -1047,7 +1163,12 @@ func _build_ui() -> void:
 func _add_scape_button(parent: Container, text: String, category: String, item_type: String, quantity: int = 1) -> void:
 	var button := Button.new()
 	button.text = text
-	button.custom_minimum_size = Vector2(154, 30)
+	button.custom_minimum_size = Vector2(154, 42)
+	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	if scape_textures.has(item_type):
+		button.icon = scape_textures[item_type]
+		button.expand_icon = true
+		button.add_theme_constant_override("icon_max_width", 30)
 	_style_button(button, "ghost")
 	button.pressed.connect(func(): _choose_scape_tool(category, item_type, text))
 	parent.add_child(button)
@@ -1188,6 +1309,18 @@ func _water_change_command() -> Dictionary:
 
 func _feed_command() -> Dictionary:
 	var command := COMMAND_FEED.duplicate()
+	var total_bioload := 0.0
+	var total_hunger := 0.0
+	var living := 0
+	for animal in state.get("animals", []):
+		if not bool(animal.get("alive", true)):
+			continue
+		var spec: Dictionary = species.get(str(animal.get("species_id", "")), {})
+		total_bioload += float(spec.get("bioload", 0.5))
+		total_hunger += float(animal.get("hunger", 0.35))
+		living += 1
+	var average_hunger: float = total_hunger / max(1.0, float(living))
+	command["amount"] = clamp(total_bioload * 0.14 * (0.65 + average_hunger), 0.16, 1.5) if living > 0 else 0.16
 	if food_select and food_select.selected >= 0:
 		command["food_type"] = str(food_select.get_item_metadata(food_select.selected))
 	return command
@@ -1473,13 +1606,50 @@ func _refresh_research_card() -> void:
 	var filter = equipment.get("filter", {})
 	var media = filter.get("media", {})
 	var mechanical = media.get("mechanical", {})
-	right.append("Filter flow %.0f%%, clog %.0f%%, channeling %.0f%%. Mature biofilm %.0f%%, microfauna %.0f%%, mulm %.0f%%." % [
+	right.append("Filter flow %.0f%%, clog %.0f%%, channeling %.0f%%, bypass %.0f%%, slough risk %.0f%%. Main cause: %s." % [
 		float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0,
 		float(mechanical.get("clog", 0.0)) * 100.0,
 		float(mechanical.get("channeling", 0.0)) * 100.0,
+		float(filter.get("bypass_risk", 0.0)) * 100.0,
+		float(filter.get("biofilm_slough_risk", 0.0)) * 100.0,
+		str(filter.get("last_flow_driver", "balanced flow"))
+	])
+	right.append("Mature biofilm %.0f%%, microfauna %.0f%%, mulm %.0f%%. Old tanks gain stability, but also trapped waste, biofilm shedding, and hypoxic pockets if ignored." % [
 		float(maturity.get("biofilm", 0.0)) * 100.0,
 		float(maturity.get("microfauna", 0.0)) * 100.0,
 		float(maturity.get("mulm", 0.0)) * 100.0
+	])
+	var heater = equipment.get("heater", {})
+	var light = equipment.get("light", {})
+	var air = equipment.get("air_pump", {})
+	right.append("Heater variance %.2f C, cycling %.0f%%, sticky thermostat %.0f%%, driver %s. Placement and room swings decide whether the set point is really stable." % [
+		float(heater.get("temperature_variance_c", 0.0)),
+		float(heater.get("cycle_stress", 0.0)) * 100.0,
+		float(heater.get("thermostat_stickiness", 0.0)) * 100.0,
+		str(heater.get("last_heat_driver", "stable"))
+	])
+	right.append("Light actual %.1fh, PAR %.0f%%, lens film %.0f%%, spectrum shift %.0f%%, driver %s. Dirty covers can starve plants before the light looks broken." % [
+		float(light.get("actual_hours_per_day", light.get("hours_per_day", 0.0))),
+		float(light.get("par_output", 0.0)) * 100.0,
+		float(light.get("lens_film", 0.0)) * 100.0,
+		float(light.get("spectrum_shift", 0.0)) * 100.0,
+		str(light.get("last_light_driver", "fresh output"))
+	])
+	right.append("Air delivered %.0f%%, airline clog %.0f%%, check-valve risk %.0f%%, driver %s. Surface movement and real delivered air decide oxygen/CO2 exchange." % [
+		float(air.get("effective_output", air.get("output", 0.0))) * 100.0,
+		float(air.get("airline_clog", 0.0)) * 100.0,
+		float(air.get("check_valve_risk", 0.0)) * 100.0,
+		str(air.get("last_air_driver", "clear airline"))
+	])
+	var skimmer = equipment.get("protein_skimmer", {})
+	var ato = equipment.get("auto_top_off", {})
+	right.append("Skimmer export %.0f%%, neck %.0f%%, tuning drift %.0f%%, microbubbles %.0f%%. ATO sensor film %.0f%% and overfill risk %.0f%%." % [
+		float(skimmer.get("effective_output", skimmer.get("output", 0.0))) * 100.0,
+		float(skimmer.get("neck_fouling", 0.0)) * 100.0,
+		float(skimmer.get("tuning_drift", 0.0)) * 100.0,
+		float(skimmer.get("microbubble_leak", 0.0)) * 100.0,
+		float(ato.get("sensor_film", 0.0)) * 100.0,
+		float(ato.get("overfill_risk", 0.0)) * 100.0
 	])
 	right.append("Redox %.0f mV, dissolved organics %.2f, substrate hypoxia %.0f%%, buffer stability %.0f%%." % [
 		float(water.get("redox_mv", 0.0)),
@@ -1502,6 +1672,8 @@ func _refresh_research_card() -> void:
 	var pages: Array = ["\n".join(left), "\n".join(right)]
 	pages.append("COMPATIBILITY CHECKLIST\nSame water type matters first. Then compare adult size, minimum group, preferred group, swim layer, territoriality, fin nipping, predator mouth size, activity level, hiding needs, and nitrate tolerance.\n\nSchooling fish are not decoration: they need their group before mixed community ideas matter. Territorial fish need broken sight lines and space. Bottom fish need substrate and hiding routes. Long-finned fish dislike strong current and fin nippers.")
 	pages.append("NITROGEN CYCLE\nFish waste and uneaten food become total ammonia, usually written TAN. Mature bacteria convert ammonia to nitrite, then nitrite to nitrate.\n\nThe toxic part is free un-ionized NH3. The same TAN is much more dangerous in warm alkaline water and less dangerous in cool acidic water. Nitrite also hurts oxygen transport.\n\nCurrent free ammonia fraction %.3f%%, toxicity index %.2f." % [float(chemistry.get("free_ammonia_fraction", 0.0)) * 100.0, float(water.get("nitrogen_toxicity_index", 0.0))])
+	var safety = state.get("safety", {})
+	pages.append("REAL TIME AND SURVIVAL\nAt normal speed, one real hour is one aquarium hour. Acute ammonia, nitrite, chlorine, oxygen loss, or severe acclimation shock can still become dangerous quickly. Social isolation, imperfect diet, ordinary disease pressure, and other chronic problems now build over days to weeks instead of killing healthy fish overnight.\n\nAn immature cycle is a warning, not invisible poison: fish are harmed when the immature filter allows ammonia or nitrite to rise. Larger tanks dilute livestock waste more effectively; small tanks concentrate it faster. Feed portions adapt to the living bioload and current hunger, but leftovers still decay.\n\nSafeguard readiness is %d%%. Fit the safety and outage kit for a lid, guarded intake, drip loops, protected-power plan, dedicated tools, spare conditioner, and battery aeration." % int(safety.get("readiness_score", 0)))
 	pages.append("WATER CHANGES\nA water change dilutes ammonia, nitrite, nitrate, phosphate, organics, turbidity, surface film, and detritus.\n\nIt can also add whatever is in the source water: nitrate, phosphate, chlorine, chloramine, silicate, KH, GH, TDS, calcium, magnesium, salinity, and trace elements.\n\nLarge, fast, cold, hot, untreated, pH-mismatched, hardness-mismatched, or substrate-disturbing changes cause shock. Disturbing the bed can remove compacted waste, but it can also release mulm and organics.")
 	pages.append("MAINTENANCE CHEMISTRY MEMORY\nA real tank remembers care. A large water change may test fine afterward but still leave animals dealing with source-water mismatch, conditioner residue, disturbed mulm, reduced biofilter margin, or chloramine-derived ammonia load.\n\nThe safest rhythm is small, matched, conditioned changes with the substrate cleaned in sections. Repeated big changes can create fatigue even when each one was meant to help.\n\nCurrent care style: %s. Last driver: %s. Change debt %.0f%%, mismatch %.0f%%, conditioner %.0f%%, substrate %.0f%%, biofilter %.0f%%, chloramine nitrogen %.0f%%." % [
 		str(maintenance_ecology.get("last_care_style", "settled")),
@@ -1781,10 +1953,23 @@ func _select_animal(index: int) -> void:
 	if index >= 0 and index < animal_ids.size():
 		selected_animal_id = str(animal_ids[index])
 
+func _animal_action_command(action: String, animal_id: String) -> Dictionary:
+	var command := {"action": action, "animal_id": animal_id}
+	for animal in state.get("animals", []):
+		if str(animal.get("id", "")) == animal_id:
+			command["species_id"] = str(animal.get("species_id", ""))
+			break
+	if animal_visuals.has(animal_id):
+		var inner := _tank_inner()
+		var pos: Vector2 = animal_visuals[animal_id].get("pos", inner.get_center())
+		command["x"] = clamp((pos.x - inner.position.x) / inner.size.x, 0.0, 1.0)
+		command["y"] = clamp((pos.y - inner.position.y) / inner.size.y, 0.0, 1.0)
+	return command
+
 func _remove_selected_animal() -> void:
 	if selected_animal_id == "":
 		return
-	_write_command({"action": "remove_animal", "animal_id": selected_animal_id})
+	_write_command(_animal_action_command("remove_animal", selected_animal_id))
 	selected_animal_id = ""
 
 func _quarantine_selected_animal() -> void:
@@ -1792,7 +1977,9 @@ func _quarantine_selected_animal() -> void:
 		if tool_label:
 			tool_label.text = "Select a resident first, then quarantine it for observation."
 		return
-	_write_command({"action": "quarantine_animal", "animal_id": selected_animal_id, "days": 14.0})
+	var command := _animal_action_command("quarantine_animal", selected_animal_id)
+	command["days"] = 14.0
+	_write_command(command)
 	if tool_label:
 		tool_label.text = "Selected animal moved to observation quarantine. Watch stress, appetite, and visible symptoms."
 
@@ -1800,14 +1987,123 @@ func _choose_scape_tool(category: String, item_type: String, label: String) -> v
 	selected_scape_tool = {"category": category, "type": item_type, "label": label}
 	selected_scape_object_id = ""
 	selected_animal_tool = {}
+	if scape_selection_label:
+		scape_selection_label.text = "Placing %s with the current object settings." % label
 	if tool_label:
-		tool_label.text = "Picked up %s. Move over the tank and click a valid surface." % label
+		tool_label.text = "Picked up %s. Its canvas preview shows scale, rotation, mirror, and depth before you place it." % label
+
+func _scape_object_by_id(object_id: String) -> Dictionary:
+	var scape = state.get("aquarium", {}).get("scape", {})
+	if typeof(scape) != TYPE_DICTIONARY:
+		return {}
+	for obj in scape.get("objects", []):
+		if str(obj.get("id", "")) == object_id:
+			return obj
+	return {}
+
+func _scape_transform_values() -> Dictionary:
+	var layer := 1
+	if scape_layer_select and scape_layer_select.selected >= 0:
+		layer = int(scape_layer_select.get_item_metadata(scape_layer_select.selected))
+	return {
+		"scale": float(scape_scale_spin.value) if scape_scale_spin else 1.0,
+		"rotation": float(scape_rotation_spin.value) if scape_rotation_spin else 0.0,
+		"layer": layer,
+		"flipped": bool(scape_flip_check.button_pressed) if scape_flip_check else false,
+	}
+
+func _set_scape_transform_controls(obj: Dictionary) -> void:
+	if scape_scale_spin:
+		scape_scale_spin.value = float(obj.get("scale", 1.0))
+	if scape_rotation_spin:
+		scape_rotation_spin.value = float(obj.get("rotation", 0.0))
+	if scape_flip_check:
+		scape_flip_check.button_pressed = bool(obj.get("flipped", false))
+	if scape_layer_select:
+		var layer := int(obj.get("layer", 1))
+		for index in range(scape_layer_select.item_count):
+			if int(scape_layer_select.get_item_metadata(index)) == layer:
+				scape_layer_select.select(index)
+				break
+
+func _select_scape_object(object_id: String) -> void:
+	var obj := _scape_object_by_id(object_id)
+	if obj.is_empty():
+		return
+	selected_scape_object_id = object_id
+	selected_scape_tool = {}
+	selected_animal_tool = {}
+	_set_scape_transform_controls(obj)
+	var title := str(obj.get("type", "scape item")).replace("_", " ").capitalize()
+	var layer_index: int = clampi(int(obj.get("layer", 1)), 0, 2)
+	var layer: String = ["back", "mid", "front"][layer_index]
+	if scape_selection_label:
+		scape_selection_label.text = "Selected %s, %.2fx, %s layer." % [title, float(obj.get("scale", 1.0)), layer]
+	if tool_label:
+		tool_label.text = "Selected %s. Click another valid point to relocate it, or adjust it in the object editor." % title
+
+func _clear_scape_editor() -> void:
+	selected_scape_tool = {}
+	selected_scape_object_id = ""
+	if scape_selection_label:
+		scape_selection_label.text = "No piece selected. Placement settings are ready."
+	if tool_label:
+		tool_label.text = "Choose a piece, set its shape, then place it on the canvas."
+
+func _apply_selected_scape_transform() -> void:
+	if selected_scape_object_id == "":
+		if tool_label:
+			tool_label.text = "Select a placed object in the aquarium before applying a transform."
+		return
+	var command := _scape_object_action_command("move_scape_item", selected_scape_object_id)
+	if command.size() <= 1:
+		return
+	var transform: Dictionary = _scape_transform_values()
+	for key in transform:
+		command[key] = transform[key]
+	_write_command(command)
+	if tool_label:
+		tool_label.text = "Applied the selected piece's scale, rotation, mirror, and depth."
+
+func _duplicate_selected_scape() -> void:
+	if selected_scape_object_id == "":
+		if tool_label:
+			tool_label.text = "Select a placed object before duplicating it."
+		return
+	_write_command(_scape_object_action_command("duplicate_scape_item", selected_scape_object_id))
+	if tool_label:
+		tool_label.text = "Duplicated the selected piece beside the original so you can compose a cluster."
+
+func _scape_object_action_command(action: String, object_id: String) -> Dictionary:
+	var command := {"action": action, "object_id": object_id}
+	var scape = state.get("aquarium", {}).get("scape", {})
+	if typeof(scape) != TYPE_DICTIONARY:
+		return command
+	for obj in scape.get("objects", []):
+		if str(obj.get("id", "")) != object_id:
+			continue
+		command["category"] = str(obj.get("category", ""))
+		command["type"] = str(obj.get("type", ""))
+		if obj.has("x"):
+			command["x"] = float(obj.get("x", 0.5))
+		if obj.has("y"):
+			command["y"] = float(obj.get("y", 0.76))
+		if obj.has("scale"):
+			command["scale"] = float(obj.get("scale", 1.0))
+		if obj.has("rotation"):
+			command["rotation"] = float(obj.get("rotation", 0.0))
+		if obj.has("layer"):
+			command["layer"] = int(obj.get("layer", 1))
+		if obj.has("flipped"):
+			command["flipped"] = bool(obj.get("flipped", false))
+		break
+	return command
 
 func _remove_selected_scape() -> void:
 	if selected_scape_object_id == "":
 		return
-	_write_command({"action": "remove_scape_item", "object_id": selected_scape_object_id})
-	selected_scape_object_id = ""
+	_write_command(_scape_object_action_command("remove_scape_item", selected_scape_object_id))
+	_clear_scape_editor()
 
 func _write_command(command: Dictionary) -> void:
 	var action := str(command.get("action", "command"))
@@ -1835,13 +2131,22 @@ func _sync_animals() -> void:
 			continue
 		var seed := int(animal.get("position_seed", 0))
 		var spec = species.get(animal.get("species_id", ""), {})
+		var start_pos: Vector2 = _release_point(animal, seed, spec.get("swim_zone", "middle"))
+		var start_target: Vector2 = _seeded_point(seed + 31, spec.get("swim_zone", "middle"))
+		var start_direction: Vector2 = (start_target - start_pos).normalized()
+		if start_direction.length() < 0.01:
+			start_direction = Vector2.RIGHT if seed % 2 == 0 else Vector2.LEFT
+		var start_speed: float = lerp(16.0, 34.0, clamp(float(spec.get("activity", 0.5)), 0.0, 1.0))
 		var visual := {
 			"seed": seed,
 			"species_id": animal.get("species_id", ""),
 			"phase": float(seed % 628) / 100.0,
-			"pos": _release_point(animal, seed, spec.get("swim_zone", "middle")),
-			"target": _seeded_point(seed + 31, spec.get("swim_zone", "middle")),
-			"facing": 1.0
+			"pos": start_pos,
+			"target": start_target,
+			"velocity": start_direction * start_speed,
+			"facing": 1.0 if start_direction.x >= 0.0 else -1.0,
+			"bank": 0.0,
+			"turn_energy": 0.0,
 		}
 		animal_visuals[id] = visual
 	for id in animal_visuals.keys():
@@ -1866,23 +2171,72 @@ func _animate_animals(delta: float) -> void:
 		var pos: Vector2 = visual["pos"]
 		var target: Vector2 = visual["target"]
 		var routine := str(animal.get("routine", "explore"))
-		if pos.distance_to(target) < 16.0:
+		if pos.distance_to(target) < 24.0:
 			visual["target"] = _routine_target(animal, spec, visual, school_centers)
 			target = visual["target"]
+		var feed_strength := _active_action_strength(["feed"])
+		if feed_strength > 0.05 and not (routine in ["hide", "rest"]):
+			target = _feeding_target_for_zone(zone, seed)
+			visual["target"] = target
+		var disturbance := _active_action_strength(DISTURBING_ACTIONS)
+		if disturbance > 0.05:
+			var source := _active_action_point(DISTURBING_ACTIONS, Vector2(0.52, 0.55))
+			var away := pos - source
+			if away.length() < 1.0:
+				away = Vector2(1.0 if seed % 2 == 0 else -1.0, 0.35)
+			target = _clamped_tank_point(source + away.normalized() * lerp(96.0, 230.0, disturbance) + Vector2(0, 32.0 * disturbance))
+			visual["target"] = target
 		var speed: float = lerp(18.0, 58.0, activity)
 		speed *= lerp(0.62, 1.18, clamp(float(animal.get("activity_drive", 0.55)), 0.0, 1.0))
 		speed *= lerp(0.78, 1.08, clamp(float(animal.get("confidence", 0.55)), 0.0, 1.0))
 		speed *= lerp(1.04, 0.68, clamp(float(animal.get("fear_memory", 0.0)), 0.0, 1.0))
+		if feed_strength > 0.05:
+			speed *= lerp(1.0, 1.72, feed_strength)
+		if disturbance > 0.05:
+			speed *= lerp(1.0, 1.55, disturbance)
 		if routine in ["rest", "hide", "hang_back"]:
 			speed *= 0.42
 		elif routine in ["flee", "pace"]:
 			speed *= 1.45
 		elif routine == "school":
 			speed *= lerp(0.78, 1.02, clamp(float(animal.get("school_cohesion", 0.55)), 0.0, 1.0))
-		var next := pos.move_toward(target, speed * delta)
-		visual["facing"] = 1.0 if target.x >= pos.x else -1.0
+		var aim: Vector2 = target - pos
+		var desired_velocity := Vector2.ZERO
+		if aim.length() > 1.0:
+			desired_velocity = aim.normalized() * speed
+		var current := _water_current_at(pos)
+		if routine in ["rest", "hide", "hang_back"]:
+			current *= 0.55
+		var lateral := Vector2(-desired_velocity.y, desired_velocity.x).normalized()
+		var glide: float = sin(Time.get_ticks_msec() / 1000.0 * (0.88 + activity * 0.36) + seed * 0.71)
+		desired_velocity += current + lateral * glide * speed * lerp(0.028, 0.075, activity)
+		var velocity: Vector2 = visual.get("velocity", desired_velocity) as Vector2
+		if velocity.length() < 0.01:
+			velocity = desired_velocity
+		var response: float = lerp(2.6, 5.6, activity)
+		if routine in ["flee", "pace"] or disturbance > 0.05:
+			response *= 1.38
+		velocity = velocity.lerp(desired_velocity, clamp(response * delta, 0.0, 1.0))
+		var max_speed: float = max(10.0, speed * 1.28)
+		if velocity.length() > max_speed:
+			velocity = velocity.normalized() * max_speed
+		var unbounded_next: Vector2 = pos + velocity * delta
+		var next: Vector2 = _clamped_tank_point(unbounded_next)
+		if next.distance_to(unbounded_next) > 0.5:
+			velocity = Vector2(-velocity.x * 0.36, velocity.y * 0.72)
+			visual["target"] = _routine_target(animal, spec, visual, school_centers)
+		var facing: float = float(visual.get("facing", 1.0))
+		if abs(velocity.x) > 0.35:
+			facing = 1.0 if velocity.x >= 0.0 else -1.0
+		var heading: float = clamp(atan2(velocity.y, max(abs(velocity.x), 1.0)) * facing, -0.28, 0.28)
+		var previous_bank: float = float(visual.get("bank", 0.0))
+		visual["facing"] = facing
 		visual["pos"] = next
-		visual["phase"] = float(visual["phase"]) + delta * (2.0 + activity * 2.6)
+		visual["velocity"] = velocity
+		visual["bank"] = lerp(previous_bank, heading, clamp(delta * 7.0, 0.0, 1.0))
+		visual["turn_energy"] = clamp(abs(heading - previous_bank) * 6.5, 0.0, 1.0)
+		visual["phase"] = float(visual["phase"]) + delta * (1.5 + activity * 1.8 + velocity.length() * 0.022)
+		visual["speed_ratio"] = clamp(velocity.length() / 82.0, 0.0, 1.8)
 		animal_visuals[id] = visual
 
 func _school_centers(animals: Array) -> Dictionary:
@@ -1966,6 +2320,50 @@ func _moving_target(seed: int, zone: String) -> Vector2:
 	var y := _zone_y(zone, fposmod(cos(t * 0.53 + seed * 0.31) * 0.5 + 0.5, 1.0))
 	return Vector2(x, y)
 
+func _clamped_tank_point(point: Vector2) -> Vector2:
+	var inner := _tank_inner()
+	return Vector2(
+		clamp(point.x, inner.position.x + 42.0, inner.end.x - 42.0),
+		clamp(point.y, inner.position.y + 44.0, inner.end.y - _substrate_height() - 18.0)
+	)
+
+func _water_current_at(point: Vector2) -> Vector2:
+	var equipment: Dictionary = state.get("equipment", {})
+	var filter: Dictionary = equipment.get("filter", {})
+	var air: Dictionary = equipment.get("air_pump", {})
+	var flow: float = clamp(float(filter.get("effective_flow", filter.get("flow", 0.0))) if bool(filter.get("enabled", true)) else 0.0, 0.0, 1.0)
+	var air_output: float = clamp(float(air.get("effective_output", air.get("output", 0.0))) if bool(air.get("enabled", true)) else 0.0, 0.0, 1.0)
+	var inner := _tank_inner()
+	var depth: float = clamp((point.y - inner.position.y) / max(1.0, inner.size.y), 0.0, 1.0)
+	var t: float = Time.get_ticks_msec() / 1000.0
+	var return_flow: float = lerp(2.2, 15.0, flow) * lerp(0.70, 1.10, depth)
+	var vertical: float = sin(t * 1.4 + point.x * 0.021) * (0.8 + flow * 2.8)
+	var air_stone := Vector2(inner.position.x + inner.size.x * 0.18, inner.end.y - _substrate_height() - 18.0)
+	var air_distance: float = point.distance_to(air_stone)
+	var air_lift: float = clamp(1.0 - air_distance / max(90.0, inner.size.x * 0.34), 0.0, 1.0) * air_output * 7.5
+	return Vector2(-return_flow, vertical - air_lift)
+
+func _feeding_target_for_zone(zone: String, seed: int) -> Vector2:
+	var inner := _tank_inner()
+	var effect := _latest_action_effect(["feed"])
+	var food_type := str(effect.get("food_type", "community_flake"))
+	var base_x := inner.position.x + inner.size.x * (0.36 + sin(seed * 0.77) * 0.10)
+	var y_ratio := 0.32
+	match food_type:
+		"sinking_wafer", "algae_wafer":
+			y_ratio = 0.78
+		"micro_pellet":
+			y_ratio = 0.48
+		"frozen_invertebrates":
+			y_ratio = 0.44
+		"reef_plankton":
+			y_ratio = 0.36
+		_:
+			y_ratio = 0.22 if zone == "upper" else 0.34
+	if zone == "bottom":
+		y_ratio = max(y_ratio, 0.74)
+	return _clamped_tank_point(Vector2(base_x + sin(seed * 1.9) * 42.0, inner.position.y + inner.size.y * y_ratio + cos(seed) * 18.0))
+
 func _zone_y(zone: String, ratio: float) -> float:
 	var inner := _tank_inner()
 	var water_bottom := inner.position.y + inner.size.y - SAND_HEIGHT
@@ -2045,8 +2443,10 @@ func _draw_aquarium() -> void:
 		var gap_h := (1.0 - water_level) * inner.size.y * 0.72
 		draw_rect(Rect2(inner.position, Vector2(inner.size.x, gap_h)), Color("#071013", 0.72), true)
 		draw_line(inner.position + Vector2(18, gap_h), inner.position + Vector2(inner.size.x - 18, gap_h), Color(0.84, 0.96, 1.0, 0.34), 2.0, true)
+	_draw_water_light_volume(inner, water_level)
 	_draw_water_seasoning(inner)
 	_draw_specific_algae(inner)
+	_draw_current_flow_lines(inner)
 	for i in range(3):
 		var y := inner.position.y + 24.0 + i * 18.0 + sin(Time.get_ticks_msec() / 900.0 + i) * 3.0
 		_draw_wave(Vector2(inner.position.x + 18.0, y), inner.size.x - 36.0, Color(0.74, 0.94, 0.98, 0.16), 2.0 + i)
@@ -2070,6 +2470,93 @@ func _draw_day_night_water_overlay(inner: Rect2) -> void:
 		for i in range(4):
 			var y := inner.position.y + 44.0 + i * 42.0 + sin(Time.get_ticks_msec() / 1400.0 + i) * 2.0
 			_draw_wave(Vector2(inner.position.x + 34.0, y), inner.size.x - 68.0, Color(0.48, 0.68, 0.92, 0.055), 1.4 + i * 0.4)
+
+func _draw_water_light_volume(inner: Rect2, water_level: float) -> void:
+	var clock: Dictionary = state.get("clock", {})
+	if not bool(clock.get("lights_on", true)):
+		return
+	var equipment: Dictionary = state.get("equipment", {})
+	var light: Dictionary = equipment.get("light", {})
+	var par: float = clamp(float(light.get("par_output", light.get("health", 1.0))), 0.0, 1.0)
+	var spectrum: float = clamp(float(light.get("effective_spectrum", light.get("plant_spectrum", 0.82))), 0.0, 1.0)
+	var water: Dictionary = state.get("water", {})
+	var system := str(water.get("system", "freshwater"))
+	var water_top: float = inner.position.y + (1.0 - water_level) * inner.size.y * 0.72
+	var water_bottom: float = inner.end.y - _substrate_height() - 8.0
+	if water_bottom <= water_top + 30.0:
+		return
+	var intensity: float = lerp(0.42, 1.0, par * spectrum)
+	var light_color := Color(0.76, 0.98, 0.86, 1.0) if system == "freshwater" else Color(0.70, 0.91, 1.0, 1.0)
+	var t: float = Time.get_ticks_msec() / 1000.0
+	draw_rect(Rect2(inner.position.x + 18.0, water_top + 2.0, inner.size.x - 36.0, 18.0), Color(light_color.r, light_color.g, light_color.b, 0.025 * intensity), true)
+	for shaft in range(5):
+		var top_x: float = inner.position.x + inner.size.x * (0.10 + float(shaft) * 0.20) + sin(t * 0.42 + shaft * 1.7) * 20.0
+		var bottom_x: float = top_x + sin(t * 0.58 + shaft * 2.1) * 64.0 - 22.0
+		var top_width: float = 42.0 + float(shaft % 2) * 18.0
+		var bottom_width: float = 128.0 + float((shaft + 1) % 3) * 22.0
+		var points := PackedVector2Array([
+			Vector2(top_x - top_width * 0.5, water_top + 4.0),
+			Vector2(top_x + top_width * 0.5, water_top + 4.0),
+			Vector2(bottom_x + bottom_width * 0.5, water_bottom),
+			Vector2(bottom_x - bottom_width * 0.5, water_bottom),
+		])
+		var shaft_alpha: float = (0.012 + float(shaft % 2) * 0.006) * intensity
+		draw_polygon(points, PackedColorArray([
+			Color(light_color.r, light_color.g, light_color.b, shaft_alpha * 1.5),
+			Color(light_color.r, light_color.g, light_color.b, shaft_alpha * 1.5),
+			Color(light_color.r, light_color.g, light_color.b, shaft_alpha * 0.10),
+			Color(light_color.r, light_color.g, light_color.b, shaft_alpha * 0.10),
+		]))
+	for ripple in range(5):
+		var surface_y: float = water_top + 6.0 + float(ripple) * 2.4
+		var surface_points := PackedVector2Array()
+		for point in range(38):
+			var x: float = inner.position.x + 14.0 + float(point) * (inner.size.x - 28.0) / 37.0
+			var y: float = surface_y + sin(t * 2.6 + point * 0.61 + ripple) * (0.9 + ripple * 0.18)
+			surface_points.push_back(Vector2(x, y))
+		draw_polyline(surface_points, Color(light_color.r, light_color.g, light_color.b, (0.045 - ripple * 0.005) * intensity), 1.0, true)
+	for caustic in range(24):
+		var column: float = fposmod(float(caustic) * 0.173 + t * (0.025 + float(caustic % 3) * 0.006), 1.0)
+		var row: float = fposmod(float(caustic) * 0.317 + sin(t * 0.44 + caustic) * 0.06, 1.0)
+		var pos := Vector2(
+			inner.position.x + 36.0 + column * (inner.size.x - 72.0),
+			lerp(water_top + 34.0, water_bottom - 26.0, row)
+		)
+		var radius_x: float = 9.0 + float(caustic % 5) * 2.6
+		var radius_y: float = 2.6 + float(caustic % 3) * 0.9
+		var alpha: float = (0.018 + float(caustic % 4) * 0.005) * intensity * lerp(1.0, 0.36, row)
+		_draw_ellipse(pos, radius_x, radius_y, Color(light_color.r, light_color.g, light_color.b, alpha), false, 1.0)
+		if caustic % 2 == 0:
+			draw_line(pos + Vector2(-radius_x * 0.62, 0), pos + Vector2(radius_x * 0.56, sin(t * 2.0 + caustic) * 2.2), Color(light_color.r, light_color.g, light_color.b, alpha * 0.66), 0.9, true)
+	for mote in range(18):
+		var mote_column: float = fposmod(float(mote) * 0.193 + t * 0.011, 1.0)
+		var mote_row: float = fposmod(float(mote) * 0.271 - t * (0.012 + float(mote % 3) * 0.002), 1.0)
+		var mote_pos := Vector2(inner.position.x + 28.0 + mote_column * (inner.size.x - 56.0), lerp(water_top + 30.0, water_bottom - 18.0, mote_row))
+		draw_circle(mote_pos, 0.7 + float(mote % 3) * 0.28, Color(light_color.r, light_color.g, light_color.b, (0.035 + float(mote % 3) * 0.008) * intensity))
+
+func _draw_current_flow_lines(inner: Rect2) -> void:
+	var equipment: Dictionary = state.get("equipment", {})
+	var filter: Dictionary = equipment.get("filter", {})
+	var air: Dictionary = equipment.get("air_pump", {})
+	var flow: float = clamp(float(filter.get("effective_flow", filter.get("flow", 0.0))), 0.0, 1.0)
+	var air_output: float = clamp(float(air.get("effective_output", air.get("output", 0.0))) if bool(air.get("enabled", true)) else 0.0, 0.0, 1.0)
+	var t: float = Time.get_ticks_msec() / 1000.0
+	var count: int = int(7 + flow * 12.0 + air_output * 5.0)
+	for i in range(count):
+		var lane: float = float(i) / max(1.0, float(count - 1))
+		var y: float = lerp(inner.position.y + 72.0, inner.end.y - _substrate_height() - 42.0, lane)
+		var travel: float = fposmod(t * (0.05 + flow * 0.12) + float(i) * 0.137, 1.0)
+		var x: float = lerp(inner.end.x - 82.0, inner.position.x + 62.0, travel)
+		var points := PackedVector2Array()
+		for p in range(7):
+			var offset: float = float(p) * 10.0
+			points.push_back(Vector2(x + offset, y + sin(t * 1.7 + i + p * 0.9) * (2.0 + flow * 4.0)))
+		draw_polyline(points, Color(0.78, 0.96, 1.0, 0.022 + flow * 0.050), 1.2, true)
+	if air_output > 0.05:
+		var stone := Vector2(inner.position.x + inner.size.x * 0.18, inner.end.y - _substrate_height() - 16)
+		for r in range(3):
+			var p: float = fposmod(t * (0.18 + r * 0.04), 1.0)
+			draw_arc(stone + Vector2(0, -p * inner.size.y * 0.46), 22.0 + p * 58.0 + r * 11.0, -PI * 0.20, PI * 1.20, 34, Color(0.74, 0.94, 1.0, air_output * 0.045 * (1.0 - p)), 1.2, true)
 
 func _draw_specific_algae(inner: Rect2) -> void:
 	var symptoms = state.get("symptoms", {})
@@ -2187,11 +2674,6 @@ func _scape_items(category: String) -> Array:
 	if typeof(scape) == TYPE_DICTIONARY and scape.has(category):
 		for item in scape.get(category, []):
 			result.append(item)
-		for obj in scape.get("objects", []):
-			if str(obj.get("category", "")) == category:
-				var copy: Dictionary = obj.duplicate()
-				copy["quantity"] = 1
-				result.append(copy)
 		return result
 	if category == "rocks":
 		return [{"type": "river_stone", "quantity": 5}, {"type": "moss_stone", "quantity": 2}]
@@ -2213,15 +2695,177 @@ func _object_pos(item: Dictionary, fallback: Vector2) -> Vector2:
 		return inner.position + Vector2(float(item["x"]) * inner.size.x, float(item["y"]) * inner.size.y)
 	return fallback
 
+func _scape_object_draw_size(category: String, item_type: String) -> Vector2:
+	match item_type:
+		"river_stone":
+			return Vector2(96, 74)
+		"moss_stone":
+			return Vector2(112, 84)
+		"dragon_stone":
+			return Vector2(126, 96)
+		"slate_stack":
+			return Vector2(118, 88)
+		"lava_rock", "live_rock":
+			return Vector2(108, 84)
+		"reef_arch":
+			return Vector2(182, 132)
+		"branch_driftwood", "manzanita_branch":
+			return Vector2(190, 148)
+		"root_driftwood":
+			return Vector2(208, 164)
+		"dwarf_hairgrass":
+			return Vector2(110, 96)
+		"vallisneria", "turtle_grass":
+			return Vector2(108, 172)
+		"amazon_sword", "hornwort":
+			return Vector2(106, 132)
+		"java_fern":
+			return Vector2(96, 98)
+		"anubias", "cryptocoryne_wendtii", "halimeda_macroalgae":
+			return Vector2(86, 82)
+		"java_moss":
+			return Vector2(92, 66)
+		"red_root_floaters":
+			return Vector2(108, 78)
+		"torch_coral", "kenya_tree_coral":
+			return Vector2(108, 116)
+		"zoanthids", "mushroom_coral", "green_star_polyps", "pulsing_xenia":
+			return Vector2(94, 74)
+	return Vector2(96, 88) if category != "wood" else Vector2(180, 140)
+
+func _custom_scape_objects_for_layer(layer: int) -> Array:
+	var scape = state.get("aquarium", {}).get("scape", {})
+	var objects: Array = []
+	if typeof(scape) != TYPE_DICTIONARY:
+		return objects
+	for value in scape.get("objects", []):
+		if typeof(value) != TYPE_DICTIONARY:
+			continue
+		var obj: Dictionary = value
+		if int(obj.get("layer", 1)) == layer:
+			objects.append(obj)
+	objects.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
+		var left_y: float = float(left.get("y", 0.0))
+		var right_y: float = float(right.get("y", 0.0))
+		if not is_equal_approx(left_y, right_y):
+			return left_y < right_y
+		return str(left.get("id", "")) < str(right.get("id", ""))
+	)
+	return objects
+
+func _draw_custom_scape_objects(layer: int) -> void:
+	for obj in _custom_scape_objects_for_layer(layer):
+		_draw_custom_scape_object(obj)
+
+func _draw_custom_scape_object(obj: Dictionary) -> void:
+	var category := str(obj.get("category", ""))
+	var item_type := str(obj.get("type", ""))
+	if category == "" or item_type == "":
+		return
+	var scale: float = clamp(float(obj.get("scale", 1.0)), 0.35, 2.4)
+	var draw_size := _scape_object_draw_size(category, item_type) * scale
+	var pos := _object_pos(obj, _tank_inner().get_center())
+	var rotation: float = deg_to_rad(float(obj.get("rotation", 0.0)))
+	var flip := bool(obj.get("flipped", false))
+	var tint := Color.WHITE
+	if category == "plants" or category == "corals":
+		var health: float = clamp(float(obj.get("health", 0.86)), 0.0, 1.0)
+		tint = Color.WHITE.lerp(Color("#8e7b4f"), 1.0 - health)
+	if category in ["rocks", "wood", "corals"]:
+		_draw_ellipse(pos + Vector2(8, draw_size.y * 0.16), draw_size.x * 0.32, max(5.0, draw_size.y * 0.09), Color(0.01, 0.02, 0.02, 0.19), true)
+	if _draw_scape_sprite(item_type, pos, draw_size, flip, tint, rotation):
+		return
+	match category:
+		"rocks":
+			_draw_rock(pos, draw_size.x * 0.38, _rock_color(item_type), int(pos.x + pos.y))
+		"wood":
+			_draw_driftwood(pos + Vector2(0, draw_size.y * 0.28), 4, int(pos.x))
+		"plants":
+			_draw_rosette(int(pos.x), _tank_inner(), _tank_inner().end.y - _substrate_height(), Color("#5ca86c"), draw_size.y * 0.55)
+		"corals":
+			_draw_coral_fallback(item_type, pos, int(pos.y), 0.86)
+
+func _scape_layer_color(layer: int) -> Color:
+	match layer:
+		0:
+			return Color("#88b7df")
+		2:
+			return Color("#e2c56c")
+		_:
+			return Color("#78d2a1")
+
+func _draw_scape_editor_overlay() -> void:
+	var inner := _tank_inner()
+	if selected_scape_object_id != "":
+		var selected := _scape_object_by_id(selected_scape_object_id)
+		if not selected.is_empty():
+			var category := str(selected.get("category", ""))
+			var item_type := str(selected.get("type", ""))
+			var scale: float = clamp(float(selected.get("scale", 1.0)), 0.35, 2.4)
+			var draw_size := _scape_object_draw_size(category, item_type) * scale
+			var pos := _object_pos(selected, inner.get_center())
+			var rotation: float = deg_to_rad(float(selected.get("rotation", 0.0)))
+			var x_scale := -1.0 if bool(selected.get("flipped", false)) else 1.0
+			var color := _scape_layer_color(int(selected.get("layer", 1)))
+			draw_set_transform(pos, rotation, Vector2(x_scale, 1.0))
+			var frame := Rect2(-draw_size * 0.5 - Vector2(6, 6), draw_size + Vector2(12, 12))
+			draw_rect(frame, Color(color.r, color.g, color.b, 0.065), true)
+			draw_rect(frame, Color(color.r, color.g, color.b, 0.82), false, 1.5, true)
+			var handle := Vector2(0, -draw_size.y * 0.5 - 18.0)
+			draw_line(Vector2(0, -draw_size.y * 0.5 - 6.0), handle, Color(color.r, color.g, color.b, 0.76), 1.4, true)
+			draw_circle(handle, 4.5, Color(color.r, color.g, color.b, 0.9))
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			var pending: Dictionary = _scape_transform_values()
+			var pending_scale: float = float(pending.get("scale", scale))
+			var pending_rotation: float = deg_to_rad(float(pending.get("rotation", rad_to_deg(rotation))))
+			var pending_layer: int = int(pending.get("layer", int(selected.get("layer", 1))))
+			var pending_flip: bool = bool(pending.get("flipped", bool(selected.get("flipped", false))))
+			var changed: bool = abs(pending_scale - scale) > 0.005 or abs(pending_rotation - rotation) > 0.002 or pending_layer != int(selected.get("layer", 1)) or pending_flip != bool(selected.get("flipped", false))
+			if changed:
+				var pending_size := _scape_object_draw_size(category, item_type) * pending_scale
+				var pending_color := _scape_layer_color(pending_layer)
+				draw_set_transform(pos, pending_rotation, Vector2(-1.0 if pending_flip else 1.0, 1.0))
+				draw_rect(Rect2(-pending_size * 0.5 - Vector2(3, 3), pending_size + Vector2(6, 6)), Color(pending_color.r, pending_color.g, pending_color.b, 0.46), false, 1.0, true)
+				draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if selected_scape_tool.is_empty():
+		return
+	var mouse := get_viewport().get_mouse_position()
+	if not inner.has_point(mouse):
+		return
+	var category := str(selected_scape_tool.get("category", ""))
+	var item_type := str(selected_scape_tool.get("type", ""))
+	var normalized := Vector2(
+		clamp((mouse.x - inner.position.x) / inner.size.x, 0.0, 1.0),
+		clamp((mouse.y - inner.position.y) / inner.size.y, 0.0, 1.0)
+	)
+	var valid := _client_position_valid(category, item_type, normalized, true)
+	var transform := _scape_transform_values()
+	var scale: float = float(transform.get("scale", 1.0))
+	var draw_size := _scape_object_draw_size(category, item_type) * scale
+	var preview_color := Color(0.70, 0.94, 0.78, 0.80) if valid else Color(1.0, 0.42, 0.36, 0.68)
+	if _draw_scape_sprite(item_type, mouse, draw_size, bool(transform.get("flipped", false)), Color(1, 1, 1, 0.58 if valid else 0.28), deg_to_rad(float(transform.get("rotation", 0.0)))):
+		pass
+	else:
+		draw_circle(mouse, min(draw_size.x, draw_size.y) * 0.28, Color(preview_color.r, preview_color.g, preview_color.b, 0.34))
+	draw_circle(mouse, max(draw_size.x, draw_size.y) * 0.42, preview_color, false, 1.6, true)
+
 func _hit_scape_object(mouse: Vector2) -> String:
 	var scape = state.get("aquarium", {}).get("scape", {})
 	if typeof(scape) != TYPE_DICTIONARY:
 		return ""
-	for obj in scape.get("objects", []):
-		var pos := _object_pos(obj, Vector2.ZERO)
-		var radius := 42.0 * float(obj.get("scale", 1.0))
-		if pos.distance_to(mouse) <= radius:
-			return str(obj.get("id", ""))
+	var objects: Array = scape.get("objects", [])
+	for layer in [2, 1, 0]:
+		for index in range(objects.size() - 1, -1, -1):
+			var obj: Dictionary = objects[index]
+			if typeof(obj) != TYPE_DICTIONARY or int(obj.get("layer", 1)) != layer:
+				continue
+			var category := str(obj.get("category", ""))
+			var item_type := str(obj.get("type", ""))
+			var draw_size: Vector2 = _scape_object_draw_size(category, item_type) * clamp(float(obj.get("scale", 1.0)), 0.35, 2.4)
+			var pos: Vector2 = _object_pos(obj, Vector2.ZERO)
+			var local: Vector2 = (mouse - pos).rotated(-deg_to_rad(float(obj.get("rotation", 0.0))))
+			if abs(local.x) <= draw_size.x * 0.5 + 8.0 and abs(local.y) <= draw_size.y * 0.5 + 8.0:
+				return str(obj.get("id", ""))
 	return ""
 
 func _rock_color(kind: String) -> Color:
@@ -2319,11 +2963,23 @@ func _draw_coral_fallback(kind: String, pos: Vector2, seed: int, health: float) 
 			draw_circle(pos + offset, 7.0, base.darkened(float(polyp % 2) * 0.05))
 			draw_circle(pos + offset, 2.0, base.lightened(0.25))
 
-func _draw_scape_sprite(item_type: String, pos: Vector2, draw_size: Vector2, flip: bool = false, modulate: Color = Color.WHITE) -> bool:
+func _draw_scape_sprite(item_type: String, pos: Vector2, draw_size: Vector2, flip: bool = false, modulate: Color = Color.WHITE, rotation_offset: float = 0.0) -> bool:
 	if not scape_textures.has(item_type):
 		return false
 	var texture: Texture2D = scape_textures[item_type]
-	draw_set_transform(pos, 0.0, Vector2(-1.0 if flip else 1.0, 1.0))
+	var living := PLANT_SCAPE_TYPES.has(item_type) or CORAL_SCAPE_TYPES.has(item_type)
+	var t := Time.get_ticks_msec() / 1000.0
+	var rotation := rotation_offset
+	var x_scale := -1.0 if flip else 1.0
+	var y_scale := 1.0
+	if living:
+		var coral := CORAL_SCAPE_TYPES.has(item_type)
+		var current_strength: float = clamp(_water_current_at(pos).length() / 16.0, 0.0, 1.0)
+		var sway := sin(t * (0.82 if coral else 1.08) + pos.x * 0.018 + pos.y * 0.011)
+		rotation += sway * (0.016 if coral else 0.024) * lerp(0.70, 1.55, current_strength)
+		x_scale *= 1.0 + sin(t * 1.35 + pos.y * 0.017) * (0.007 if coral else 0.012) * lerp(0.70, 1.40, current_strength)
+		y_scale = 1.0 + cos(t * 1.10 + pos.x * 0.013) * (0.010 if coral else 0.016) * lerp(0.70, 1.35, current_strength)
+	draw_set_transform(pos, rotation, Vector2(x_scale, y_scale))
 	draw_texture_rect(texture, Rect2(-draw_size * 0.5, draw_size), false, modulate)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	return true
@@ -2494,7 +3150,7 @@ func _draw_action_effects() -> void:
 				_draw_net_effect(progress, true, effect)
 			"remove_animal":
 				_draw_net_effect(progress, false, effect)
-			"place_scape_item", "move_scape_item", "remove_scape_item":
+			"place_scape_item", "move_scape_item", "duplicate_scape_item", "remove_scape_item":
 				_draw_scape_tool_effect(progress, kind, effect)
 			"reset_scape", "clear_scape":
 				_draw_scape_reset_effect(progress, kind)
@@ -2504,6 +3160,12 @@ func _draw_action_effects() -> void:
 				_draw_system_switch_effect(progress, effect)
 			"create_aquarium", "select_aquarium":
 				_draw_aquarium_card_effect(progress, kind, effect)
+			"quarantine_animal":
+				_draw_quarantine_effect(progress, effect)
+			"treat_outbreak":
+				_draw_treatment_effect(progress, effect)
+			"install_safeguards":
+				_draw_safeguards_effect(progress)
 
 func _ease_out_cubic(value: float) -> float:
 	var t: float = clamp(value, 0.0, 1.0)
@@ -2516,6 +3178,37 @@ func _ease_in_out_sine(value: float) -> float:
 func _effect_fade(progress: float) -> float:
 	return clamp(min(progress / 0.16, (1.0 - progress) / 0.18), 0.0, 1.0)
 
+func _effect_strength(effect: Dictionary) -> float:
+	var progress: float = clamp(float(effect.get("age", 0.0)) / max(0.1, float(effect.get("duration", 1.0))), 0.0, 1.0)
+	return sin(progress * PI) * _effect_fade(progress)
+
+func _active_action_strength(kinds: Array) -> float:
+	var strength := 0.0
+	for effect in action_effects:
+		if kinds.has(str(effect.get("kind", ""))):
+			strength = max(strength, _effect_strength(effect))
+	return strength
+
+func _latest_action_effect(kinds: Array) -> Dictionary:
+	var latest := {}
+	var lowest_age := 999999.0
+	for effect in action_effects:
+		var kind := str(effect.get("kind", ""))
+		if not kinds.has(kind):
+			continue
+		var age := float(effect.get("age", 0.0))
+		if age < lowest_age:
+			lowest_age = age
+			latest = effect
+	return latest
+
+func _active_action_point(kinds: Array, fallback_ratio: Vector2) -> Vector2:
+	var effect := _latest_action_effect(kinds)
+	if effect.is_empty():
+		var inner := _tank_inner()
+		return inner.position + Vector2(inner.size.x * fallback_ratio.x, inner.size.y * fallback_ratio.y)
+	return _effect_point(effect, fallback_ratio)
+
 func _effect_point(effect: Dictionary, fallback: Vector2) -> Vector2:
 	var inner := _tank_inner()
 	var x: float = clamp(float(effect.get("x", fallback.x)), 0.04, 0.96)
@@ -2526,50 +3219,153 @@ func _draw_tool_handle(from_pos: Vector2, to_pos: Vector2, color: Color, width: 
 	draw_line(from_pos, to_pos, Color(0.06, 0.08, 0.08, color.a * 0.45), width + 3.0, true)
 	draw_line(from_pos, to_pos, color, width, true)
 
+func _draw_water_rings(center: Vector2, progress: float, color: Color, count: int = 3, radius_step: float = 24.0) -> void:
+	var fade := _effect_fade(progress)
+	for r in range(count):
+		var delay := float(r) * 0.12
+		var p: float = clamp((progress - delay) / max(0.1, 1.0 - delay), 0.0, 1.0)
+		if p <= 0.0:
+			continue
+		var radius := 10.0 + p * radius_step * float(r + 1)
+		draw_arc(center, radius, 0.0, TAU, 56, Color(color.r, color.g, color.b, color.a * fade * (1.0 - p) * 0.8), 1.5, true)
+
+func _draw_speck_cloud(center: Vector2, progress: float, seed: int, count: int, color: Color, spread: Vector2, drift: Vector2 = Vector2.ZERO) -> void:
+	var fade := _effect_fade(progress)
+	for i in range(count):
+		var delay := float(i % 9) * 0.035
+		var p: float = clamp((progress - delay) / max(0.1, 1.0 - delay), 0.0, 1.0)
+		if p <= 0.0:
+			continue
+		var angle := float((i * 137 + seed * 19) % 360) * PI / 180.0
+		var wobble := sin(progress * TAU * (0.6 + float(i % 5) * 0.08) + seed + i)
+		var radius := (0.18 + fposmod(float(i * 31 + seed), 100.0) / 100.0) * p
+		var pos := center + Vector2(cos(angle) * spread.x, sin(angle) * spread.y) * radius + drift * p + Vector2(wobble * 7.0, sin(i + progress * 7.0) * 3.0)
+		var alpha := color.a * fade * (1.0 - p * 0.56)
+		draw_circle(pos, 1.2 + float(i % 4) * 0.45, Color(color.r, color.g, color.b, alpha))
+
+func _draw_ellipse(center: Vector2, radius_x: float, radius_y: float, color: Color, filled: bool = true, width: float = 1.0) -> void:
+	var points := PackedVector2Array()
+	for i in range(34):
+		var angle := TAU * float(i) / 34.0
+		points.push_back(center + Vector2(cos(angle) * radius_x, sin(angle) * radius_y))
+	if filled:
+		var colors := PackedColorArray()
+		for i in range(points.size()):
+			colors.push_back(color)
+		draw_polygon(points, colors)
+	else:
+		draw_polyline(points, color, width, true)
+
 func _draw_feeding_effect(progress: float, seed: int) -> void:
 	var inner := _tank_inner()
 	var fade := _effect_fade(progress)
+	var effect := _latest_action_effect(["feed"])
+	var food_type := str(effect.get("food_type", "community_flake"))
 	var drop_x := inner.position.x + inner.size.x * 0.36
-	var hand_y := inner.position.y - 8.0 + sin(progress * PI) * 12.0
-	draw_circle(Vector2(drop_x - 22.0, hand_y), 14.0, Color(0.86, 0.67, 0.48, 0.72 * fade))
-	draw_circle(Vector2(drop_x - 7.0, hand_y + 2.0), 8.0, Color(0.91, 0.72, 0.52, 0.78 * fade))
-	for r in range(3):
-		var radius := 22.0 + float(r) * 11.0 + progress * 18.0
-		draw_arc(Vector2(drop_x, inner.position.y + 15.0), radius, PI * 0.08, PI * 0.92, 26, Color(0.84, 0.95, 1.0, 0.13 * fade * (1.0 - float(r) * 0.24)), 1.4, true)
-	for i in range(30):
-		var jitter := sin(float(i * 17 + seed)) * 18.0
-		var x: float = drop_x + jitter + sin(progress * 6.0 + i) * 5.0
-		var delay := float(i % 7) * 0.055
-		var fall: float = clamp((progress - delay) / 0.78, 0.0, 1.0)
-		var y := inner.position.y + 18.0 + _ease_out_cubic(fall) * (inner.size.y * 0.52)
-		var alpha: float = fade * clamp(1.0 - fall * 0.42, 0.0, 1.0)
-		draw_circle(Vector2(x, y), 1.8 + float(i % 3) * 0.55, Color(0.94, 0.68, 0.30, 0.74 * alpha))
+	var pinch := Vector2(drop_x, inner.position.y - 4.0 + sin(progress * PI) * 10.0)
+	draw_circle(pinch + Vector2(-22.0, -1.0), 13.0, Color(0.82, 0.62, 0.46, 0.70 * fade))
+	draw_circle(pinch + Vector2(-7.0, 1.0), 8.0, Color(0.92, 0.72, 0.52, 0.76 * fade))
+	_draw_water_rings(Vector2(drop_x, inner.position.y + 20.0), progress, Color(0.84, 0.96, 1.0, 0.20), 4, 26.0)
+	var color := Color(0.94, 0.66, 0.30, 0.82)
+	var count := 36
+	var sink_depth := inner.size.y * 0.46
+	var spread := 30.0
+	var piece := "flake"
+	match food_type:
+		"micro_pellet":
+			color = Color(0.82, 0.54, 0.26, 0.82)
+			count = 46
+			sink_depth = inner.size.y * 0.62
+			spread = 24.0
+			piece = "pellet"
+		"sinking_wafer":
+			color = Color(0.66, 0.46, 0.22, 0.86)
+			count = 18
+			sink_depth = inner.size.y - _substrate_height() - 34.0
+			spread = 18.0
+			piece = "wafer"
+		"algae_wafer":
+			color = Color(0.28, 0.62, 0.25, 0.84)
+			count = 22
+			sink_depth = inner.size.y - _substrate_height() - 30.0
+			spread = 20.0
+			piece = "wafer"
+		"frozen_invertebrates":
+			color = Color(0.86, 0.24, 0.20, 0.78)
+			count = 32
+			sink_depth = inner.size.y * 0.58
+			spread = 34.0
+			piece = "chunk"
+		"reef_plankton":
+			color = Color(1.00, 0.72, 0.48, 0.58)
+			count = 72
+			sink_depth = inner.size.y * 0.42
+			spread = 58.0
+			piece = "plankton"
+	for i in range(count):
+		var delay := float(i % 10) * 0.035
+		var fall: float = clamp((progress - delay) / 0.82, 0.0, 1.0)
+		if fall <= 0.0:
+			continue
+		var lateral := sin(float(i * 17 + seed)) * spread + sin(progress * 8.0 + i) * (7.0 + spread * 0.08)
+		var drift := sin(progress * 2.4 + float(i)) * 20.0 * fall
+		var x: float = drop_x + lateral + drift
+		var y := inner.position.y + 22.0 + _ease_out_cubic(fall) * sink_depth
+		var alpha: float = fade * clamp(1.0 - fall * 0.28, 0.0, 1.0)
+		if piece == "wafer":
+			_draw_ellipse(Vector2(x, y), 5.6 + float(i % 3), 2.4, Color(color.r, color.g, color.b, color.a * alpha), true)
+			draw_line(Vector2(x - 4, y - 1), Vector2(x + 4, y + 1), Color(0.20, 0.13, 0.07, 0.28 * alpha), 1.0, true)
+		elif piece == "flake":
+			var flake := PackedVector2Array([
+				Vector2(x - 3.0, y - 1.5),
+				Vector2(x + 2.4, y - 3.0 + sin(i) * 1.2),
+				Vector2(x + 4.0, y + 1.4),
+				Vector2(x - 1.5, y + 3.0)
+			])
+			draw_polygon(flake, PackedColorArray([Color(color.r, color.g, color.b, color.a * alpha), color.lightened(0.12), color, color.darkened(0.08)]))
+		elif piece == "plankton":
+			draw_circle(Vector2(x, y), 0.9 + float(i % 3) * 0.25, Color(color.r, color.g, color.b, color.a * alpha))
+		else:
+			draw_circle(Vector2(x, y), 1.9 + float(i % 3) * 0.55, Color(color.r, color.g, color.b, color.a * alpha))
+	if food_type in ["sinking_wafer", "algae_wafer", "reef_plankton"]:
+		var target := Vector2(drop_x, inner.end.y - _substrate_height() - 24.0 if food_type != "reef_plankton" else inner.position.y + inner.size.y * 0.42)
+		_draw_speck_cloud(target, progress, seed + 77, 34 if food_type == "reef_plankton" else 18, Color(color.r, color.g, color.b, 0.22), Vector2(78, 28), Vector2(28, -12))
 
 func _draw_water_change_effect(progress: float) -> void:
 	var inner := _tank_inner()
 	var fade := _effect_fade(progress)
+	var effect: Dictionary = _latest_action_effect(["water_change", "weekly_maintenance"])
+	var disturbed: bool = bool(effect.get("disturbed_substrate", false)) or str(effect.get("kind", "")) == "weekly_maintenance"
+	var fraction: float = clamp(float(effect.get("fraction", 0.25)), 0.05, 0.60)
 	var drain_phase: float = clamp(progress / 0.46, 0.0, 1.0)
 	var fill_phase: float = clamp((progress - 0.46) / 0.54, 0.0, 1.0)
-	var water_drop := sin(progress * PI) * 56.0
-	var line_y := inner.position.y + 18.0 + water_drop
-	draw_line(Vector2(inner.position.x + 18, line_y), Vector2(inner.end.x - 18, line_y), Color(0.88, 0.98, 1.0, 0.48 * fade), 3.0, true)
+	var water_drop: float = sin(progress * PI) * lerp(32.0, 72.0, fraction / 0.60)
+	var line_y: float = inner.position.y + 18.0 + water_drop
+	draw_rect(Rect2(inner.position.x + 18, inner.position.y + 18, inner.size.x - 36, max(4.0, water_drop)), Color(0.05, 0.10, 0.11, 0.18 * fade * sin(progress * PI)), true)
+	draw_line(Vector2(inner.position.x + 18, line_y), Vector2(inner.end.x - 18, line_y), Color(0.88, 0.98, 1.0, 0.52 * fade), 3.0, true)
+	_draw_water_rings(Vector2(inner.position.x + inner.size.x * 0.28, line_y), progress, Color(0.82, 0.96, 1.0, 0.16), 2, 30.0)
 	var siphon_start := Vector2(inner.end.x - 80, inner.position.y + 16)
 	var siphon_end := Vector2(inner.end.x - 34, inner.end.y - _substrate_height() - 22)
 	_draw_tool_handle(siphon_start, siphon_end, Color(0.74, 0.84, 0.88, 0.86 * fade), 6.0)
+	draw_circle(siphon_end, 9.0, Color(0.88, 0.96, 0.94, 0.18 * fade), false, 2.0, true)
 	var bucket := Rect2(Vector2(inner.end.x + 14.0, inner.end.y - _substrate_height() - 84.0), Vector2(54, 48))
 	draw_rect(bucket, Color(0.12, 0.15, 0.15, 0.76 * fade), true)
 	draw_rect(bucket, Color(0.83, 0.92, 0.95, 0.45 * fade), false, 2.0, true)
-	draw_rect(Rect2(bucket.position + Vector2(8, 27 - 16 * fill_phase), Vector2(38, 13 + 16 * fill_phase)), Color(0.56, 0.82, 0.94, 0.46 * fade), true)
+	draw_rect(Rect2(bucket.position + Vector2(8, 27 - 16 * drain_phase), Vector2(38, 13 + 16 * drain_phase)), Color(0.56, 0.82, 0.94, 0.46 * fade), true)
 	for i in range(22):
 		var t := fposmod((drain_phase + fill_phase) * 2.4 + float(i) / 22.0, 1.0)
 		var pos := siphon_start.lerp(siphon_end, t)
 		draw_circle(pos, 2.0, Color(0.78, 0.95, 1.0, 0.48 * fade))
+	if disturbed:
+		_draw_speck_cloud(siphon_end, progress, 34, 38, Color(0.52, 0.38, 0.18, 0.34), Vector2(108, 48), Vector2(-24, -20))
 	if progress > 0.46:
 		var pour_start := Vector2(inner.position.x + 72.0, inner.position.y - 2.0)
 		var pour_end := Vector2(inner.position.x + 108.0, inner.position.y + 36.0)
 		_draw_tool_handle(pour_start, pour_end, Color(0.82, 0.93, 0.96, 0.78 * fade), 5.0)
 		for i in range(10):
-			draw_circle(pour_end + Vector2(sin(i) * 7.0, fposmod(fill_phase * 70.0 + i * 9.0, 54.0)), 2.0, Color(0.78, 0.94, 1.0, 0.42 * fade))
+			var stream_pos := pour_end + Vector2(sin(i) * 7.0, fposmod(fill_phase * 92.0 + i * 9.0, 64.0))
+			draw_circle(stream_pos, 2.0, Color(0.78, 0.94, 1.0, 0.42 * fade))
+		_draw_water_rings(pour_end + Vector2(8, 34), fill_phase, Color(0.78, 0.94, 1.0, 0.22), 3, 22.0)
 
 func _draw_vacuum_effect(progress: float) -> void:
 	var inner := _tank_inner()
@@ -2578,24 +3374,32 @@ func _draw_vacuum_effect(progress: float) -> void:
 	var sweep: float = _ease_in_out_sine(fposmod(progress * 1.25, 1.0))
 	var x: float = lerp(inner.position.x + 88.0, inner.end.x - 132.0, sweep)
 	_draw_tool_handle(Vector2(x, inner.position.y + inner.size.y * 0.38), Vector2(x + 36, bed_y + 10), Color(0.82, 0.87, 0.82, 0.78 * fade), 5.0)
-	draw_rect(Rect2(Vector2(x + 22, bed_y - 12), Vector2(36, 34)), Color(0.90, 0.96, 0.90, 0.20 * fade), false, 2.0, true)
-	for i in range(14):
-		var pos := Vector2(x + 18 + fposmod(i * 11.0, 54.0), bed_y - 8 - fposmod(progress * 90.0 + i * 17.0, 46.0))
-		draw_circle(pos, 1.7, Color(0.42, 0.31, 0.18, 0.35 * fade * (1.0 - progress * 0.4)))
+	var bell := Rect2(Vector2(x + 20, bed_y - 24), Vector2(42, 46))
+	draw_rect(bell, Color(0.90, 0.96, 0.90, 0.15 * fade), false, 2.0, true)
+	draw_rect(Rect2(bell.position + Vector2(4, bell.size.y - 9), Vector2(bell.size.x - 8, 7)), Color(0.56, 0.43, 0.24, 0.18 * fade), true)
+	for i in range(24):
+		var sucked: float = clamp(progress * 1.35 - float(i % 8) * 0.045, 0.0, 1.0)
+		var start: Vector2 = Vector2(x + 18 + fposmod(i * 11.0, 54.0), bed_y - 4 - fposmod(i * 17.0, 36.0))
+		var pos: Vector2 = start.lerp(Vector2(x + 40, bed_y - 48.0), sucked)
+		draw_circle(pos, 1.4 + float(i % 3) * 0.3, Color(0.42, 0.31, 0.18, 0.36 * fade * (1.0 - sucked * 0.45)))
 
 func _draw_filter_service_effect(progress: float) -> void:
 	var inner := _tank_inner()
 	var fade := _effect_fade(progress)
 	var pos := Vector2(inner.end.x - 164, inner.end.y - _substrate_height() - 110)
-	draw_rect(Rect2(pos, Vector2(74, 58)), Color(0.07, 0.11, 0.12, 0.82 * fade), true)
-	draw_rect(Rect2(pos, Vector2(74, 58)), Color(0.60, 0.82, 0.82, 0.36 * fade), false, 1.4, true)
+	draw_rect(Rect2(pos, Vector2(74, 86)), Color(0.07, 0.11, 0.12, 0.82 * fade), true)
+	draw_rect(Rect2(pos, Vector2(74, 86)), Color(0.60, 0.82, 0.82, 0.36 * fade), false, 1.4, true)
 	var lift := sin(progress * PI) * 34.0
-	draw_rect(Rect2(pos + Vector2(18, 18 - lift), Vector2(36, 28)), Color(0.25, 0.40, 0.36, 0.74 * fade), true)
-	draw_rect(Rect2(pos + Vector2(18, 18 - lift), Vector2(36, 28)), Color(0.78, 0.96, 0.88, 0.35 * fade), false, 1.2, true)
-	for i in range(6):
-		var y := pos.y + 12 + i * 8
+	var cartridge := Rect2(pos + Vector2(16, 28 - lift), Vector2(42, 34))
+	draw_rect(cartridge, Color(0.24, 0.38, 0.34, 0.78 * fade), true)
+	draw_rect(cartridge, Color(0.78, 0.96, 0.88, 0.40 * fade), false, 1.2, true)
+	for slot in range(4):
+		draw_line(cartridge.position + Vector2(7, 8 + slot * 6), cartridge.position + Vector2(cartridge.size.x - 7, 8 + slot * 6), Color(0.12, 0.22, 0.20, 0.46 * fade), 1.3, true)
+	for i in range(8):
+		var y := pos.y + 18 + i * 8
 		var pulse := sin(progress * TAU * 3.0 + i) * 0.5 + 0.5
-		draw_line(Vector2(pos.x + 10, y), Vector2(pos.x + 58 + pulse * 8, y), Color(0.62, 0.92, 1.0, 0.46 * fade), 2.0, true)
+		draw_line(Vector2(pos.x - 16 - pulse * 16.0, y), Vector2(pos.x + 58 + pulse * 12, y), Color(0.62, 0.92, 1.0, 0.34 * fade), 2.0, true)
+	_draw_speck_cloud(cartridge.get_center(), progress, 241, 26, Color(0.55, 0.72, 0.62, 0.24), Vector2(70, 45), Vector2(-38, -12))
 
 func _draw_remove_food_effect(progress: float) -> void:
 	var inner := _tank_inner()
@@ -2604,10 +3408,13 @@ func _draw_remove_food_effect(progress: float) -> void:
 	var tip := Vector2(lerp(inner.position.x + inner.size.x * 0.28, inner.position.x + inner.size.x * 0.62, _ease_in_out_sine(progress)), bed_y - 24.0)
 	_draw_tool_handle(tip + Vector2(-44, -72), tip, Color(0.78, 0.88, 0.84, 0.78 * fade), 5.0)
 	draw_circle(tip + Vector2(-48, -80), 14.0, Color(0.45, 0.58, 0.52, 0.35 * fade), false, 3.0, true)
-	for i in range(12):
+	draw_circle(tip, 9.0, Color(0.86, 0.94, 0.88, 0.20 * fade), false, 2.0, true)
+	for i in range(22):
 		var crumb := Vector2(tip.x + sin(i * 2.1) * (26.0 - progress * 18.0), bed_y - 8.0 - float(i % 4) * 4.0)
-		var sucked := crumb.lerp(tip, clamp(progress * 1.4 - float(i) * 0.04, 0.0, 1.0))
-		draw_circle(sucked, 1.8, Color(0.76, 0.47, 0.20, 0.56 * fade * (1.0 - progress * 0.58)))
+		var sucked := crumb.lerp(tip + Vector2(-12, -12), clamp(progress * 1.65 - float(i % 9) * 0.055, 0.0, 1.0))
+		draw_circle(sucked, 1.4 + float(i % 3) * 0.35, Color(0.76, 0.47, 0.20, 0.58 * fade * (1.0 - progress * 0.58)))
+	for ring in range(2):
+		draw_arc(tip, 18.0 + ring * 14.0 + progress * 18.0, PI * 0.65, PI * 1.35, 22, Color(0.78, 0.94, 1.0, 0.10 * fade), 1.2, true)
 
 func _draw_scrape_algae_effect(progress: float) -> void:
 	var inner := _tank_inner()
@@ -2616,12 +3423,15 @@ func _draw_scrape_algae_effect(progress: float) -> void:
 	var top := inner.position.y + 68.0
 	var bottom := inner.end.y - _substrate_height() - 32.0
 	var blade := Rect2(Vector2(x, top + sin(progress * TAU) * 8.0), Vector2(18, 92))
-	draw_rect(Rect2(inner.position + Vector2(26, 54), Vector2(max(0.0, x - inner.position.x - 26.0), inner.size.y - _substrate_height() - 94)), Color(0.24, 0.55, 0.20, 0.035 * fade), true)
+	draw_rect(Rect2(inner.position + Vector2(26, 54), Vector2(max(0.0, x - inner.position.x - 26.0), inner.size.y - _substrate_height() - 94)), Color(0.82, 0.96, 0.90, 0.055 * fade), true)
+	draw_rect(Rect2(Vector2(x + 18, top), Vector2(44, bottom - top)), Color(0.18, 0.46, 0.16, 0.045 * fade), true)
 	_draw_tool_handle(blade.position + Vector2(9, -44), blade.position + Vector2(9, 8), Color(0.72, 0.80, 0.76, 0.82 * fade), 4.0)
 	draw_rect(blade, Color(0.87, 0.94, 0.90, 0.72 * fade), true)
+	draw_rect(Rect2(blade.position + Vector2(3, 5), Vector2(12, 82)), Color(0.58, 0.68, 0.62, 0.42 * fade), false, 1.0, true)
 	draw_line(Vector2(x + 18, top - 18), Vector2(x + 18, bottom), Color(0.96, 1.0, 0.96, 0.24 * fade), 2.0, true)
-	for i in range(8):
-		draw_circle(Vector2(x + 14 + sin(i) * 6.0, top + 24 + i * 14.0), 1.7, Color(0.36, 0.70, 0.28, 0.36 * fade))
+	for i in range(18):
+		var fall: float = clamp(progress * 1.25 - float(i % 6) * 0.06, 0.0, 1.0)
+		draw_circle(Vector2(x + 14 + sin(i) * 9.0, top + 20 + i * 10.0 + fall * 24.0), 1.5 + float(i % 3) * 0.35, Color(0.36, 0.70, 0.28, 0.38 * fade * (1.0 - fall * 0.35)))
 
 func _draw_trim_plants_effect(progress: float) -> void:
 	var inner := _tank_inner()
@@ -2632,31 +3442,44 @@ func _draw_trim_plants_effect(progress: float) -> void:
 	_draw_tool_handle(target + Vector2(-84, -54), target + Vector2(-8, -4), Color(0.72, 0.76, 0.78, 0.78 * fade), 4.0)
 	draw_line(target, target + Vector2(46, -18 - open_amount), Color(0.88, 0.92, 0.92, 0.72 * fade), 3.0, true)
 	draw_line(target, target + Vector2(45, 18 + open_amount), Color(0.88, 0.92, 0.92, 0.72 * fade), 3.0, true)
-	for i in range(12):
-		var leaf := target + Vector2(28 + sin(i) * 30.0, 12 + fposmod(progress * 46.0 + i * 11.0, 58.0))
-		draw_line(leaf, leaf + Vector2(8 + sin(i), 4 + cos(i)), Color(0.34, 0.76, 0.30, 0.48 * fade), 2.0, true)
+	draw_circle(target + Vector2(28, 0), 8.0, Color(0.88, 0.96, 0.90, 0.10 * fade), false, 1.5, true)
+	for i in range(20):
+		var drift: float = clamp(progress * 1.15 - float(i % 7) * 0.05, 0.0, 1.0)
+		var leaf: Vector2 = target + Vector2(28 + sin(i) * 34.0 + drift * 18.0, 12 + fposmod(progress * 54.0 + i * 11.0, 62.0) - drift * 20.0)
+		draw_line(leaf, leaf + Vector2(8 + sin(i), 4 + cos(i)), Color(0.34, 0.76, 0.30, 0.50 * fade * (1.0 - drift * 0.28)), 2.0, true)
 
 func _draw_top_off_effect(progress: float) -> void:
 	var inner := _tank_inner()
 	var fade := _effect_fade(progress)
-	var cup_pos := Vector2(inner.position.x + 78.0, inner.position.y - 24.0 + sin(progress * PI) * 10.0)
-	draw_rect(Rect2(cup_pos, Vector2(48, 30)), Color(0.70, 0.86, 0.92, 0.30 * fade), true)
-	draw_rect(Rect2(cup_pos, Vector2(48, 30)), Color(0.92, 0.98, 1.0, 0.56 * fade), false, 1.4, true)
-	for i in range(12):
-		var y := inner.position.y + 12.0 + fposmod(progress * 90.0 + i * 9.0, 56.0)
-		draw_circle(Vector2(cup_pos.x + 52.0 + sin(i) * 4.0, y), 1.8, Color(0.75, 0.94, 1.0, 0.44 * fade))
-	draw_line(Vector2(inner.position.x + 22.0, inner.position.y + 20.0), Vector2(inner.end.x - 22.0, inner.position.y + 20.0 - sin(progress * PI) * 5.0), Color(0.85, 0.97, 1.0, 0.26 * fade), 2.0, true)
+	var reservoir := Rect2(Vector2(inner.position.x + 48.0, inner.position.y - 36.0 + sin(progress * PI) * 5.0), Vector2(62, 34))
+	draw_rect(reservoir, Color(0.70, 0.86, 0.92, 0.26 * fade), true)
+	draw_rect(reservoir, Color(0.92, 0.98, 1.0, 0.56 * fade), false, 1.4, true)
+	var tube_start := reservoir.position + Vector2(reservoir.size.x, 18)
+	var tube_end := Vector2(inner.position.x + 132.0, inner.position.y + 28.0)
+	_draw_tool_handle(tube_start, tube_end, Color(0.82, 0.92, 0.94, 0.66 * fade), 3.0)
+	for i in range(16):
+		var y := inner.position.y + 20.0 + fposmod(progress * 120.0 + i * 8.0, 72.0)
+		draw_circle(Vector2(tube_end.x + sin(i) * 4.0, y), 1.6, Color(0.75, 0.94, 1.0, 0.46 * fade))
+	_draw_water_rings(tube_end + Vector2(0, 54), progress, Color(0.76, 0.94, 1.0, 0.21), 3, 24.0)
+	draw_line(Vector2(inner.position.x + 22.0, inner.position.y + 20.0), Vector2(inner.end.x - 22.0, inner.position.y + 20.0 - sin(progress * PI) * 5.0), Color(0.85, 0.97, 1.0, 0.30 * fade), 2.0, true)
 
 func _draw_empty_skimmer_effect(progress: float) -> void:
 	var inner := _tank_inner()
 	var fade := _effect_fade(progress)
 	var pos := Vector2(inner.end.x - 132.0, inner.position.y + 62.0)
-	draw_rect(Rect2(pos, Vector2(40, 64)), Color(0.16, 0.19, 0.20, 0.64 * fade), true)
-	draw_rect(Rect2(pos + Vector2(7, 8), Vector2(26, 26)), Color(0.38, 0.22, 0.11, 0.70 * fade * (1.0 - progress * 0.78)), true)
+	var body := Rect2(pos, Vector2(42, 72))
+	draw_rect(body, Color(0.16, 0.19, 0.20, 0.64 * fade), true)
+	draw_rect(body, Color(0.76, 0.90, 0.94, 0.24 * fade), false, 1.2, true)
+	var cup := Rect2(pos + Vector2(7, 7 - sin(progress * PI) * 20.0), Vector2(28, 34))
+	draw_rect(cup, Color(0.24, 0.19, 0.15, 0.70 * fade), true)
+	draw_rect(Rect2(cup.position + Vector2(4, 8), Vector2(20, 15)), Color(0.42, 0.24, 0.11, 0.76 * fade * (1.0 - progress * 0.70)), true)
 	var tilt := sin(progress * PI)
-	draw_line(pos + Vector2(20, 8), pos + Vector2(56 + tilt * 22.0, -18 + tilt * 16.0), Color(0.52, 0.30, 0.14, 0.62 * fade), 4.0, true)
-	for i in range(8):
-		draw_circle(pos + Vector2(52 + float(i) * 5.0, -12.0 + float(i % 3) * 5.0 + progress * 20.0), 2.0, Color(0.42, 0.25, 0.13, 0.38 * fade))
+	draw_line(cup.position + Vector2(24, 10), cup.position + Vector2(68 + tilt * 22.0, -20 + tilt * 18.0), Color(0.52, 0.30, 0.14, 0.62 * fade), 4.0, true)
+	for i in range(12):
+		draw_circle(pos + Vector2(54 + float(i) * 4.5, -12.0 + float(i % 4) * 5.0 + progress * 24.0), 1.7 + float(i % 2) * 0.5, Color(0.42, 0.25, 0.13, 0.38 * fade))
+	for b in range(12):
+		var rise := fposmod(progress * 1.5 + float(b) * 0.13, 1.0)
+		draw_circle(body.position + Vector2(10 + sin(b) * 12.0, body.size.y - rise * body.size.y), 1.2 + float(b % 3) * 0.3, Color(0.88, 0.98, 1.0, 0.20 * fade * (1.0 - rise * 0.4)))
 
 func _draw_test_water_effect(progress: float) -> void:
 	var inner := _tank_inner()
@@ -2664,13 +3487,18 @@ func _draw_test_water_effect(progress: float) -> void:
 	var pos := Vector2(inner.position.x + inner.size.x * 0.58, inner.position.y + 50)
 	_draw_tool_handle(pos + Vector2(-26, -34), pos + Vector2(0, 22), Color(0.92, 0.96, 0.92, 0.66 * fade), 3.0)
 	var fill: float = clamp((progress - 0.2) / 0.45, 0.0, 1.0)
-	draw_rect(Rect2(pos + Vector2(-12, 18), Vector2(24, 42)), Color(0.36, 0.78, 0.74, (0.16 + 0.25 * fill) * fade), true)
-	draw_rect(Rect2(pos + Vector2(-12, 18), Vector2(24, 42)), Color(0.90, 0.96, 0.92, 0.58 * fade), false, 1.2, true)
-	draw_circle(pos + Vector2(0, lerp(-10.0, 20.0, progress)), 4.0, Color(0.80, 0.94, 1.0, 0.68 * fade))
-	var strip := Rect2(pos + Vector2(34, 18), Vector2(46, 10))
+	var vial := Rect2(pos + Vector2(-12, 16), Vector2(24, 46))
+	draw_rect(vial, Color(0.36, 0.78, 0.74, (0.12 + 0.30 * fill) * fade), true)
+	draw_rect(vial, Color(0.90, 0.96, 0.92, 0.62 * fade), false, 1.2, true)
+	draw_line(vial.position + Vector2(4, 8 + 22 * (1.0 - fill)), vial.position + Vector2(vial.size.x - 4, 8 + 22 * (1.0 - fill)), Color(0.94, 1.0, 0.96, 0.42 * fade), 1.0, true)
+	draw_circle(pos + Vector2(0, lerp(-10.0, 22.0, progress)), 4.0, Color(0.80, 0.94, 1.0, 0.70 * fade))
+	var strip := Rect2(pos + Vector2(36, 14), Vector2(52, 12))
+	draw_rect(Rect2(strip.position + Vector2(-5, -6), Vector2(strip.size.x + 10, 62)), Color(0.92, 0.84, 0.62, 0.20 * fade), true)
 	for i in range(4):
-		var swatch := Color.from_hsv(0.12 + float(i) * 0.16, 0.52, 0.86, 0.55 * fade)
-		draw_rect(Rect2(strip.position + Vector2(0, i * 12), strip.size), swatch, true)
+		var react: float = clamp((progress - 0.18 - float(i) * 0.06) / 0.62, 0.0, 1.0)
+		var swatch: Color = Color.from_hsv(0.10 + float(i) * 0.16 + react * 0.08, 0.42 + react * 0.25, 0.78 + react * 0.12, 0.62 * fade)
+		draw_rect(Rect2(strip.position + Vector2(0, i * 13), strip.size), swatch, true)
+		draw_rect(Rect2(strip.position + Vector2(0, i * 13), strip.size), Color(0.26, 0.19, 0.12, 0.26 * fade), false, 1.0, true)
 
 func _draw_dosing_effect(progress: float, kind: String) -> void:
 	var inner := _tank_inner()
@@ -2682,11 +3510,13 @@ func _draw_dosing_effect(progress: float, kind: String) -> void:
 	_draw_tool_handle(dropper + Vector2(-24, -10), dropper + Vector2(24, -10), Color(0.86, 0.90, 0.88, 0.75 * fade), 5.0)
 	draw_rect(Rect2(dropper + Vector2(-18, -34), Vector2(36, 20)), dose_color.darkened(0.25), true)
 	draw_rect(Rect2(dropper + Vector2(-18, -34), Vector2(36, 20)), Color(1, 1, 1, 0.32 * fade), false, 1.0, true)
-	for i in range(7):
+	for i in range(12):
 		var y := dropper.y + fposmod(progress * 160.0 + i * 23.0, inner.size.y * 0.45)
-		draw_circle(Vector2(dropper.x + sin(i) * 16.0, y), 3.0, Color(dose_color.r, dose_color.g, dose_color.b, 0.56 * fade))
+		draw_circle(Vector2(dropper.x + sin(i) * 16.0, y), 2.2 + float(i % 3) * 0.5, Color(dose_color.r, dose_color.g, dose_color.b, 0.56 * fade))
 	for r in range(4):
 		draw_circle(dropper + Vector2(sin(r) * 18.0, inner.size.y * 0.26 + r * 12.0), 18.0 + progress * 44.0 + r * 10.0, Color(dose_color.r, dose_color.g, dose_color.b, 0.035 * fade * (1.0 - r * 0.12)))
+	var cloud_center := dropper + Vector2(0, inner.size.y * 0.35)
+	_draw_speck_cloud(cloud_center, progress, 177 if kind == "dose_minerals" else 121, 34, Color(dose_color.r, dose_color.g, dose_color.b, 0.22), Vector2(92, 54), Vector2(30, 18))
 
 func _draw_substrate_settle_effect(progress: float) -> void:
 	var inner := _tank_inner()
@@ -2700,7 +3530,26 @@ func _draw_substrate_settle_effect(progress: float) -> void:
 		var x := inner.position.x + fposmod(i * 31.0, inner.size.x)
 		var y := bed_y - fposmod((1.0 - progress) * 82.0 + i * 13.0, 78.0)
 		draw_circle(Vector2(x, y), 1.5 + float(i % 3), Color(0.72, 0.58, 0.36, 0.28 * fade * (1.0 - progress)))
-	draw_line(Vector2(inner.position.x + 16, bed_y), Vector2(inner.end.x - 16, bed_y), Color(0.95, 0.86, 0.58, 0.26 * fade * (1.0 - progress)), 3.0, true)
+	for ripple in range(4):
+		var x0 := inner.position.x + 28.0
+		var y0 := bed_y + 4.0 + ripple * 8.0
+		var points := PackedVector2Array()
+		for p in range(30):
+			var x := x0 + float(p) * (inner.size.x - 56.0) / 29.0
+			points.push_back(Vector2(x, y0 + sin(progress * TAU * 2.0 + p * 0.55 + ripple) * 2.0 * (1.0 - progress)))
+		draw_polyline(points, Color(0.95, 0.86, 0.58, 0.16 * fade * (1.0 - progress)), 1.4, true)
+	draw_line(Vector2(inner.position.x + 16, bed_y), Vector2(inner.end.x - 16, bed_y), Color(0.95, 0.86, 0.58, 0.28 * fade * (1.0 - progress)), 3.0, true)
+
+func _draw_action_animal(species_id: String, pos: Vector2, facing: float, alpha: float) -> void:
+	if fish_textures.has(species_id):
+		var texture: Texture2D = fish_textures[species_id]
+		var draw_size := _fish_sprite_size(species_id) * 0.78
+		draw_set_transform(pos, sin(Time.get_ticks_msec() / 240.0) * 0.04, Vector2(1.0 if facing >= 0 else -1.0, 1.0))
+		draw_texture_rect(texture, Rect2(-draw_size * 0.5, draw_size), false, Color(1, 1, 1, alpha))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+		return
+	_draw_ellipse(pos, 14.0, 5.0, Color(0.96, 0.42, 0.32, 0.70 * alpha), true)
+	draw_polygon(PackedVector2Array([pos + Vector2(-12 * facing, 0), pos + Vector2(-22 * facing, -7), pos + Vector2(-22 * facing, 7)]), PackedColorArray([Color(0.96, 0.42, 0.32, 0.62 * alpha), Color(0.96, 0.42, 0.32, 0.62 * alpha), Color(0.96, 0.42, 0.32, 0.62 * alpha)]))
 
 func _draw_net_effect(progress: float, adding: bool, effect: Dictionary) -> void:
 	var inner := _tank_inner()
@@ -2710,6 +3559,13 @@ func _draw_net_effect(progress: float, adding: bool, effect: Dictionary) -> void
 	var exit := Vector2(inner.position.x + 60.0, inner.position.y - 54.0)
 	var travel: float = _ease_in_out_sine(progress)
 	var net_pos := entry.lerp(target, min(travel * 1.5, 1.0)) if adding else target.lerp(exit, max(0.0, (travel - 0.18) / 0.82))
+	var species_id := str(effect.get("species_id", ""))
+	var acclimation := int(effect.get("acclimation_minutes", 0))
+	if adding and acclimation > 0 and progress < 0.48:
+		var bag_pos := Vector2(target.x - 24.0, inner.position.y + 34.0 + sin(progress * PI * 2.0) * 5.0)
+		draw_rect(Rect2(bag_pos - Vector2(24, 18), Vector2(48, 40)), Color(0.82, 0.95, 1.0, 0.16 * fade), true)
+		draw_rect(Rect2(bag_pos - Vector2(24, 18), Vector2(48, 40)), Color(0.92, 1.0, 1.0, 0.38 * fade), false, 1.2, true)
+		_draw_action_animal(species_id, bag_pos + Vector2(0, 4), 1.0, 0.55 * fade)
 	_draw_tool_handle(net_pos + Vector2(42.0, -46.0), net_pos + Vector2(6.0, -4.0), Color(0.72, 0.78, 0.75, 0.72 * fade), 4.0)
 	draw_arc(net_pos, 24.0, -PI * 0.22, PI * 1.22, 28, Color(0.86, 0.96, 0.94, 0.62 * fade), 2.0, true)
 	draw_line(net_pos + Vector2(-22, 0), net_pos + Vector2(22, 0), Color(0.86, 0.96, 0.94, 0.45 * fade), 1.4, true)
@@ -2718,8 +3574,10 @@ func _draw_net_effect(progress: float, adding: bool, effect: Dictionary) -> void
 	var fish_t: float = clamp((progress - 0.34) / 0.42, 0.0, 1.0)
 	var fish_alpha: float = fade * (fish_t if adding else 1.0 - fish_t)
 	var fish_pos := target + Vector2(sin(progress * TAU * 2.0) * 12.0, cos(progress * TAU) * 4.0)
-	draw_ellipse(fish_pos, 13.0, 5.0, Color(0.96, 0.42, 0.32, 0.68 * fish_alpha), true)
-	draw_polygon([fish_pos + Vector2(-12, 0), fish_pos + Vector2(-22, -7), fish_pos + Vector2(-22, 7)], [Color(0.96, 0.42, 0.32, 0.62 * fish_alpha)])
+	_draw_action_animal(species_id, fish_pos, 1.0 if adding else -1.0, fish_alpha)
+	_draw_water_rings(target, progress, Color(0.80, 0.95, 1.0, 0.20), 3, 24.0)
+	if adding and acclimation <= 0:
+		draw_arc(target, 42.0 + sin(progress * TAU * 2.0) * 5.0, 0.0, TAU, 44, Color(1.0, 0.34, 0.28, 0.18 * fade), 2.0, true)
 
 func _draw_scape_tool_effect(progress: float, kind: String, effect: Dictionary) -> void:
 	var inner := _tank_inner()
@@ -2727,6 +3585,7 @@ func _draw_scape_tool_effect(progress: float, kind: String, effect: Dictionary) 
 	var target := _effect_point(effect, Vector2(0.50, 0.76))
 	var hand := target + Vector2(-58.0 + sin(progress * PI) * 18.0, -96.0)
 	_draw_tool_handle(hand, target + Vector2(-8, -6), Color(0.74, 0.68, 0.60, 0.72 * fade), 5.0)
+	draw_line(hand + Vector2(-10, 10), target + Vector2(12, 4), Color(0.80, 0.76, 0.68, 0.56 * fade), 2.0, true)
 	var item_color := Color(0.46, 0.36, 0.26, 0.72 * fade)
 	if str(effect.get("category", "")) == "plants":
 		item_color = Color(0.25, 0.68, 0.28, 0.72 * fade)
@@ -2739,11 +3598,26 @@ func _draw_scape_tool_effect(progress: float, kind: String, effect: Dictionary) 
 	if kind == "remove_scape_item":
 		item_pos = target.lerp(hand, _ease_out_cubic(progress))
 		item_color.a *= 1.0 - progress * 0.55
-	draw_circle(item_pos, 18.0, item_color)
-	draw_circle(item_pos + Vector2(-5, -5), 6.0, item_color.lightened(0.22))
+	var item_type := str(effect.get("type", ""))
+	if item_type != "" and scape_textures.has(item_type):
+		var size := Vector2(54, 54)
+		if str(effect.get("category", "")) in ["wood", "rocks"]:
+			size = Vector2(72, 58)
+		elif str(effect.get("category", "")) == "plants":
+			size = Vector2(62, 72)
+		_draw_scape_sprite(item_type, item_pos, size, bool(effect.get("flipped", int(effect.get("seed", 0)) % 2 == 0)), Color(1, 1, 1, clamp(item_color.a, 0.0, 1.0)), deg_to_rad(float(effect.get("rotation", 0.0))))
+	else:
+		draw_circle(item_pos, 18.0, item_color)
+		draw_circle(item_pos + Vector2(-5, -5), 6.0, item_color.lightened(0.22))
+	_draw_speck_cloud(target + Vector2(0, 8), progress, int(effect.get("seed", 0)) + 11, 18, Color(0.62, 0.48, 0.25, 0.20), Vector2(48, 22), Vector2(10, -10))
+	_draw_water_rings(target, progress, Color(0.78, 0.94, 1.0, 0.13), 2, 20.0)
 	if kind == "move_scape_item":
 		draw_line(target + Vector2(-54, 24), target + Vector2(54, 24), Color(0.84, 0.95, 1.0, 0.26 * fade), 2.0, true)
 		draw_circle(target + Vector2(-54, 24), 5.0, Color(0.84, 0.95, 1.0, 0.30 * fade), false, 1.4, true)
+	elif kind == "duplicate_scape_item":
+		var twin := target + Vector2(36.0, 22.0)
+		draw_circle(twin, 20.0 + sin(progress * PI) * 6.0, Color(0.80, 0.95, 1.0, 0.12 * fade), false, 1.4, true)
+		draw_line(target + Vector2(14, 10), twin - Vector2(12, 8), Color(0.84, 0.95, 1.0, 0.30 * fade), 1.4, true)
 
 func _draw_scape_reset_effect(progress: float, kind: String) -> void:
 	var inner := _tank_inner()
@@ -2756,6 +3630,12 @@ func _draw_scape_reset_effect(progress: float, kind: String) -> void:
 		draw_circle(pos, 2.0 + float(i % 3), Color(0.50, 0.42, 0.32, 0.24 * fade))
 	if kind == "reset_scape":
 		draw_rect(Rect2(inner.position + Vector2(28, 38), Vector2(inner.size.x - 56, inner.size.y - _substrate_height() - 70)), Color(0.76, 0.90, 1.0, 0.055 * fade), false, 1.2, true)
+		for i in range(6):
+			var sprout := Vector2(inner.position.x + inner.size.x * (0.20 + float(i) * 0.105), bed_y - 8.0)
+			var h := sin(progress * PI) * (24.0 + float(i % 3) * 12.0)
+			draw_line(sprout, sprout + Vector2(sin(i) * 7.0, -h), Color(0.42, 0.82, 0.42, 0.42 * fade), 2.2, true)
+	else:
+		draw_rect(Rect2(inner.position + Vector2(24, 32), Vector2(inner.size.x - 48, inner.size.y - _substrate_height() - 58)), Color(0.07, 0.10, 0.10, 0.10 * fade * progress), true)
 
 func _draw_equipment_adjust_effect(progress: float, effect: Dictionary) -> void:
 	var inner := _tank_inner()
@@ -2770,8 +3650,20 @@ func _draw_equipment_adjust_effect(progress: float, effect: Dictionary) -> void:
 		pos = Vector2(inner.position.x + 74.0, inner.end.y - _substrate_height() - 70.0)
 	_draw_tool_handle(pos + Vector2(58, -44), pos + Vector2(8, 4), Color(0.78, 0.80, 0.76, 0.74 * fade), 4.0)
 	draw_circle(pos, 24.0 + sin(progress * TAU * 2.0) * 4.0, Color(0.84, 0.95, 1.0, 0.10 * fade), false, 2.0, true)
-	for i in range(3):
-		draw_arc(pos, 34.0 + i * 10.0, -PI * 0.25, PI * 0.25, 18, Color(0.78, 0.94, 1.0, 0.16 * fade), 1.2, true)
+	if "light" in equipment:
+		draw_rect(Rect2(pos + Vector2(-96, -6), Vector2(192, 8)), Color(0.92, 0.98, 1.0, 0.30 * fade), true)
+		draw_polygon(PackedVector2Array([pos + Vector2(-84, 6), pos + Vector2(84, 6), pos + Vector2(150, inner.size.y * 0.38), pos + Vector2(-150, inner.size.y * 0.38)]), PackedColorArray([Color(0.94, 0.98, 1.0, 0.08 * fade), Color(0.94, 0.98, 1.0, 0.08 * fade), Color(0.94, 0.98, 1.0, 0.00), Color(0.94, 0.98, 1.0, 0.00)]))
+	elif "heater" in equipment:
+		for i in range(5):
+			var y := pos.y - 38 + i * 18
+			draw_line(Vector2(pos.x - 12 + sin(progress * TAU + i) * 5.0, y), Vector2(pos.x + 14 + sin(progress * TAU + i + 0.8) * 5.0, y - 10), Color(1.0, 0.42, 0.26, 0.18 * fade), 1.5, true)
+	elif "air" in equipment:
+		for i in range(18):
+			var rise := fposmod(progress * 1.6 + float(i) * 0.075, 1.0)
+			draw_circle(pos + Vector2(sin(i) * 16.0, -rise * 128.0), 1.5 + float(i % 3) * 0.4, Color(0.82, 0.97, 1.0, 0.32 * fade * (1.0 - rise * 0.35)))
+	else:
+		for i in range(5):
+			draw_line(pos + Vector2(6, -18 + i * 10), pos + Vector2(-72 - progress * 34.0, -22 + i * 9 + sin(i + progress * 8.0) * 5.0), Color(0.78, 0.94, 1.0, 0.18 * fade), 1.5, true)
 
 func _draw_system_switch_effect(progress: float, effect: Dictionary) -> void:
 	var inner := _tank_inner()
@@ -2782,26 +3674,96 @@ func _draw_system_switch_effect(progress: float, effect: Dictionary) -> void:
 		target_color = Color(0.46, 0.78, 0.60, 0.10 * fade)
 	var wipe_width := inner.size.x * _ease_in_out_sine(progress)
 	draw_rect(Rect2(inner.position, Vector2(wipe_width, inner.size.y)), target_color, true)
-	for i in range(16):
+	var front_x := inner.position.x + wipe_width
+	draw_line(Vector2(front_x, inner.position.y + 24), Vector2(front_x, inner.end.y - _substrate_height()), Color(0.92, 0.98, 1.0, 0.24 * fade), 3.0, true)
+	for i in range(26):
 		var pos := Vector2(inner.position.x + fposmod(progress * inner.size.x * 1.4 + i * 58.0, inner.size.x), inner.position.y + 42.0 + fposmod(i * 31.0, inner.size.y - _substrate_height() - 72.0))
 		var color := Color(0.92, 0.92, 1.0, 0.18 * fade)
 		if system == "freshwater":
 			color = Color(0.74, 0.92, 0.72, 0.18 * fade)
-		draw_circle(pos, 2.0 + float(i % 4), color)
+		if system == "saltwater":
+			draw_line(pos + Vector2(-4, 0), pos + Vector2(4, 0), color, 1.1, true)
+			draw_line(pos + Vector2(0, -4), pos + Vector2(0, 4), color, 1.1, true)
+		else:
+			draw_circle(pos, 2.0 + float(i % 4), color)
+	for band in range(3):
+		_draw_wave(Vector2(inner.position.x + 18, inner.position.y + 62 + band * 48), inner.size.x - 36, Color(target_color.r, target_color.g, target_color.b, 0.18 * fade), progress * 8.0 + band)
 
 func _draw_aquarium_card_effect(progress: float, kind: String, effect: Dictionary) -> void:
 	var inner := _tank_inner()
 	var fade := _effect_fade(progress)
-	var scale := 0.86 + _ease_out_cubic(progress) * 0.14
+	var scale := 0.82 + _ease_out_cubic(progress) * 0.18
 	var card_size := Vector2(130, 72) * scale
-	var pos := inner.position + Vector2(inner.size.x * 0.5 - card_size.x * 0.5, inner.size.y * 0.22 - card_size.y * 0.5)
+	var pos := inner.position + Vector2(inner.size.x * 0.5 - card_size.x * 0.5, inner.size.y * (0.20 + sin(progress * PI) * 0.025) - card_size.y * 0.5)
+	draw_circle(pos + card_size * 0.5, 78.0 + progress * 34.0, Color(0.72, 0.94, 1.0, 0.040 * fade), false, 1.4, true)
 	draw_rect(Rect2(pos, card_size), Color(0.08, 0.11, 0.10, 0.74 * fade), true)
 	draw_rect(Rect2(pos, card_size), Color(0.76, 0.94, 1.0, 0.42 * fade), false, 1.4, true)
 	draw_rect(Rect2(pos + Vector2(12, 16), Vector2(card_size.x - 24, 28)), Color(0.40, 0.68, 0.76, 0.20 * fade), true)
+	for i in range(3):
+		var y := pos.y + 22 + i * 7
+		_draw_wave(Vector2(pos.x + 20, y), card_size.x - 40, Color(0.88, 0.98, 1.0, 0.18 * fade), progress * 5.0 + i)
 	draw_line(pos + Vector2(18, 52), pos + Vector2(card_size.x - 18, 52), Color(0.92, 0.96, 0.84, 0.32 * fade), 2.0, true)
 	if kind == "create_aquarium":
 		draw_line(pos + Vector2(card_size.x - 28, 18), pos + Vector2(card_size.x - 28, 38), Color(0.70, 0.94, 0.72, 0.72 * fade), 2.0, true)
 		draw_line(pos + Vector2(card_size.x - 38, 28), pos + Vector2(card_size.x - 18, 28), Color(0.70, 0.94, 0.72, 0.72 * fade), 2.0, true)
+
+func _draw_quarantine_effect(progress: float, effect: Dictionary) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var target := _active_action_point(["quarantine_animal"], Vector2(0.54, 0.48))
+	var box := Rect2(target + Vector2(-44, -28 + sin(progress * PI) * 6.0), Vector2(88, 56))
+	draw_rect(box, Color(0.42, 0.68, 0.86, 0.12 * fade), true)
+	draw_rect(box, Color(0.70, 0.90, 1.0, 0.46 * fade), false, 1.6, true)
+	for i in range(4):
+		draw_line(box.position + Vector2(10 + i * 18, 6), box.position + Vector2(10 + i * 18, box.size.y - 6), Color(0.70, 0.90, 1.0, 0.16 * fade), 1.0, true)
+	_draw_tool_handle(box.position + Vector2(-42, -30), box.position + Vector2(12, 8), Color(0.72, 0.80, 0.78, 0.68 * fade), 4.0)
+	_draw_water_rings(target, progress, Color(0.70, 0.90, 1.0, 0.18), 3, 24.0)
+	var species_id := str(effect.get("species_id", ""))
+	_draw_action_animal(species_id, target + Vector2(sin(progress * TAU) * 10.0, 0), 1.0, 0.62 * fade)
+
+func _draw_treatment_effect(progress: float, effect: Dictionary) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var center := inner.position + Vector2(inner.size.x * 0.52, inner.size.y * 0.36)
+	var bottle := Rect2(center + Vector2(-22, -92 + sin(progress * PI) * 5.0), Vector2(44, 38))
+	draw_rect(bottle, Color(0.40, 0.16, 0.46, 0.76 * fade), true)
+	draw_rect(bottle, Color(0.92, 0.78, 1.0, 0.42 * fade), false, 1.2, true)
+	draw_line(bottle.position + Vector2(8, 18), bottle.position + Vector2(36, 18), Color(0.96, 0.84, 1.0, 0.52 * fade), 1.4, true)
+	for i in range(14):
+		var y := bottle.end.y + fposmod(progress * 142.0 + i * 15.0, inner.size.y * 0.46)
+		draw_circle(Vector2(center.x + sin(i) * 20.0, y), 2.2, Color(0.80, 0.46, 1.0, 0.46 * fade))
+	_draw_speck_cloud(center + Vector2(0, 60), progress, 413, 54, Color(0.68, 0.38, 0.94, 0.24), Vector2(150, 86), Vector2(42, 16))
+	for r in range(4):
+		draw_arc(center + Vector2(0, 60), 32.0 + progress * 70.0 + r * 16.0, 0.0, TAU, 52, Color(0.78, 0.54, 1.0, 0.055 * fade), 1.4, true)
+	var cross := center + Vector2(72, -18)
+	draw_line(cross + Vector2(-11, 0), cross + Vector2(11, 0), Color(0.96, 0.78, 1.0, 0.50 * fade), 3.0, true)
+	draw_line(cross + Vector2(0, -11), cross + Vector2(0, 11), Color(0.96, 0.78, 1.0, 0.50 * fade), 3.0, true)
+
+func _draw_safeguards_effect(progress: float) -> void:
+	var inner := _tank_inner()
+	var fade := _effect_fade(progress)
+	var settle := _ease_out_cubic(clamp(progress * 1.8, 0.0, 1.0))
+	var lid_y: float = lerp(inner.position.y - 48.0, inner.position.y + 4.0, settle)
+	draw_rect(Rect2(Vector2(inner.position.x + 18, lid_y), Vector2(inner.size.x - 36, 9)), Color(0.12, 0.16, 0.17, 0.82 * fade), true)
+	draw_line(Vector2(inner.position.x + 26, lid_y + 2), Vector2(inner.end.x - 26, lid_y + 2), Color(0.78, 0.92, 0.94, 0.42 * fade), 1.5, true)
+	var intake := Vector2(inner.end.x - 53, inner.position.y + inner.size.y * 0.43)
+	var guard_radius := 7.0 + _ease_out_cubic(clamp((progress - 0.16) * 2.2, 0.0, 1.0)) * 11.0
+	draw_circle(intake, guard_radius, Color(0.26, 0.39, 0.34, 0.56 * fade), true)
+	for ring in range(3):
+		draw_arc(intake, guard_radius + ring * 3.0, 0.0, TAU, 28, Color(0.68, 0.88, 0.76, (0.22 - ring * 0.045) * fade), 1.2, true)
+	var battery := Rect2(Vector2(inner.end.x + 24, inner.end.y - 118), Vector2(48, 62))
+	draw_rect(battery, Color(0.08, 0.11, 0.11, 0.88 * fade), true)
+	draw_rect(battery, Color(0.72, 0.92, 0.76, 0.48 * fade), false, 1.5, true)
+	draw_rect(Rect2(battery.position + Vector2(16, -7), Vector2(16, 7)), Color(0.72, 0.92, 0.76, 0.62 * fade), true)
+	var charge: float = clamp((progress - 0.28) * 1.7, 0.0, 1.0)
+	draw_rect(Rect2(battery.position + Vector2(8, 54 - charge * 44), Vector2(32, charge * 44)), Color(0.38, 0.82, 0.54, 0.42 * fade), true)
+	var cable_start := battery.position + Vector2(0, 24)
+	var cable_end := Vector2(inner.end.x - 34, inner.end.y - _substrate_height() - 20)
+	_draw_tool_handle(cable_start, cable_start.lerp(cable_end, _ease_in_out_sine(clamp((progress - 0.20) * 1.55, 0.0, 1.0))), Color(0.52, 0.72, 0.66, 0.74 * fade), 3.0)
+	if progress > 0.45:
+		var pulse := 0.5 + sin(progress * TAU * 4.0) * 0.25
+		draw_circle(battery.position + Vector2(24, 16), 4.0, Color(0.52, 1.0, 0.62, pulse * fade))
+		_draw_water_rings(cable_end, progress, Color(0.62, 0.94, 0.82, 0.17), 3, 18.0)
 
 func _draw_front_glass() -> void:
 	var inner := _tank_inner()
@@ -2842,36 +3804,50 @@ func _draw_glass_age(inner: Rect2) -> void:
 
 func _draw_equipment_inside_tank(inner: Rect2) -> void:
 	var equipment = state.get("equipment", {})
+	var safety = state.get("safety", {})
 	var filter = equipment.get("filter", {})
 	var heater = equipment.get("heater", {})
 	var light = equipment.get("light", {})
 	var air = equipment.get("air_pump", {})
 	var flow := float(filter.get("effective_flow", filter.get("flow", 0.0)))
+	var bypass := float(filter.get("bypass_risk", 0.0))
 	var filter_color := Color(0.04, 0.07, 0.075, 0.72)
 	if str(filter.get("failure_mode", "")) != "":
 		filter_color = Color(0.18, 0.10, 0.07, 0.82)
+	elif bypass > 0.35:
+		filter_color = Color(0.13, 0.115, 0.065, 0.78)
 	draw_rect(Rect2(Vector2(inner.end.x - 46, inner.position.y + 56), Vector2(16, inner.size.y - _substrate_height() - 104)), filter_color, true)
 	draw_rect(Rect2(Vector2(inner.end.x - 58, inner.position.y + 62), Vector2(10, 74)), filter_color.lightened(0.12), true)
+	if bool(safety.get("intake_guard", false)):
+		var intake_guard := Vector2(inner.end.x - 53, inner.position.y + 99)
+		draw_circle(intake_guard, 12.0, Color(0.23, 0.34, 0.30, 0.76))
+		draw_arc(intake_guard, 14.0, 0.0, TAU, 24, Color(0.62, 0.82, 0.70, 0.38), 1.2, true)
 	for i in range(5):
-		draw_circle(Vector2(inner.end.x - 66 - flow * 34.0 + sin(Time.get_ticks_msec() / 450.0 + i) * 4.0, inner.position.y + 88 + i * 38), 1.8, Color(0.78, 0.94, 0.98, 0.18 + flow * 0.16))
+		draw_circle(Vector2(inner.end.x - 66 - flow * 34.0 + sin(Time.get_ticks_msec() / 450.0 + i) * (4.0 + bypass * 5.0), inner.position.y + 88 + i * 38), 1.8 + bypass * 0.8, Color(0.78, 0.94, 0.98, 0.18 + flow * 0.16))
 	if bool(heater.get("enabled", true)):
 		var hx := inner.position.x + 42
 		var hy := inner.position.y + 96
 		draw_rect(Rect2(Vector2(hx, hy), Vector2(10, inner.size.y - _substrate_height() - 144)), Color(0.09, 0.10, 0.10, 0.70), true)
-		var heat_alpha := 0.18 if str(heater.get("failure_mode", "")) == "" else 0.36
+		var heat_alpha := 0.18 + float(heater.get("thermostat_stickiness", 0.0)) * 0.18
+		if str(heater.get("failure_mode", "")) != "":
+			heat_alpha = 0.42
 		draw_line(Vector2(hx + 5, hy + 12), Vector2(hx + 5, inner.end.y - _substrate_height() - 44), Color(1.0, 0.44, 0.30, heat_alpha), 3.0, true)
 	if bool(air.get("enabled", true)) and float(air.get("output", 0.0)) > 0.01:
-		var output := float(air.get("output", 0.5)) * float(air.get("health", 1.0))
+		var output := float(air.get("effective_output", float(air.get("output", 0.5)) * float(air.get("health", 1.0))))
 		var stone := Vector2(inner.position.x + inner.size.x * 0.18, inner.end.y - _substrate_height() - 16)
 		draw_rect(Rect2(stone - Vector2(18, 4), Vector2(36, 8)), Color(0.18, 0.20, 0.19, 0.64), true)
 		for i in range(12):
 			var rise := fposmod(Time.get_ticks_msec() / 900.0 + float(i) * 0.11, 1.0)
 			var pos := stone + Vector2(sin(i * 1.7) * 15.0, -rise * inner.size.y * 0.68)
 			draw_circle(pos, 1.3 + float(i % 3) * 0.4, Color(0.85, 0.97, 1.0, 0.12 + output * 0.26))
+	if bool(safety.get("lid_fitted", false)):
+		draw_rect(Rect2(inner.position + Vector2(18, 3), Vector2(inner.size.x - 36, 7)), Color(0.10, 0.14, 0.15, 0.72), true)
+		draw_line(inner.position + Vector2(30, 5), Vector2(inner.end.x - 30, inner.position.y + 5), Color(0.78, 0.92, 0.94, 0.22), 1.0, true)
 	var clock = state.get("clock", {})
 	if bool(light.get("enabled", true)) and bool(clock.get("lights_on", true)) and float(light.get("hours_per_day", 0.0)) > 0.0:
-		var spectrum := float(light.get("plant_spectrum", 0.82))
-		var alpha: float = clamp(0.05 + spectrum * 0.10, 0.04, 0.18)
+		var spectrum := float(light.get("effective_spectrum", light.get("plant_spectrum", 0.82)))
+		var par := float(light.get("par_output", light.get("health", 1.0)))
+		var alpha: float = clamp(0.04 + spectrum * par * 0.12, 0.035, 0.18)
 		draw_rect(Rect2(inner.position.x + 32, inner.position.y + 8, inner.size.x - 64, 10), Color(0.88, 0.96, 1.0, alpha), true)
 
 func _draw_tank_sensors() -> void:
@@ -2993,7 +3969,9 @@ func _draw_animals() -> void:
 		var health := float(animal.get("health", 1.0))
 		var tint := Color(spec.get("color", "#cccccc")).lerp(Color("#d8c8a0"), clamp(stress * 0.35 + (1.0 - health) * 0.4, 0.0, 0.55))
 		var accent := Color(spec.get("accent", "#ffffff"))
-		if _draw_fish_sprite(str(animal.get("species_id", "")), pos, facing, stress, health):
+		_draw_animal_shadow(str(animal.get("species_id", "")), pos, visual)
+		_draw_animal_wake(pos, facing, visual, animal)
+		if _draw_fish_sprite(str(animal.get("species_id", "")), pos, facing, stress, health, visual):
 			_draw_health_marks(animal, pos, facing)
 			continue
 		var visual_family := str(spec.get("visual_family", animal.get("species_id", "")))
@@ -3018,15 +3996,53 @@ func _draw_animals() -> void:
 				_draw_tetra(pos, facing, tint, accent, visual)
 		_draw_health_marks(animal, pos, facing)
 
-func _draw_fish_sprite(species_id: String, pos: Vector2, facing: float, stress: float, health: float) -> bool:
+func _draw_animal_shadow(species_id: String, pos: Vector2, visual: Dictionary) -> void:
+	var draw_size := _fish_sprite_size(species_id)
+	var speed: float = clamp(float(visual.get("speed_ratio", 0.0)), 0.0, 1.8)
+	var bank: float = abs(float(visual.get("bank", 0.0)))
+	var offset := Vector2(5.0, 10.0 + speed * 4.0 + bank * 18.0)
+	_draw_ellipse(pos + offset, draw_size.x * (0.22 + speed * 0.025), draw_size.y * 0.11, Color(0.01, 0.025, 0.028, 0.065 + speed * 0.018), true)
+
+func _draw_animal_wake(pos: Vector2, facing: float, visual: Dictionary, animal: Dictionary) -> void:
+	var speed: float = clamp(float(visual.get("speed_ratio", 0.0)), 0.0, 1.8)
+	var stress: float = clamp(float(animal.get("acute_stress", 0.0)), 0.0, 1.0)
+	if speed < 0.10 and stress < 0.35:
+		return
+	var phase := float(visual.get("phase", 0.0))
+	var bank: float = float(visual.get("bank", 0.0))
+	var alpha: float = clamp(speed * 0.10 + stress * 0.08, 0.02, 0.18)
+	for i in range(3):
+		var back := pos + Vector2((-20.0 - i * 12.0) * facing, sin(phase * 2.0 + i) * 4.0 + bank * 16.0)
+		var tail := back + Vector2((-22.0 - speed * 16.0) * facing, sin(phase * 1.4 + i * 0.8) * (4.0 + speed * 3.0) + bank * 10.0)
+		draw_line(back, tail, Color(0.80, 0.96, 1.0, alpha * (1.0 - float(i) * 0.22)), 1.1, true)
+
+func _draw_fish_sprite(species_id: String, pos: Vector2, facing: float, stress: float, health: float, visual: Dictionary) -> bool:
 	if not fish_textures.has(species_id):
 		return false
 	var texture: Texture2D = fish_textures[species_id]
 	var draw_size := _fish_sprite_size(species_id)
 	var warmth: float = clamp(stress * 0.18 + (1.0 - health) * 0.22, 0.0, 0.35)
 	var modulate := Color(1.0, 1.0 - warmth * 0.18, 1.0 - warmth * 0.28, 1.0)
-	draw_set_transform(pos, 0.0, Vector2(1.0 if facing >= 0 else -1.0, 1.0))
+	var phase := float(visual.get("phase", 0.0))
+	var speed: float = clamp(float(visual.get("speed_ratio", 0.0)), 0.0, 1.8)
+	var bank: float = clamp(float(visual.get("bank", 0.0)), -0.28, 0.28)
+	var turn_energy: float = clamp(float(visual.get("turn_energy", 0.0)), 0.0, 1.0)
+	var bob: float = sin(phase * 2.1) * lerp(0.45, 2.25, speed)
+	var rotation: float = bank + sin(phase * 1.7) * lerp(0.006, 0.030, speed) * facing
+	var squeeze: float = 1.0 + sin(phase * (2.9 + speed * 0.8)) * (0.010 + speed * 0.018 + turn_energy * 0.010)
+	var fin_lift: float = 1.0 + cos(phase * 2.4) * (0.008 + speed * 0.016)
+	draw_set_transform(pos + Vector2(0, bob), rotation, Vector2((1.0 if facing >= 0 else -1.0) * squeeze, fin_lift / max(0.85, squeeze)))
 	draw_texture_rect(texture, Rect2(-draw_size * 0.5, draw_size), false, modulate)
+	var clock: Dictionary = state.get("clock", {})
+	if bool(clock.get("lights_on", true)):
+		var glint_alpha: float = 0.05 + speed * 0.025 + turn_energy * 0.015
+		draw_line(Vector2(-draw_size.x * 0.17, -draw_size.y * 0.16), Vector2(draw_size.x * 0.22, -draw_size.y * 0.24), Color(0.88, 1.0, 0.92, glint_alpha), 1.0, true)
+		draw_circle(Vector2(draw_size.x * 0.12, -draw_size.y * 0.20), 1.1, Color(0.94, 1.0, 0.96, glint_alpha * 1.25))
+	if speed > 0.20:
+		var tail_x := -draw_size.x * 0.48
+		for i in range(2):
+			var wave := sin(phase * (3.4 + speed) + i) * 5.0 * speed
+			draw_line(Vector2(tail_x, -4.0 + i * 8.0), Vector2(tail_x - 10.0, -6.0 + i * 12.0 + wave), Color(0.88, 0.96, 1.0, 0.12 * speed), 1.2, true)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	return true
 
@@ -3275,7 +4291,10 @@ func _refresh_ui() -> void:
 	var aquarium = state.get("aquarium", {})
 	if scape_label:
 		var biology = state.get("biology", {})
-		scape_label.text = "Plants and cleanup crews affect nitrate, oxygen, algae, cover, waste, and maintenance. Cover %.0f%% - algae control %.0f%% - grazing %.0f%% - upkeep %.0f%%" % [
+		var scape_data: Dictionary = aquarium.get("scape", {})
+		var custom_count: int = scape_data.get("objects", []).size()
+		scape_label.text = "%d custom pieces. Plants and cleanup crews affect nitrate, oxygen, algae, cover, waste, and maintenance. Cover %.0f%% - algae control %.0f%% - grazing %.0f%% - upkeep %.0f%%" % [
+			custom_count,
 			float(aquarium.get("plant_cover", 0.0)) * 100.0,
 			float(aquarium.get("algae_control", 0.0)) * 100.0,
 			float(biology.get("grazing_pressure", 0.0)) * 100.0,
@@ -3299,23 +4318,23 @@ func _refresh_ui() -> void:
 			var mode := str(item.get("failure_mode", ""))
 			if mode != "":
 				failure_bits.append(mode)
-		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / channel %.0f%% / carbon %.0f%% / PO4 %.0f%% / service %.0fh - heater %.1f C (%+.2f) - light %.1fh PAR %.0f%% - air %.0f%% - skimmer %.0f%% cup %.0f%% fouling %.0f%% - ATO %s %.1fL" % [
+		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / bypass %.0f%% / driver %s - heater %.1f C var %.2f / %s - light %.1fh PAR %.0f%% lens %.0f%% - air %.0f%% delivered / clog %.0f%% - skimmer %.0f%% drift %.0f%% - ATO %s sensor %.0f%%" % [
 			float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0,
 			float(mechanical.get("clog", 0.0)) * 100.0,
-			float(mechanical.get("channeling", 0.0)) * 100.0,
-			float(chemical.get("carbon_remaining", 0.0)) * 100.0,
-			float(chemical.get("phosphate_remover_remaining", 0.0)) * 100.0,
-			float(filter.get("service_hours", 0.0)),
+			float(filter.get("bypass_risk", 0.0)) * 100.0,
+			str(filter.get("last_flow_driver", "balanced flow")),
 			float(heater.get("target_c", water.get("temperature_c", 24.0))),
-			float(heater.get("calibration_offset_c", 0.0)),
-			float(light.get("hours_per_day", 8.0)) if bool(light.get("enabled", true)) else 0.0,
+			float(heater.get("temperature_variance_c", 0.0)),
+			str(heater.get("last_heat_driver", "stable")),
+			float(light.get("actual_hours_per_day", light.get("hours_per_day", 8.0))) if bool(light.get("enabled", true)) else 0.0,
 			float(light.get("par_output", light.get("health", 1.0))) * 100.0,
-			float(air.get("output", 0.0)) * 100.0 if bool(air.get("enabled", true)) else 0.0,
+			float(light.get("lens_film", 0.0)) * 100.0,
+			float(air.get("effective_output", air.get("output", 0.0))) * 100.0 if bool(air.get("enabled", true)) else 0.0,
+			float(air.get("airline_clog", 0.0)) * 100.0,
 			float(skimmer.get("effective_output", skimmer.get("output", 0.0))) * 100.0 if bool(skimmer.get("enabled", false)) else 0.0,
-			float(skimmer.get("cup_fullness", 0.0)) * 100.0,
-			float(skimmer.get("neck_fouling", 0.0)) * 100.0,
+			float(skimmer.get("tuning_drift", 0.0)) * 100.0,
 			"on" if bool(ato.get("enabled", false)) else "off",
-			float(ato.get("reservoir_litres", 0.0))
+			float(ato.get("sensor_film", 0.0)) * 100.0
 		]
 		if failure_bits.size() > 0:
 			filter_label.text += " - wear: " + ", ".join(failure_bits)
@@ -3334,10 +4353,12 @@ func _refresh_ui() -> void:
 		]
 	if planning_label:
 		var planning = state.get("planning", {})
+		var safety = state.get("safety", {})
 		var plan_issues: Array = planning.get("issues", [])
-		var plan_text := "Planning: %.0f kg estimated - risk %d" % [
+		var plan_text := "Planning: %.0f kg estimated - risk %d - safeguards %d%%" % [
 			float(planning.get("estimated_total_weight_kg", 0.0)),
-			int(planning.get("risk_score", 0))
+			int(planning.get("risk_score", 0)),
+			int(safety.get("readiness_score", 0))
 		]
 		if plan_issues.size() > 0:
 			plan_text += " - %s" % plan_issues[0].get("title", "issue")

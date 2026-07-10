@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import math
+import random
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +31,10 @@ def lighten(color: tuple[int, int, int, int], amount: float) -> tuple[int, int, 
 def darken(color: tuple[int, int, int, int], amount: float) -> tuple[int, int, int, int]:
     r, g, b, a = color
     return (max(0, int(r * (1 - amount))), max(0, int(g * (1 - amount))), max(0, int(b * (1 - amount))), a)
+
+
+def mix(left: tuple[int, int, int, int], right: tuple[int, int, int, int], amount: float) -> tuple[int, int, int, int]:
+    return tuple(int(a + (b - a) * amount) for a, b in zip(left, right))
 
 
 def canvas(size: tuple[int, int]) -> tuple[Image.Image, ImageDraw.ImageDraw]:
@@ -61,16 +66,64 @@ def line(draw: ImageDraw.ImageDraw, points: list[tuple[float, float]], fill, wid
 
 
 def eye(draw: ImageDraw.ImageDraw, x: float, y: float) -> None:
-    ellipse(draw, (x - 3, y - 3, x + 3, y + 3), rgba("#f8faf7"))
-    ellipse(draw, (x - 0.5, y - 0.5, x + 1.5, y + 1.5), rgba("#11191b"))
+    ellipse(draw, (x - 4.2, y - 4.2, x + 4.2, y + 4.2), rgba("#14191b"))
+    ellipse(draw, (x - 3.0, y - 3.0, x + 3.0, y + 3.0), rgba("#d7bb76"))
+    ellipse(draw, (x - 1.6, y - 2.4, x + 1.6, y + 2.4), rgba("#111719"))
+    ellipse(draw, (x - 1.4, y - 1.8, x - 0.2, y - 0.5), rgba("#f6fff5"))
 
 
 def fish_base(draw: ImageDraw.ImageDraw, body: tuple[int, int, int, int], accent: tuple[int, int, int, int]) -> None:
-    polygon(draw, [(56, 64), (42, 42), (22, 34), (33, 64), (22, 94), (42, 86)], accent)
-    ellipse(draw, (42, 42, 202, 88), body, outline=darken(body, 0.22), width=2)
-    polygon(draw, [(144, 46), (103, 28), (78, 44)], lighten(body, 0.08))
-    polygon(draw, [(112, 82), (76, 103), (140, 88)], darken(body, 0.08))
+    tail_outline = darken(accent, 0.34)
+    polygon(draw, [(58, 64), (41, 40), (20, 32), (31, 64), (20, 96), (41, 88)], tail_outline)
+    polygon(draw, [(58, 64), (43, 43), (25, 36), (35, 64), (25, 92), (43, 85)], accent)
+    ellipse(draw, (41, 41, 204, 90), darken(body, 0.30))
+    ellipse(draw, (44, 43, 202, 88), body)
+    ellipse(draw, (54, 45, 194, 68), lighten(body, 0.15))
+    ellipse(draw, (58, 71, 192, 86), darken(body, 0.10))
+    for index in range(6):
+        x = 70 + index * 18
+        y = 58 + math.sin(index * 1.3) * 4
+        ellipse(draw, (x - 3, y - 1.5, x + 3, y + 1.5), mix(body, lighten(body, 0.28), 0.5))
+    line(draw, [(70, 68), (178, 70)], darken(body, 0.22), 1)
+    polygon(draw, [(145, 46), (103, 27), (78, 44)], lighten(body, 0.12))
+    polygon(draw, [(113, 83), (76, 104), (141, 88)], darken(body, 0.12))
+    line(draw, [(171, 50), (166, 79)], darken(body, 0.18), 1)
     eye(draw, 180, 58)
+
+
+def finish_fish_sprite(image: Image.Image, seed: int) -> Image.Image:
+    alpha = image.getchannel("A")
+    shadow_alpha = alpha.filter(ImageFilter.GaussianBlur(radius=4 * SCALE)).point(lambda value: int(value * 0.22))
+    shadow = Image.new("RGBA", image.size, (2, 11, 14, 0))
+    shadow.putalpha(shadow_alpha)
+    shadow_canvas = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    shadow_canvas.paste(shadow, (3 * SCALE, 6 * SCALE))
+    result = Image.alpha_composite(shadow_canvas, image)
+
+    lighting = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    light_draw = ImageDraw.Draw(lighting)
+    for band in range(4):
+        x0 = (50 + band * 34) * SCALE
+        y0 = (42 + band * 4) * SCALE
+        x1 = (132 + band * 31) * SCALE
+        y1 = (82 + band * 3) * SCALE
+        light_draw.arc((x0, y0, x1, y1), 196, 338, fill=(220, 255, 244, 22), width=max(2, SCALE))
+    lighting.putalpha(ImageChops.multiply(lighting.getchannel("A"), alpha))
+    result = Image.alpha_composite(result, lighting)
+
+    texture = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    texture_draw = ImageDraw.Draw(texture)
+    rng = random.Random(seed)
+    for _ in range(64):
+        x = rng.randint(54 * SCALE, 194 * SCALE)
+        y = rng.randint(44 * SCALE, 88 * SCALE)
+        if alpha.getpixel((x, y)) < 220:
+            continue
+        radius = rng.randint(2, 4) * SCALE / 2
+        tone = (236, 252, 241, rng.randint(10, 24))
+        texture_draw.ellipse((x - radius, y - radius * 0.55, x + radius, y + radius * 0.55), fill=tone)
+    texture.putalpha(ImageChops.multiply(texture.getchannel("A"), alpha))
+    return Image.alpha_composite(result, texture)
 
 
 def make_neon_tetra() -> Image.Image:
@@ -434,7 +487,9 @@ def main() -> int:
         "cleaner_shrimp": make_shrimp,
     }
     for name, maker in fish.items():
-        save(maker().filter(ImageFilter.UnsharpMask(radius=0.8, percent=80, threshold=2)), FISH_DIR / f"{name}.png")
+        seed = sum((index + 1) * ord(char) for index, char in enumerate(name))
+        sprite = finish_fish_sprite(maker(), seed).filter(ImageFilter.UnsharpMask(radius=0.8, percent=88, threshold=2))
+        save(sprite, FISH_DIR / f"{name}.png")
 
     save(make_rock("river", "#52625c"), SCAPE_DIR / "river_stone.png")
     save(make_rock("moss", "#566a56"), SCAPE_DIR / "moss_stone.png")

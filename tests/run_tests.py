@@ -439,7 +439,49 @@ def test_lone_schooling_fish_declines_from_social_deprivation() -> None:
     assert state["welfare"]["status"] == "critical"
     assert any("needs a group" in issue["title"] for issue in state["welfare"]["issues"])
     assert "undersized" in neon["welfare_reasons"][0]
-    assert neon["health"] < start_health - 0.2
+    assert neon["alive"] is True
+    assert start_health - 0.08 < neon["health"] < start_health
+
+
+def test_balanced_school_survives_realistic_first_week() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["randomness"]["noise"] = 0.0
+    state["animals"] = [animal(species, "neon_tetra", f"Neon {index + 1}", 100 + index) for index in range(10)]
+    sim = AquariumSimulation(species, state)
+    for _day in range(7):
+        average_hunger = sum(item["hunger"] for item in state["animals"]) / len(state["animals"])
+        portion = min(1.5, 10 * 0.55 * 0.14 * (0.65 + average_hunger))
+        sim.feed(portion, "micro_pellet")
+        sim.advance(24 * 3600, offline=True)
+    assert all(item["alive"] for item in state["animals"])
+    assert min(item["health"] for item in state["animals"]) > 0.78
+    assert max(item["hunger"] for item in state["animals"]) < 0.55
+
+
+def test_small_tanks_concentrate_waste_faster() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    small = clear_state(species, "Small", "freshwater", 20)
+    large = clear_state(species, "Large", "freshwater", 200)
+    for state in (small, large):
+        state["randomness"]["noise"] = 0.0
+        state["animals"] = [animal(species, "honey_gourami", "Gourami", 80)]
+        state["equipment"]["filter"]["enabled"] = False
+    AquariumSimulation(species, small).advance(12 * 3600, offline=True)
+    AquariumSimulation(species, large).advance(12 * 3600, offline=True)
+    assert small["water"]["ammonia_mg_l"] > large["water"]["ammonia_mg_l"] * 1.5
+
+
+def test_safeguard_kit_persists_real_world_readiness() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    sim = AquariumSimulation(species, state)
+    sim.install_safeguards()
+    assert state["safety"]["readiness_score"] == 100
+    assert state["safety"]["lid_fitted"] is True
+    assert state["safety"]["intake_guard"] is True
+    assert state["safety"]["battery_air_pump"] is True
+    assert not any(issue["title"] == "Electrical safeguards incomplete" for issue in state["planning"]["issues"])
 
 
 def test_proper_neon_school_avoids_social_crisis() -> None:
@@ -931,6 +973,34 @@ def test_scape_placement_rules_and_relocation() -> None:
     assert state["aquarium"]["scape"]["plants"] == []
 
 
+def test_scape_object_transforms_and_duplication_persist() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Layout Test", "freshwater", 90)
+    sim = AquariumSimulation(species, state)
+    sim.place_scape_item("wood", "manzanita_branch", 0.42, 0.78, 1.65, 35.0, 2, True)
+    objects = state["aquarium"]["scape"]["objects"]
+    assert len(objects) == 1
+    branch = objects[0]
+    assert branch["scale"] == 1.65
+    assert branch["rotation"] == 35.0
+    assert branch["layer"] == 2
+    assert branch["flipped"] is True
+    sim.move_scape_item(branch["id"], 0.55, 0.76, 0.7, -40.0, 0, False)
+    assert branch["x"] == 0.55
+    assert branch["y"] == 0.76
+    assert branch["scale"] == 0.7
+    assert branch["rotation"] == -40.0
+    assert branch["layer"] == 0
+    assert branch["flipped"] is False
+    sim.duplicate_scape_item(branch["id"])
+    assert len(objects) == 2
+    duplicate = objects[1]
+    assert duplicate["id"] != branch["id"]
+    assert duplicate["type"] == "manzanita_branch"
+    assert duplicate["layer"] == 0
+    assert duplicate["rotation"] == -40.0
+
+
 def test_feeding_competition_can_leave_shy_fish_hungry() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = default_state(species)
@@ -1037,6 +1107,76 @@ def test_skimmer_neck_fouling_reduces_export() -> None:
     fouled_sim.advance(8 * 3600)
     assert clean_state["equipment"]["protein_skimmer"]["effective_output"] > fouled_state["equipment"]["protein_skimmer"]["effective_output"]
     assert clean_state["water"]["organic_waste"] < fouled_state["water"]["organic_waste"]
+
+
+def test_filter_bypass_and_biofilm_slough_from_neglected_media() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["randomness"]["noise"] = 0.0
+    filter_state = state["equipment"]["filter"]
+    filter_state["service_hours"] = 1700.0
+    filter_state["health"] = 0.62
+    filter_state["media"]["mechanical"]["clog"] = 0.92
+    filter_state["media"]["mechanical"]["channeling"] = 0.82
+    filter_state["media"]["mechanical"]["condition"] = 0.38
+    filter_state["media"]["biological"]["maturity"] = 0.96
+    filter_state["biofilm_slough_risk"] = 0.64
+    state["water"]["turbidity"] = 0.04
+    state["water"]["organic_waste"] = 0.22
+    state["water"]["bacterial_pressure"] = 0.04
+    sim = AquariumSimulation(species, state)
+    sim.advance(6 * 3600)
+    assert filter_state["bypass_risk"] > 0.25
+    assert filter_state["biofilm_slough_risk"] > 0.62
+    assert state["action_residue"]["filter_biofilm_shed"] > 0.0
+    assert state["water"]["turbidity"] > 0.04
+    assert filter_state["last_flow_driver"] in {"mechanical clog", "channeling", "old media", "impeller wear", "seal risk"}
+
+
+def test_heater_cycle_stress_and_stickiness_create_temperature_variance() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Sticky Heater", "freshwater", 90)
+    state["randomness"]["noise"] = 0.0
+    state["planning"]["room_temp_swing_c"] = 5.4
+    state["water"]["temperature_c"] = 20.4
+    heater = state["equipment"]["heater"]
+    heater["enabled"] = True
+    heater["target_c"] = 25.5
+    heater["health"] = 0.48
+    heater["wear_hours"] = 12500.0
+    heater["placement_near_flow"] = False
+    heater["thermostat_stickiness"] = 0.46
+    sim = AquariumSimulation(species, state)
+    sim.advance(10 * 3600)
+    assert heater["cycle_stress"] > 0.18
+    assert heater["thermostat_stickiness"] > 0.46
+    assert heater["temperature_variance_c"] > 0.65
+    assert heater["last_heat_driver"] in {"room swings", "thermostat stickiness", "placement", "low water"}
+
+
+def test_light_lens_film_and_airline_clog_reduce_delivered_output() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = clear_state(species, "Old Utility Gear", "freshwater", 90)
+    state["randomness"]["noise"] = 0.0
+    state["water"]["surface_film"] = 0.74
+    state["water"]["turbidity"] = 0.44
+    light = state["equipment"]["light"]
+    light["health"] = 0.92
+    light["plant_spectrum"] = 0.86
+    light["lamp_age_days"] = 760.0
+    light["lens_film"] = 0.52
+    air = state["equipment"]["air_pump"]
+    air["enabled"] = True
+    air["health"] = 0.9
+    air["output"] = 0.82
+    air["diaphragm_age_days"] = 760.0
+    air["airline_clog"] = 0.56
+    sim = AquariumSimulation(species, state)
+    sim.advance(6 * 3600)
+    assert light["par_output"] < 0.45
+    assert light["lens_film"] > 0.52
+    assert air["effective_output"] < air["output"] * air["health"]
+    assert air["airline_clog"] > 0.56
 
 
 def test_plants_melt_when_root_feeders_have_bad_substrate() -> None:
@@ -1390,6 +1530,9 @@ def main() -> int:
         test_legacy_preplaced_animals_are_cleared,
         test_schooling_and_tank_size_stress,
         test_lone_schooling_fish_declines_from_social_deprivation,
+        test_balanced_school_survives_realistic_first_week,
+        test_small_tanks_concentrate_waste_faster,
+        test_safeguard_kit_persists_real_world_readiness,
         test_proper_neon_school_avoids_social_crisis,
         test_oxygen_and_ammonia_explanations,
         test_command_persistence_shape,
@@ -1419,6 +1562,7 @@ def main() -> int:
         test_tiny_life_supports_natural_foraging,
         test_saltwater_switch_species_and_reefscape_rules,
         test_scape_placement_rules_and_relocation,
+        test_scape_object_transforms_and_duplication_persist,
         test_feeding_competition_can_leave_shy_fish_hungry,
         test_equipment_failure_and_service_recovery,
         test_aged_light_reduces_effective_growth_output,

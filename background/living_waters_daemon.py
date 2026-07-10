@@ -367,6 +367,8 @@ class Daemon:
                 None if enabled is None else bool(enabled),
                 None if "value" not in command else float(command.get("value", 0.0)),
             )
+        elif action == "install_safeguards":
+            sim.install_safeguards()
         elif action == "toggle_pause":
             state["clock"]["paused"] = not state["clock"]["paused"]
         elif action == "set_speed":
@@ -411,13 +413,22 @@ class Daemon:
                 float(command.get("x", 0.5)),
                 float(command.get("y", 0.8)),
                 float(command.get("scale", 1.0)),
+                float(command.get("rotation", 0.0)),
+                int(command.get("layer", 1)),
+                bool(command.get("flipped", False)),
             )
         elif action == "move_scape_item":
             sim.move_scape_item(
                 str(command.get("object_id", "")),
                 float(command.get("x", 0.5)),
                 float(command.get("y", 0.8)),
+                float(command["scale"]) if "scale" in command else None,
+                float(command["rotation"]) if "rotation" in command else None,
+                int(command["layer"]) if "layer" in command else None,
+                bool(command["flipped"]) if "flipped" in command else None,
             )
+        elif action == "duplicate_scape_item":
+            sim.duplicate_scape_item(str(command.get("object_id", "")))
         elif action == "remove_scape_item":
             sim.remove_scape_item(str(command.get("object_id", "")))
 

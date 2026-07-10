@@ -122,6 +122,10 @@ The status area shows the current welfare score and the first major welfare issu
 
 The side panel also shows filter flow, mechanical clogging, carbon remaining, cycle readiness, planning risk, and maintenance status. Use **Weekly care** for a dechlorinated water change and substrate cleanup, **Test water** to log parameter checks, **Service filter** when flow drops, and **Dose cycle** only for fishless cycling before animals are present.
 
+At normal speed, simulation time matches real time. Acute chemistry and oxygen emergencies can become dangerous quickly, while social, nutritional, and disease pressure develops over realistic multi-day or multi-week timescales. Tank volume now changes how strongly livestock waste concentrates, and feeding portions adapt to the current living bioload and hunger.
+
+Use **Fit safety & outage kit** to prepare a lid, guarded filter intake, drip loops, protected-power plan, dedicated tools, spare conditioner, and battery aeration. The action has an in-tank setup animation and the safeguards remain visible in the planning status and aquarium drawing.
+
 Fish, plants, stones, and driftwood are rendered from transparent 2D sprites in `assets/sprites`. Run `py -3 .\art\generate_sprites.py` to regenerate the current sprite set.
 
 ## Not Veterinary Advice

@@ -14,6 +14,9 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 MAX_OFFLINE_SECONDS = 12 * 60 * 60
+REFERENCE_TANK_LITRES = 60.0
+CHRONIC_DAMAGE_SCALE = 0.18
+DISEASE_RATE_SCALE = 0.22
 
 PLANT_TYPES: dict[str, dict[str, Any]] = {
     "dwarf_hairgrass": {
@@ -363,11 +366,11 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
         },
         "equipment": {
             "filter": default_filter(),
-            "heater": {"enabled": True, "health": 0.98, "target_c": 23.5, "placement_near_flow": True, "thermometer_present": True, "wear_hours": 0.0, "calibration_offset_c": 0.0},
-            "light": {"enabled": True, "health": 0.99, "hours_per_day": 8.0, "start_hour": 10.0, "timer_enabled": True, "plant_spectrum": 0.82, "effective_spectrum": 0.82, "par_output": 0.94, "lamp_age_days": 45.0},
-            "air_pump": {"enabled": True, "health": 0.97, "output": 0.5, "diaphragm_age_days": 60.0},
-            "protein_skimmer": {"enabled": False, "health": 0.95, "output": 0.0, "cup_fullness": 0.0, "neck_fouling": 0.0, "service_hours": 0.0},
-            "auto_top_off": {"enabled": False, "health": 0.96, "reservoir_litres": 5.0},
+            "heater": {"enabled": True, "health": 0.98, "target_c": 23.5, "placement_near_flow": True, "thermometer_present": True, "wear_hours": 0.0, "calibration_offset_c": 0.0, "cycle_stress": 0.0, "thermostat_stickiness": 0.0, "dry_run_risk": 0.0, "last_heat_driver": "stable"},
+            "light": {"enabled": True, "health": 0.99, "hours_per_day": 8.0, "actual_hours_per_day": 8.0, "start_hour": 10.0, "timer_enabled": True, "plant_spectrum": 0.82, "effective_spectrum": 0.82, "par_output": 0.94, "lamp_age_days": 45.0, "timer_drift_minutes": 0.0, "lens_film": 0.02, "spectrum_shift": 0.0, "last_light_driver": "fresh output"},
+            "air_pump": {"enabled": True, "health": 0.97, "output": 0.5, "effective_output": 0.5, "diaphragm_age_days": 60.0, "check_valve_risk": 0.0, "airline_clog": 0.0, "last_air_driver": "clear airline"},
+            "protein_skimmer": {"enabled": False, "health": 0.95, "output": 0.0, "effective_output": 0.0, "cup_fullness": 0.0, "neck_fouling": 0.0, "service_hours": 0.0, "tuning_drift": 0.0, "microbubble_leak": 0.0, "last_export_driver": "off"},
+            "auto_top_off": {"enabled": False, "health": 0.96, "reservoir_litres": 5.0, "sensor_film": 0.0, "overfill_risk": 0.0, "last_topoff_driver": "off"},
             "checklist": {
                 "tank": True,
                 "filter": True,
@@ -386,6 +389,7 @@ def default_state(species: dict[str, dict[str, Any]]) -> dict[str, Any]:
             },
         },
         "planning": default_planning(162.0),
+        "safety": default_safety(),
         "cycle": default_cycle(),
         "maintenance": default_maintenance(),
         "source_water": default_source_water("freshwater"),
@@ -561,6 +565,11 @@ def default_filter() -> dict[str, Any]:
         },
         "failure_mode": "",
         "noise": 0.12,
+        "bypass_risk": 0.0,
+        "impeller_wear": 0.0,
+        "seal_risk": 0.0,
+        "biofilm_slough_risk": 0.0,
+        "last_flow_driver": "balanced flow",
     }
 
 
@@ -577,6 +586,20 @@ def default_planning(gross_litres: float) -> dict[str, Any]:
         "near_speakers_or_doors": False,
         "risk_score": 0,
         "issues": [],
+    }
+
+
+def default_safety() -> dict[str, Any]:
+    return {
+        "lid_fitted": False,
+        "drip_loops": False,
+        "gfci_protected": False,
+        "intake_guard": False,
+        "battery_air_pump": False,
+        "dedicated_tools": False,
+        "spare_conditioner": False,
+        "prepared_at": "",
+        "readiness_score": 0,
     }
 
 
@@ -892,6 +915,7 @@ def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
         "alive": True,
         "acclimated": True,
         "acclimation_minutes": spec.get("acclimation_minutes", 30),
+        "settling_hours_remaining": 0.0,
         "cause_of_death": "",
         "decomposition_hours": 0.0,
         "death_load_remaining": 0.0,
@@ -1000,6 +1024,10 @@ class AquariumSimulation:
         for obj in scape.get("objects", []):
             if not isinstance(obj, dict):
                 continue
+            obj["scale"] = clamp(float(obj.get("scale", 1.0)), 0.35, 2.4)
+            obj["rotation"] = clamp(float(obj.get("rotation", 0.0)), -180.0, 180.0)
+            obj["layer"] = int(clamp(int(obj.get("layer", 1)), 0, 2))
+            obj["flipped"] = bool(obj.get("flipped", False))
             if obj.get("category") == "plants":
                 normalize_plant_piece(obj)
             elif obj.get("category") == "corals":
@@ -1071,6 +1099,11 @@ class AquariumSimulation:
         filter_state.setdefault("failure_mode", "")
         filter_state.setdefault("noise", 0.12)
         filter_state.setdefault("service_hours", 0.0)
+        filter_state.setdefault("bypass_risk", 0.0)
+        filter_state.setdefault("impeller_wear", 0.0)
+        filter_state.setdefault("seal_risk", 0.0)
+        filter_state.setdefault("biofilm_slough_risk", 0.0)
+        filter_state.setdefault("last_flow_driver", "balanced flow")
         media = filter_state.setdefault("media", {})
         for media_name, defaults in default_media["media"].items():
             existing = media.setdefault(media_name, {})
@@ -1084,6 +1117,10 @@ class AquariumSimulation:
         equipment["heater"].setdefault("wear_hours", 0.0)
         equipment["heater"].setdefault("calibration_offset_c", 0.0)
         equipment["heater"].setdefault("temperature_variance_c", 0.0)
+        equipment["heater"].setdefault("cycle_stress", 0.0)
+        equipment["heater"].setdefault("thermostat_stickiness", 0.0)
+        equipment["heater"].setdefault("dry_run_risk", 0.0)
+        equipment["heater"].setdefault("last_heat_driver", "stable")
         equipment.setdefault("light", {"enabled": True, "health": 0.99, "hours_per_day": 8.0, "timer_enabled": True, "plant_spectrum": 0.82})
         equipment["light"].setdefault("timer_enabled", True)
         equipment["light"].setdefault("plant_spectrum", 0.82)
@@ -1092,19 +1129,39 @@ class AquariumSimulation:
         equipment["light"].setdefault("lamp_age_days", 45.0)
         equipment["light"].setdefault("start_hour", 10.0)
         equipment["light"].setdefault("failure_mode", "")
+        equipment["light"].setdefault("actual_hours_per_day", equipment["light"].get("hours_per_day", 8.0))
+        equipment["light"].setdefault("timer_drift_minutes", 0.0)
+        equipment["light"].setdefault("lens_film", 0.02)
+        equipment["light"].setdefault("spectrum_shift", 0.0)
+        equipment["light"].setdefault("last_light_driver", "fresh output")
         equipment.setdefault("air_pump", {"enabled": True, "health": 0.97, "output": 0.5})
         equipment["air_pump"].setdefault("failure_mode", "")
         equipment["air_pump"].setdefault("diaphragm_age_days", 60.0)
+        equipment["air_pump"].setdefault("effective_output", equipment["air_pump"].get("output", 0.5))
+        equipment["air_pump"].setdefault("check_valve_risk", 0.0)
+        equipment["air_pump"].setdefault("airline_clog", 0.0)
+        equipment["air_pump"].setdefault("last_air_driver", "clear airline")
         equipment.setdefault("protein_skimmer", {"enabled": water["system"] == "saltwater", "health": 0.95, "output": 0.55 if water["system"] == "saltwater" else 0.0, "cup_fullness": 0.0})
         equipment["protein_skimmer"].setdefault("cup_fullness", 0.0)
         equipment["protein_skimmer"].setdefault("neck_fouling", 0.0)
         equipment["protein_skimmer"].setdefault("service_hours", 0.0)
         equipment["protein_skimmer"].setdefault("failure_mode", "")
+        equipment["protein_skimmer"].setdefault("effective_output", equipment["protein_skimmer"].get("output", 0.0))
+        equipment["protein_skimmer"].setdefault("tuning_drift", 0.0)
+        equipment["protein_skimmer"].setdefault("microbubble_leak", 0.0)
+        equipment["protein_skimmer"].setdefault("last_export_driver", "off")
         equipment.setdefault("auto_top_off", {"enabled": False, "health": 0.96, "reservoir_litres": 5.0})
         equipment["auto_top_off"].setdefault("reservoir_litres", 5.0)
         equipment["auto_top_off"].setdefault("failure_mode", "")
+        equipment["auto_top_off"].setdefault("sensor_film", 0.0)
+        equipment["auto_top_off"].setdefault("overfill_risk", 0.0)
+        equipment["auto_top_off"].setdefault("last_topoff_driver", "off")
         equipment.setdefault("checklist", default_state(self.species)["equipment"]["checklist"])
         self.state.setdefault("planning", default_planning(float(aquarium.get("gross_litres", 60.0))))
+        safety_defaults = default_safety()
+        safety = self.state.setdefault("safety", safety_defaults.copy())
+        for key, value in safety_defaults.items():
+            safety.setdefault(key, value)
         source_defaults = default_source_water(str(water.get("system", "freshwater")))
         source = self.state.setdefault("source_water", source_defaults.copy())
         for key, value in source_defaults.items():
@@ -1196,6 +1253,7 @@ class AquariumSimulation:
             animal.setdefault("latent_pathogen_load", 0.03)
             animal.setdefault("disease_days", 0.0)
             animal.setdefault("disease_stage", "")
+            animal.setdefault("settling_hours_remaining", 0.0)
             animal.setdefault("immune_memory", 0.0)
             animal.setdefault("quarantined", False)
             animal.setdefault("quarantine_days_remaining", 0.0)
@@ -1673,6 +1731,11 @@ class AquariumSimulation:
         filter_state["service_hours"] = 0.0
         filter_state["failure_mode"] = ""
         filter_state["noise"] = clamp(float(filter_state.get("noise", 0.12)) * 0.55, 0.02, 1.0)
+        filter_state["bypass_risk"] = clamp(float(filter_state.get("bypass_risk", 0.0)) * 0.28, 0.0, 1.0)
+        filter_state["biofilm_slough_risk"] = clamp(float(filter_state.get("biofilm_slough_risk", 0.0)) * (0.72 if overclean else 0.34), 0.0, 1.0)
+        filter_state["seal_risk"] = clamp(float(filter_state.get("seal_risk", 0.0)) * 0.86, 0.0, 1.0)
+        filter_state["impeller_wear"] = clamp(float(filter_state.get("impeller_wear", 0.0)) * 0.94, 0.0, 1.0)
+        filter_state["last_flow_driver"] = "freshly serviced"
         self.state.setdefault("maintenance", default_maintenance())["last_filter_overcleaned"] = bool(overclean)
         self._record("info", "Filter serviced", "Mechanical media was rinsed gently, flow improved, carbon and phosphate-removing media were refreshed, and the biofilter was disturbed only slightly.")
 
@@ -1720,6 +1783,25 @@ class AquariumSimulation:
             if value is not None:
                 ato["reservoir_litres"] = clamp(float(value), 0.0, 40.0)
             self._record("info", "Auto top-off adjusted", f"ATO is {'on' if ato.get('enabled', False) else 'off'} with {float(ato.get('reservoir_litres', 0.0)):.1f} L in the reservoir.")
+        self._summarize()
+
+    def install_safeguards(self) -> None:
+        safety = self.state.setdefault("safety", default_safety())
+        safety.update({
+            "lid_fitted": True,
+            "drip_loops": True,
+            "gfci_protected": True,
+            "intake_guard": True,
+            "battery_air_pump": True,
+            "dedicated_tools": True,
+            "spare_conditioner": True,
+            "prepared_at": now_iso(),
+            "readiness_score": 100,
+        })
+        residue = self.state.setdefault("action_residue", default_action_residue())
+        residue["hands_in_tank_stress"] = clamp(float(residue.get("hands_in_tank_stress", 0.0)) + 0.025, 0.0, 1.0)
+        residue["last_action"] = "safeguards fitted"
+        self._record("info", "Aquarium safeguards fitted", "The lid, guarded intake, drip loops, protected outlet plan, dedicated tools, spare conditioner, and battery aeration kit are ready.")
         self._summarize()
 
     def set_substrate(self, substrate: str = "fine_sand", depth_cm: float = 5.0) -> None:
@@ -1818,6 +1900,7 @@ class AquariumSimulation:
         ecology["carrier_pressure"] = clamp(float(ecology.get("carrier_pressure", 0.0)) + arrival_risk * 0.08, 0.0, 1.0)
         if animal["acclimated"]:
             animal["acute_stress"] = clamp(animal["acute_stress"] + 0.08, 0, 1)
+            animal["settling_hours_remaining"] = 48.0
             animal["behavior"] = "settling into the tank"
             self._record("info", "Animal acclimated", f"{animal['name']} was added after {acclimation_minutes} minutes of acclimation.")
         else:
@@ -1898,7 +1981,17 @@ class AquariumSimulation:
         self._record("warning", "Treatment course started", "Pathogen pressure will fall gradually, but medication also stresses oxygen, microfauna, and biofilter margins. Keep water stable.", "")
         self._summarize()
 
-    def place_scape_item(self, category: str, item_type: str, x: float, y: float, scale: float = 1.0) -> None:
+    def place_scape_item(
+        self,
+        category: str,
+        item_type: str,
+        x: float,
+        y: float,
+        scale: float = 1.0,
+        rotation: float = 0.0,
+        layer: int = 1,
+        flipped: bool = False,
+    ) -> None:
         category = "wood" if category == "log" else category
         if not self._is_scape_item_allowed(category, item_type):
             return
@@ -1913,7 +2006,10 @@ class AquariumSimulation:
             "type": item_type,
             "x": x,
             "y": y,
-            "scale": clamp(scale, 0.45, 1.8),
+            "scale": clamp(scale, 0.35, 2.4),
+            "rotation": clamp(rotation, -180.0, 180.0),
+            "layer": int(clamp(layer, 0, 2)),
+            "flipped": bool(flipped),
             "health": 0.86 if category in {"plants", "corals"} else 1.0,
         }
         if category == "plants":
@@ -1921,10 +2017,21 @@ class AquariumSimulation:
         elif category == "corals":
             normalize_coral_piece(obj)
         scape.setdefault("objects", []).append(obj)
+        if self.state["aquarium"].get("aquascape_style") == "clear":
+            self.state["aquarium"]["aquascape_style"] = "reefscape" if self.state["water"].get("system") == "saltwater" else "greenscape"
         self.state["aquarium"].update(self._scape_metrics())
         self._record("info", "Scape placed", f"{item_type.replace('_', ' ')} was placed in the aquarium.")
 
-    def move_scape_item(self, object_id: str, x: float, y: float) -> None:
+    def move_scape_item(
+        self,
+        object_id: str,
+        x: float,
+        y: float,
+        scale: float | None = None,
+        rotation: float | None = None,
+        layer: int | None = None,
+        flipped: bool | None = None,
+    ) -> None:
         for obj in self.state["aquarium"]["scape"].setdefault("objects", []):
             if obj.get("id") != object_id:
                 continue
@@ -1933,8 +2040,40 @@ class AquariumSimulation:
                 self._record("warning", "Invalid scape relocation", reason)
                 return
             obj["x"], obj["y"] = x, y
+            if scale is not None:
+                obj["scale"] = clamp(float(scale), 0.35, 2.4)
+            if rotation is not None:
+                obj["rotation"] = clamp(float(rotation), -180.0, 180.0)
+            if layer is not None:
+                obj["layer"] = int(clamp(int(layer), 0, 2))
+            if flipped is not None:
+                obj["flipped"] = bool(flipped)
             self.state["aquarium"].update(self._scape_metrics())
-            self._record("info", "Scape moved", f"{str(obj.get('type', 'scape item')).replace('_', ' ')} was relocated.")
+            self._record("info", "Scape updated", f"{str(obj.get('type', 'scape item')).replace('_', ' ')} was transformed.")
+            return
+
+    def duplicate_scape_item(self, object_id: str) -> None:
+        objects = self.state["aquarium"]["scape"].setdefault("objects", [])
+        for obj in objects:
+            if obj.get("id") != object_id:
+                continue
+            duplicate = dict(obj)
+            duplicate["id"] = uuid.uuid4().hex[:10]
+            duplicate["x"] = clamp(float(obj.get("x", 0.5)) + 0.055, 0.03, 0.97)
+            duplicate["y"] = clamp(float(obj.get("y", 0.8)) + 0.035, 0.05, 0.95)
+            valid, _reason, x, y = self._validated_position(
+                str(duplicate.get("category", "")),
+                str(duplicate.get("type", "")),
+                float(duplicate["x"]),
+                float(duplicate["y"]),
+            )
+            if not valid:
+                duplicate["x"], duplicate["y"] = float(obj.get("x", 0.5)), float(obj.get("y", 0.8))
+            else:
+                duplicate["x"], duplicate["y"] = x, y
+            objects.append(duplicate)
+            self.state["aquarium"].update(self._scape_metrics())
+            self._record("info", "Scape duplicated", f"A second {str(obj.get('type', 'scape item')).replace('_', ' ')} is ready to place.")
             return
 
     def remove_scape_item(self, object_id: str) -> None:
@@ -2125,6 +2264,16 @@ class AquariumSimulation:
             issues.append({"severity": "warning", "title": "Room temperature swings", "details": "Large room swings make heater stability harder and can stress animals."})
         if float(planning.get("maintenance_access_cm", 0.0)) < 6.0:
             issues.append({"severity": "warning", "title": "Maintenance access is tight", "details": "Leave space behind and above the aquarium for siphons, cables, filter hoses, and safe cleaning."})
+        safety = self.state.setdefault("safety", default_safety())
+        readiness_items = ("lid_fitted", "drip_loops", "gfci_protected", "intake_guard", "battery_air_pump", "dedicated_tools", "spare_conditioner")
+        ready_count = sum(1 for key in readiness_items if bool(safety.get(key, False)))
+        safety["readiness_score"] = int(round(ready_count / len(readiness_items) * 100.0))
+        if not safety.get("drip_loops", False) or not safety.get("gfci_protected", False):
+            issues.append({"severity": "warning", "title": "Electrical safeguards incomplete", "details": "Use drip loops and a GFCI/RCD-protected outlet around aquarium equipment."})
+        if not safety.get("battery_air_pump", False):
+            issues.append({"severity": "warning", "title": "No outage aeration plan", "details": "A battery air pump protects oxygen during a power outage."})
+        if not safety.get("intake_guard", False) and any(a.get("alive", True) and (a.get("age_days", 999) < 90 or a.get("species_id") in {"cherry_shrimp", "cleaner_shrimp"}) for a in self.state.get("animals", [])):
+            issues.append({"severity": "warning", "title": "Filter intake needs a guard", "details": "Shrimp and juvenile fish need a sponge or mesh intake guard."})
         planning["issues"] = issues
         planning["risk_score"] = min(100, sum(45 if i["severity"] == "critical" else 18 for i in issues))
         return planning
@@ -2185,18 +2334,30 @@ class AquariumSimulation:
             issues.append({"severity": "warning", "title": "Heater calibration is drifting", "details": "The heater is no longer matching its set point exactly. Watch daily temperature swings and consider replacement."})
         filter_state = equipment.get("filter", {})
         chemical = filter_state.get("media", {}).get("chemical", {})
+        if float(filter_state.get("bypass_risk", 0.0)) > 0.48:
+            issues.append({"severity": "warning", "title": "Filter is bypassing debris", "details": "Water is finding paths around clogged media, so trapped particles and organics are returning to the display."})
+        if float(filter_state.get("biofilm_slough_risk", 0.0)) > 0.58:
+            issues.append({"severity": "warning", "title": "Filter biofilm may slough", "details": "Old channeled media can shed biofilm clouds and briefly raise bacterial pressure."})
         if float(filter_state.get("service_hours", 0.0)) > 720.0:
             issues.append({"severity": "warning", "title": "Filter service interval is long", "details": "The filter has run for a long stretch since service. Rinse mechanical media gently without destroying the biofilter."})
         if float(chemical.get("media_age_days", 0.0)) > 45.0 and (float(chemical.get("carbon_remaining", 0.0)) < 0.12 or float(chemical.get("phosphate_remover_remaining", 0.0)) < 0.12):
             issues.append({"severity": "warning", "title": "Chemical media is exhausted", "details": "Carbon and phosphate media are no longer doing much polishing. Replace them only if you actually need chemical filtration."})
         if water.get("system") == "saltwater" and bool(skimmer.get("enabled", False)) and float(skimmer.get("neck_fouling", 0.0)) > 0.68:
             issues.append({"severity": "warning", "title": "Skimmer neck needs cleaning", "details": "Residue on the skimmer neck is reducing foam export even if the cup is not completely full."})
+        air = equipment.get("air_pump", {})
+        if bool(air.get("enabled", True)) and float(air.get("airline_clog", 0.0)) > 0.52:
+            issues.append({"severity": "warning", "title": "Air line restriction", "details": "Tubing or the air stone is restricting flow. Gas exchange is lower than the pump setting suggests."})
+        ato = equipment.get("auto_top_off", {})
+        if bool(ato.get("enabled", False)) and float(ato.get("sensor_film", 0.0)) > 0.48:
+            issues.append({"severity": "warning", "title": "ATO sensor film", "details": "Biofilm or salt creep is making automatic top-off less precise."})
         maintenance["issues"] = issues
         return maintenance
 
     def _time_context(self) -> dict[str, Any]:
         light = self.state["equipment"]["light"]
-        hours_per_day = clamp(float(light.get("hours_per_day", 8.0)), 0, 16)
+        timer_drift_hours = clamp(float(light.get("timer_drift_minutes", 0.0)) / 60.0, -1.5, 1.5)
+        hours_per_day = clamp(float(light.get("hours_per_day", 8.0)) + timer_drift_hours, 0, 16)
+        light["actual_hours_per_day"] = hours_per_day
         hour = datetime.now().hour + datetime.now().minute / 60.0
         start = clamp(float(light.get("start_hour", 10.0)), 0.0, 23.75)
         end = (start + hours_per_day) % 24.0
@@ -2328,7 +2489,9 @@ class AquariumSimulation:
                 "details": "Ammonia and nitrite must return to zero with a mature biofilter before animals are safe.",
             })
             for animal in living:
-                self._add_animal_risk(animal_risks, animal, 0.72, 0.018, "uncycled aquarium")
+                # An immature biofilter is a serious risk, but it is the resulting
+                # ammonia/nitrite—not the label itself—that should injure fish.
+                self._add_animal_risk(animal_risks, animal, 0.34, 0.0, "uncycled aquarium")
         disinfectant = float(water.get("chlorine_mg_l", 0.0)) + float(water.get("chloramine_mg_l", 0.0)) * 1.25
         if disinfectant > 0.02:
             issues.append({
@@ -2432,9 +2595,9 @@ class AquariumSimulation:
                 missing_ratio = (minimum - count) / max(1, minimum)
                 hard_social = any(word in social for word in ("school", "shoal", "colony", "group"))
                 stress = (0.55 if hard_social else 0.35) + missing_ratio * (0.45 if hard_social else 0.3)
-                damage = missing_ratio * (0.012 if hard_social else 0.004)
+                damage = missing_ratio * (0.0015 if hard_social else 0.0006)
                 if hard_social and count == 1:
-                    damage += 0.012
+                    damage += 0.0015
                 common_name = spec.get("common_name", species_id)
                 issues.append({
                     "key": f"group_{species_id}",
@@ -2939,8 +3102,10 @@ class AquariumSimulation:
         ecology["recent_arrival_pressure"] = max(0.0, arrival - hours * 0.006)
         ecology["cross_contamination"] = max(0.0, cross - hours * 0.004)
 
-        water["parasite_pressure"] = clamp(float(water.get("parasite_pressure", 0.0)) + (free * 0.0032 + encysted * 0.0012 + arrival * 0.0008 - treatment * 0.0018) * hours, 0.0, 1.0)
-        water["bacterial_pressure"] = clamp(float(water.get("bacterial_pressure", 0.0)) + (bloom * 0.0028 + dirty_pressure * 0.0011 - treatment * 0.0012) * hours, 0.0, 1.0)
+        natural_pathogen_export = 0.00035 + effective_flow * 0.00035 + float(maturity.get("microfauna", 0.0)) * 0.00012
+        natural_bacterial_export = 0.00045 + effective_flow * 0.00042 + float(maturity.get("beneficial_film", 0.0)) * 0.00018
+        water["parasite_pressure"] = clamp(float(water.get("parasite_pressure", 0.0)) + (free * 0.0032 + encysted * 0.0012 + arrival * 0.0008 - treatment * 0.0018 - natural_pathogen_export) * hours, 0.0, 1.0)
+        water["bacterial_pressure"] = clamp(float(water.get("bacterial_pressure", 0.0)) + (bloom * 0.0028 + dirty_pressure * 0.0011 - treatment * 0.0012 - natural_bacterial_export) * hours, 0.0, 1.0)
         if bloom > 0.35:
             water["turbidity"] = clamp(float(water.get("turbidity", 0.0)) + bloom * hours * 0.00045, 0.0, 1.0)
             water["oxygen_mg_l"] = clamp(float(water.get("oxygen_mg_l", 7.0)) - bloom * hours * 0.00065, 0.0, 10.0)
@@ -3084,11 +3249,16 @@ class AquariumSimulation:
         self._update_maintenance_ecology(hours)
         substrate_depth = float(self.state["aquarium"].get("substrate_depth_cm", 5.0))
         substrate_trap = clamp((substrate_depth - 3.0) / 5.0, 0.0, 0.55)
+        volume_concentration = clamp(
+            REFERENCE_TANK_LITRES / max(12.0, float(self.state["aquarium"].get("effective_litres", REFERENCE_TANK_LITRES))),
+            0.35,
+            3.0,
+        )
         waste_input = (
             total_bioload * 0.00055 * hours
             + mineralized_food * (0.035 + protein * 0.055 + fat * 0.026 + (1.0 - digestibility) * 0.04)
             + water["organic_waste"] * hours * 0.00035
-        ) * self._noise_multiplier(variability * 0.5, "waste_input")
+        ) * volume_concentration * self._noise_multiplier(variability * 0.5, "waste_input")
         water["organic_waste"] = clamp(water["organic_waste"] + waste_input * 0.45 + leftover_decay * 0.35 * clouding + mineralized_food * (0.22 + (1.0 - digestibility) * 0.28) + scape_metrics["maintenance_load"] * hours * 0.0012, 0, 5)
         water["organic_waste"] = clamp(water["organic_waste"] + substrate_trap * water["organic_waste"] * hours * 0.001, 0, 5)
         water["detritus"] = clamp(water.get("detritus", 0.0) + (leftover_decay + waste_input) * hours * 0.018 + substrate_trap * hours * 0.00035, 0, 1)
@@ -3118,7 +3288,8 @@ class AquariumSimulation:
         flow_jitter = self._noise_multiplier(variability * 0.15, "filter_flow_jitter")
         effective_flow = clamp(float(filter_state["flow"]) * flow_jitter * (1.0 - clog * 0.58) * float(filter_state["health"]), 0.04, 1.0)
         filter_state["effective_flow"] = effective_flow
-        biological["oxygen_access"] = clamp(effective_flow * (1.0 - channeling * 0.45) * water["oxygen_mg_l"] / 7.0, 0.05, 1.2)
+        bypass_risk = clamp(float(filter_state.get("bypass_risk", 0.0)), 0.0, 1.0)
+        biological["oxygen_access"] = clamp(effective_flow * (1.0 - channeling * 0.45) * (1.0 - bypass_risk * 0.20) * water["oxygen_mg_l"] / 7.0, 0.05, 1.2)
         biological_maturity = clamp(float(biological.get("maturity", filter_state.get("maturity", 0.8))), 0.05, 1.0)
         alkalinity = float(water.get("alkalinity_dkh", water.get("kh_dkh", 4.0)))
         alkalinity_factor = clamp(alkalinity / 4.0, 0.18, 1.18)
@@ -3133,6 +3304,7 @@ class AquariumSimulation:
             * biological["oxygen_access"]
             * alkalinity_factor
             * ph_factor
+            * (1.0 - bypass_risk * 0.32)
         )
         disinfectant = clamp(float(water.get("chlorine_mg_l", 0.0)) + float(water.get("chloramine_mg_l", 0.0)) * 1.25, 0.0, 2.0)
         if disinfectant > 0.0:
@@ -3158,7 +3330,7 @@ class AquariumSimulation:
         water["kh_dkh"] = clamp(water["kh_dkh"] - nitrified * 0.018, 0, 20)
         water["alkalinity_dkh"] = clamp(float(water.get("alkalinity_dkh", water["kh_dkh"])) - nitrified * 0.018, 0, 20)
 
-        trapped = min(water["organic_waste"], effective_flow * mechanical_condition * (1.0 - channeling * 0.65) * hours * 0.009)
+        trapped = min(water["organic_waste"], effective_flow * mechanical_condition * (1.0 - channeling * 0.65) * (1.0 - bypass_risk * 0.42) * hours * 0.009)
         water["organic_waste"] -= trapped
         water["turbidity"] = clamp(water["turbidity"] - effective_flow * mechanical_condition * hours * 0.012, 0, 1)
         mechanical["clog"] = clamp(clog + (trapped * 0.18 + water["turbidity"] * 0.006 + food["decaying"] * 0.01) * hours, 0, 1)
@@ -3205,11 +3377,12 @@ class AquariumSimulation:
             co2_target -= bio["plant_health"] * scape_metrics["nitrate_uptake"] * 1.6
         else:
             co2_target += bio["plant_health"] * max(0.0, scape_metrics["plant_cover"]) * 1.15
-        co2_outgassing = (scape_metrics["surface_agitation"] * 0.11 + float(equipment["air_pump"].get("enabled", True)) * equipment["air_pump"].get("output", 0.5) * 0.12) * surface_film_penalty
+        air_output = equipment["air_pump"].get("effective_output", equipment["air_pump"].get("output", 0.5))
+        co2_outgassing = (scape_metrics["surface_agitation"] * 0.11 + float(equipment["air_pump"].get("enabled", True)) * air_output * 0.12) * surface_film_penalty
         water["co2_mg_l"] = clamp(float(water.get("co2_mg_l", 4.0)) + (co2_target - float(water.get("co2_mg_l", 4.0))) * hours * 0.045 - co2_outgassing * hours, 0.3, 45.0)
         oxygen_gain = (
             self.state["aquarium"]["surface_agitation"] * 0.18 * surface_film_penalty
-            + float(equipment["air_pump"].get("enabled", True)) * equipment["air_pump"].get("output", 0.5) * equipment["air_pump"].get("health", 1.0) * 0.17
+            + float(equipment["air_pump"].get("enabled", True)) * air_output * 0.17
             + bio["plant_health"] * (scape_metrics["oxygen_day"] if lights_on else scape_metrics["oxygen_night"])
         )
         oxygen_use = total_bioload * 0.008 + water["organic_waste"] * 0.018 + water.get("surface_film", 0.0) * 0.008 + water.get("co2_mg_l", 4.0) * 0.0008
@@ -3221,6 +3394,8 @@ class AquariumSimulation:
         calibration_offset = float(heater.get("calibration_offset_c", 0.0))
         target = float(heater["target_c"]) + calibration_offset if heater["enabled"] and heater["health"] > 0.15 else ambient
         heater_efficiency = 1.0 if heater.get("placement_near_flow", True) else 0.55
+        sticky_bias = math.sin(time.time() / 2100.0) * float(heater.get("thermostat_stickiness", 0.0)) * 0.65
+        target += sticky_bias
         room_swing = float(planning.get("room_temp_swing_c", 0.0))
         water["temperature_c"] += (target - water["temperature_c"]) * min(1.0, hours * 0.12 * heater_efficiency)
         water["temperature_c"] += math.sin(time.time() / 3600.0) * room_swing * hours * 0.003
@@ -3384,13 +3559,69 @@ class AquariumSimulation:
     def _update_equipment(self, hours: float) -> None:
         equipment = self.state["equipment"]
         water = self.state["water"]
+        planning = self.state.get("planning", {})
+        maturity = self.state.setdefault("maturity", default_maturity())
+        residue = self.state.setdefault("action_residue", default_action_residue())
         filter_state = equipment.setdefault("filter", default_filter())
         media = filter_state.setdefault("media", default_filter()["media"])
         mechanical = media.setdefault("mechanical", default_filter()["media"]["mechanical"].copy())
+        biological = media.setdefault("biological", default_filter()["media"]["biological"].copy())
         chemical = media.setdefault("chemical", default_filter()["media"]["chemical"].copy())
         filter_state["service_hours"] = clamp(float(filter_state.get("service_hours", 0.0)) + hours, 0.0, 2400.0)
         chemical["media_age_days"] = clamp(float(chemical.get("media_age_days", 0.0)) + hours / 24.0, 0.0, 730.0)
         clog = float(mechanical.get("clog", 0.0))
+        channeling = float(mechanical.get("channeling", 0.0))
+        condition = float(mechanical.get("condition", 0.8))
+        service_pressure = clamp(float(filter_state.get("service_hours", 0.0)) / 720.0, 0.0, 1.8)
+        filter_health_deficit = max(0.0, 1.0 - float(filter_state.get("health", 1.0)))
+        impeller_wear = clamp(
+            float(filter_state.get("impeller_wear", 0.0))
+            + hours * (clog * 0.00018 + channeling * 0.00008 + service_pressure * 0.000035 + filter_health_deficit * 0.00009),
+            0.0,
+            1.0,
+        )
+        filter_state["impeller_wear"] = impeller_wear
+        filter_state["seal_risk"] = clamp(
+            float(filter_state.get("seal_risk", 0.0)) * max(0.0, 1.0 - hours * 0.00018)
+            + hours * (impeller_wear * 0.000045 + service_pressure * 0.000025 + filter_health_deficit * 0.00005),
+            0.0,
+            1.0,
+        )
+        bypass_target = clamp((clog - 0.42) * 0.95 + channeling * 0.62 + max(0.0, 0.55 - condition) * 0.42 + impeller_wear * 0.25, 0.0, 1.0)
+        filter_state["bypass_risk"] = clamp(
+            float(filter_state.get("bypass_risk", 0.0)) + (bypass_target - float(filter_state.get("bypass_risk", 0.0))) * min(1.0, hours * 0.035),
+            0.0,
+            1.0,
+        )
+        slough_target = clamp(
+            service_pressure * 0.24 + channeling * 0.32 + max(0.0, float(biological.get("maturity", 0.9)) - 0.65) * 0.32 + max(0.0, clog - 0.75) * 0.45,
+            0.0,
+            1.0,
+        )
+        filter_state["biofilm_slough_risk"] = clamp(
+            float(filter_state.get("biofilm_slough_risk", 0.0)) + (slough_target - float(filter_state.get("biofilm_slough_risk", 0.0))) * min(1.0, hours * 0.018),
+            0.0,
+            1.0,
+        )
+        driver_scores = {
+            "mechanical clog": clog,
+            "channeling": channeling,
+            "impeller wear": impeller_wear,
+            "old media": service_pressure / 1.8,
+            "seal risk": float(filter_state.get("seal_risk", 0.0)),
+        }
+        filter_state["last_flow_driver"] = max(driver_scores, key=driver_scores.get)
+        if float(filter_state.get("bypass_risk", 0.0)) > 0.35:
+            bypass = float(filter_state.get("bypass_risk", 0.0))
+            water["turbidity"] = clamp(float(water.get("turbidity", 0.0)) + bypass * hours * 0.00065, 0.0, 1.0)
+            water["detritus"] = clamp(float(water.get("detritus", 0.0)) + bypass * hours * 0.00016, 0.0, 1.0)
+            water["organic_waste"] = clamp(float(water.get("organic_waste", 0.0)) + bypass * hours * 0.0009, 0.0, 5.0)
+        if float(filter_state.get("biofilm_slough_risk", 0.0)) > 0.62:
+            slough = float(filter_state.get("biofilm_slough_risk", 0.0))
+            residue["filter_biofilm_shed"] = clamp(float(residue.get("filter_biofilm_shed", 0.0)) + slough * hours * 0.0016, 0.0, 1.0)
+            water["turbidity"] = clamp(float(water.get("turbidity", 0.0)) + slough * hours * 0.0009, 0.0, 1.0)
+            water["bacterial_pressure"] = clamp(float(water.get("bacterial_pressure", 0.0)) + slough * hours * 0.00018, 0.0, 1.0)
+            self._record_once("filter_biofilm_slough", "warning", "Filter biofilm is shedding", "Old or channeled media is releasing trapped biofilm and fine debris back into the water.")
         if clog > 0.78 and filter_state.get("failure_mode", "") == "":
             filter_state["failure_mode"] = "impeller strain"
             filter_state["noise"] = clamp(float(filter_state.get("noise", 0.12)) + 0.34, 0, 1)
@@ -3402,13 +3633,32 @@ class AquariumSimulation:
         heater = equipment.setdefault("heater", {"enabled": True, "health": 0.98, "target_c": 24.0, "placement_near_flow": True, "thermometer_present": True})
         if heater.get("enabled", True):
             heater["wear_hours"] = clamp(float(heater.get("wear_hours", 0.0)) + hours, 0.0, 20000.0)
-            wear_pressure = clamp(float(heater.get("wear_hours", 0.0)) / 9000.0 + max(0.0, 0.62 - float(heater.get("health", 1.0))) * 0.7, 0.0, 1.0)
+            target_gap = abs(float(heater.get("target_c", 24.0)) - float(water.get("temperature_c", 24.0)))
+            cycle_target = clamp(float(planning.get("room_temp_swing_c", 1.5)) / 5.5 + target_gap / 12.0 + (0.0 if heater.get("placement_near_flow", True) else 0.18), 0.0, 1.0)
+            heater["cycle_stress"] = clamp(float(heater.get("cycle_stress", 0.0)) + (cycle_target - float(heater.get("cycle_stress", 0.0))) * min(1.0, hours * 0.025), 0.0, 1.0)
+            water_level = float(water.get("water_level", 1.0))
+            heater["dry_run_risk"] = clamp(float(heater.get("dry_run_risk", 0.0)) * max(0.0, 1.0 - hours * 0.012) + max(0.0, 0.82 - water_level) * hours * 0.0032, 0.0, 1.0)
+            wear_pressure = clamp(float(heater.get("wear_hours", 0.0)) / 9000.0 + max(0.0, 0.62 - float(heater.get("health", 1.0))) * 0.7 + float(heater.get("cycle_stress", 0.0)) * 0.25, 0.0, 1.0)
+            heater["thermostat_stickiness"] = clamp(
+                float(heater.get("thermostat_stickiness", 0.0)) + hours * (wear_pressure * 0.00008 + float(heater.get("cycle_stress", 0.0)) * 0.00005 + float(heater.get("dry_run_risk", 0.0)) * 0.00016),
+                0.0,
+                1.0,
+            )
             drift_target = math.sin(time.time() / 5400.0) * wear_pressure * 0.42
             heater["calibration_offset_c"] = clamp(float(heater.get("calibration_offset_c", 0.0)) + (drift_target - float(heater.get("calibration_offset_c", 0.0))) * min(1.0, hours * 0.018), -1.4, 1.4)
-            heater["temperature_variance_c"] = clamp(abs(float(heater.get("calibration_offset_c", 0.0))) + (0.0 if heater.get("placement_near_flow", True) else 0.28), 0.0, 2.0)
+            heater["temperature_variance_c"] = clamp(abs(float(heater.get("calibration_offset_c", 0.0))) + (0.0 if heater.get("placement_near_flow", True) else 0.28) + float(heater.get("cycle_stress", 0.0)) * 0.32 + float(heater.get("thermostat_stickiness", 0.0)) * 0.56, 0.0, 2.0)
+            heat_scores = {
+                "room swings": float(heater.get("cycle_stress", 0.0)),
+                "thermostat stickiness": float(heater.get("thermostat_stickiness", 0.0)),
+                "placement": 0.45 if not heater.get("placement_near_flow", True) else 0.0,
+                "low water": float(heater.get("dry_run_risk", 0.0)),
+            }
+            heater["last_heat_driver"] = max(heat_scores, key=heat_scores.get)
         if heater.get("enabled", True) and float(heater.get("health", 1.0)) < 0.42 and heater.get("failure_mode", "") == "":
             heater["failure_mode"] = "thermostat drift"
             self._record_once("heater_drift_failure", "warning", "Heater thermostat is drifting", "The heater is aging; temperature will become less stable until replaced or disabled.")
+        if heater.get("enabled", True) and float(heater.get("thermostat_stickiness", 0.0)) > 0.58:
+            self._record_once("heater_stickiness", "warning", "Heater cycling is becoming sticky", "Aging contacts and heavy cycling are making the heater overshoot or lag instead of holding a smooth temperature.")
         if heater.get("failure_mode") == "thermostat drift":
             drift = math.sin(time.time() / 1800.0) * (0.35 + (0.42 - float(heater.get("health", 0.42))) * 1.2)
             heater["target_c"] = clamp(float(heater.get("target_c", 24.0)) + drift * hours * 0.004, 16, 32)
@@ -3416,29 +3666,56 @@ class AquariumSimulation:
         if light.get("enabled", True):
             use_factor = clamp(float(light.get("hours_per_day", 8.0)) / 8.0, 0.0, 2.0)
             light["lamp_age_days"] = clamp(float(light.get("lamp_age_days", 45.0)) + hours / 24.0 * use_factor, 0.0, 2200.0)
+            light["lens_film"] = clamp(float(light.get("lens_film", 0.02)) + hours * (float(water.get("surface_film", 0.0)) * 0.00008 + float(water.get("turbidity", 0.0)) * 0.000035 + max(0.0, 1.0 - float(water.get("water_level", 1.0))) * 0.00012), 0.0, 1.0)
+            drift_pressure = 0.00012 if not light.get("timer_enabled", True) else 0.000012
+            light["timer_drift_minutes"] = clamp(float(light.get("timer_drift_minutes", 0.0)) + hours * drift_pressure * (1.0 + max(0.0, 0.65 - float(light.get("health", 1.0))) * 5.0) * (1.0 if math.sin(time.time() / 7200.0) >= 0 else -0.7), -90.0, 90.0)
         age_pressure = clamp((float(light.get("lamp_age_days", 45.0)) - 180.0) / 420.0, 0.0, 1.0)
         base_spectrum = clamp(float(light.get("plant_spectrum", 0.82)), 0.0, 1.0)
-        light["effective_spectrum"] = clamp(base_spectrum * float(light.get("health", 1.0)) * (1.0 - age_pressure * 0.38), 0.0, 1.0)
-        light["par_output"] = clamp(float(light.get("health", 1.0)) * (1.0 - age_pressure * 0.46), 0.0, 1.0)
+        lens_film = clamp(float(light.get("lens_film", 0.0)), 0.0, 1.0)
+        light["spectrum_shift"] = clamp(age_pressure * 0.72 + lens_film * 0.28, 0.0, 1.0)
+        light["effective_spectrum"] = clamp(base_spectrum * float(light.get("health", 1.0)) * (1.0 - age_pressure * 0.38) * (1.0 - lens_film * 0.18), 0.0, 1.0)
+        light["par_output"] = clamp(float(light.get("health", 1.0)) * (1.0 - age_pressure * 0.46) * (1.0 - lens_film * 0.34), 0.0, 1.0)
+        light_scores = {
+            "lamp age": age_pressure,
+            "lens film": lens_film,
+            "timer drift": abs(float(light.get("timer_drift_minutes", 0.0))) / 90.0,
+            "health": max(0.0, 1.0 - float(light.get("health", 1.0))),
+        }
+        light["last_light_driver"] = max(light_scores, key=light_scores.get)
         if light.get("enabled", True) and float(light.get("health", 1.0)) < 0.38 and light.get("failure_mode", "") == "":
             light["failure_mode"] = "weak spectrum"
             light["plant_spectrum"] = clamp(float(light.get("plant_spectrum", 0.82)) - 0.22, 0, 1)
             self._record_once("light_spectrum_failure", "warning", "Lighting spectrum is weakening", "Plant/coral growth will slow because the lamp output is degrading.")
+        if light.get("enabled", True) and float(light.get("lens_film", 0.0)) > 0.55:
+            self._record_once("light_lens_film", "warning", "Light lens is filmed over", "Mineral spray and surface film are blocking useful PAR before the lamp itself has failed.")
         pump = equipment.setdefault("air_pump", {"enabled": True, "health": 0.97, "output": 0.5})
         if pump.get("enabled", True):
             pump["diaphragm_age_days"] = clamp(float(pump.get("diaphragm_age_days", 60.0)) + hours / 24.0, 0.0, 2200.0)
+            pump["airline_clog"] = clamp(float(pump.get("airline_clog", 0.0)) + hours * (float(water.get("surface_film", 0.0)) * 0.000035 + max(0.0, float(pump.get("diaphragm_age_days", 0.0)) - 420.0) / 2200.0 * 0.000045), 0.0, 1.0)
+            pump["check_valve_risk"] = clamp(float(pump.get("check_valve_risk", 0.0)) + hours * (float(pump.get("airline_clog", 0.0)) * 0.00005 + max(0.0, 0.92 - float(water.get("water_level", 1.0))) * 0.0002), 0.0, 1.0)
             if float(pump.get("diaphragm_age_days", 0.0)) > 540.0:
                 pump["output"] = clamp(float(pump.get("output", 0.5)) - hours * 0.000015, 0.0, 1.0)
+            pump["effective_output"] = clamp(float(pump.get("output", 0.5)) * float(pump.get("health", 1.0)) * (1.0 - float(pump.get("airline_clog", 0.0)) * 0.55), 0.0, 1.0)
+            air_scores = {
+                "diaphragm age": clamp((float(pump.get("diaphragm_age_days", 0.0)) - 360.0) / 720.0, 0.0, 1.0),
+                "airline clog": float(pump.get("airline_clog", 0.0)),
+                "check valve": float(pump.get("check_valve_risk", 0.0)),
+                "low health": max(0.0, 1.0 - float(pump.get("health", 1.0))),
+            }
+            pump["last_air_driver"] = max(air_scores, key=air_scores.get)
         if pump.get("enabled", True) and float(pump.get("health", 1.0)) < 0.35 and pump.get("failure_mode", "") == "":
             pump["failure_mode"] = "diaphragm wear"
             pump["output"] = clamp(float(pump.get("output", 0.5)) * 0.65, 0, 1)
             self._record_once("air_pump_wear", "warning", "Air pump output is weak", "Aging air pump output reduced gas exchange.")
+        if pump.get("enabled", True) and float(pump.get("airline_clog", 0.0)) > 0.58:
+            self._record_once("airline_restriction", "warning", "Air line is restricted", "Mineral creep or old tubing is reducing gas exchange even though the pump still runs.")
 
     def _update_evaporation_and_skimmer(self, hours: float, lights_on: bool) -> None:
         equipment = self.state["equipment"]
         water = self.state["water"]
         aquarium = self.state["aquarium"]
-        surface_factor = clamp(float(aquarium.get("surface_agitation", 0.5)) + float(equipment.get("air_pump", {}).get("output", 0.0)) * 0.25, 0.25, 1.4)
+        air = equipment.get("air_pump", {})
+        surface_factor = clamp(float(aquarium.get("surface_agitation", 0.5)) + float(air.get("effective_output", air.get("output", 0.0))) * 0.25, 0.25, 1.4)
         heat_factor = clamp((float(water.get("temperature_c", 24.0)) - 18.0) / 12.0, 0.2, 1.5)
         light_factor = 1.18 if lights_on else 0.86
         evaporation = hours * 0.00028 * surface_factor * heat_factor * light_factor
@@ -3451,33 +3728,50 @@ class AquariumSimulation:
             if water.get("system") == "saltwater":
                 water["salinity_ppt"] = clamp(float(water.get("salinity_ppt", 35.0)) * concentration, 0, 45)
         ato = equipment.setdefault("auto_top_off", {"enabled": False, "health": 0.96, "reservoir_litres": 5.0})
+        ato["sensor_film"] = clamp(float(ato.get("sensor_film", 0.0)) + hours * (float(water.get("surface_film", 0.0)) * 0.00006 + (0.00004 if water.get("system") == "saltwater" else 0.000015)), 0.0, 1.0)
+        ato["overfill_risk"] = clamp(float(ato.get("overfill_risk", 0.0)) * max(0.0, 1.0 - hours * 0.006) + float(ato.get("sensor_film", 0.0)) * hours * 0.00004, 0.0, 1.0)
+        ato["last_topoff_driver"] = "sensor film" if float(ato.get("sensor_film", 0.0)) > 0.25 else ("reservoir" if float(ato.get("reservoir_litres", 0.0)) < 1.0 else "stable")
         if bool(ato.get("enabled", False)) and float(ato.get("health", 1.0)) > 0.2 and water.get("water_level", 1.0) < 0.985:
             needed = 1.0 - float(water.get("water_level", 1.0))
             litres_needed = needed * float(aquarium.get("gross_litres", 60.0))
             available = max(0.0, float(ato.get("reservoir_litres", 0.0)))
-            refill_fraction = min(needed, available / max(1.0, float(aquarium.get("gross_litres", 60.0))))
+            sensor_reliability = clamp(float(ato.get("health", 1.0)) * (1.0 - float(ato.get("sensor_film", 0.0)) * 0.55), 0.0, 1.0)
+            refill_fraction = min(needed, available / max(1.0, float(aquarium.get("gross_litres", 60.0)))) * sensor_reliability
             if refill_fraction > 0:
                 self.top_off(refill_fraction, quiet=True)
                 ato["reservoir_litres"] = max(0.0, available - min(available, litres_needed))
             else:
                 self._record_once("ato_empty", "warning", "Top-off reservoir is empty", "Evaporation is concentrating minerals and salinity because the ATO reservoir ran dry.")
+        if bool(ato.get("enabled", False)) and float(ato.get("sensor_film", 0.0)) > 0.55:
+            self._record_once("ato_sensor_film", "warning", "ATO sensor is filmed over", "Biofilm or salt creep is making top-off less accurate. Clean the sensor before salinity/TDS drifts.")
         skimmer = equipment.setdefault("protein_skimmer", {"enabled": water.get("system") == "saltwater", "health": 0.95, "output": 0.55, "cup_fullness": 0.0})
         if water.get("system") == "saltwater" and bool(skimmer.get("enabled", True)) and float(skimmer.get("health", 1.0)) > 0.1:
             skimmer["service_hours"] = clamp(float(skimmer.get("service_hours", 0.0)) + hours, 0.0, 2400.0)
             neck_fouling = clamp(float(skimmer.get("neck_fouling", 0.0)) + hours * 0.00032 + float(water.get("organic_waste", 0.0)) * hours * 0.00018, 0.0, 1.0)
             skimmer["neck_fouling"] = neck_fouling
-            output = clamp(float(skimmer.get("output", 0.55)) * float(skimmer.get("health", 1.0)) * (1.0 - float(skimmer.get("cup_fullness", 0.0)) * 0.55) * (1.0 - neck_fouling * 0.48), 0, 1)
+            skimmer["tuning_drift"] = clamp(float(skimmer.get("tuning_drift", 0.0)) + hours * (neck_fouling * 0.000075 + float(skimmer.get("cup_fullness", 0.0)) * 0.000045 + max(0.0, 0.7 - float(skimmer.get("health", 1.0))) * 0.00008), 0.0, 1.0)
+            skimmer["microbubble_leak"] = clamp(float(skimmer.get("microbubble_leak", 0.0)) * max(0.0, 1.0 - hours * 0.002) + float(skimmer.get("tuning_drift", 0.0)) * hours * 0.000045, 0.0, 1.0)
+            output = clamp(float(skimmer.get("output", 0.55)) * float(skimmer.get("health", 1.0)) * (1.0 - float(skimmer.get("cup_fullness", 0.0)) * 0.55) * (1.0 - neck_fouling * 0.48) * (1.0 - float(skimmer.get("tuning_drift", 0.0)) * 0.36), 0, 1)
             skimmer["effective_output"] = output
+            skimmer_scores = {
+                "neck fouling": neck_fouling,
+                "cup fullness": float(skimmer.get("cup_fullness", 0.0)),
+                "tuning drift": float(skimmer.get("tuning_drift", 0.0)),
+                "low health": max(0.0, 1.0 - float(skimmer.get("health", 1.0))),
+            }
+            skimmer["last_export_driver"] = max(skimmer_scores, key=skimmer_scores.get)
             export = min(float(water.get("organic_waste", 0.0)), output * hours * 0.006)
             water["organic_waste"] = clamp(float(water.get("organic_waste", 0.0)) - export, 0, 5)
             water["dissolved_organics"] = clamp(float(water.get("dissolved_organics", 0.0)) - export * 0.42, 0, 2.5)
             water["surface_film"] = clamp(float(water.get("surface_film", 0.0)) - output * hours * 0.004, 0, 1)
-            water["turbidity"] = clamp(float(water.get("turbidity", 0.0)) - output * hours * 0.002, 0, 1)
+            water["turbidity"] = clamp(float(water.get("turbidity", 0.0)) - output * hours * 0.002 + float(skimmer.get("microbubble_leak", 0.0)) * hours * 0.0006, 0, 1)
             skimmer["cup_fullness"] = clamp(float(skimmer.get("cup_fullness", 0.0)) + export * 0.22 + hours * 0.00035, 0, 1)
             if float(skimmer.get("cup_fullness", 0.0)) > 0.88:
                 self._record_once("skimmer_cup_full", "warning", "Skimmer cup is full", "Protein skimmer export is weakening because the collection cup needs emptying.")
             if neck_fouling > 0.72:
                 self._record_once("skimmer_neck_fouling", "warning", "Skimmer neck is fouled", "Protein skimmer export is dropping because residue is coating the neck. Clean the skimmer during maintenance.")
+            if float(skimmer.get("tuning_drift", 0.0)) > 0.58:
+                self._record_once("skimmer_tuning_drift", "warning", "Skimmer tuning has drifted", "The skimmer is running inconsistently; export drops and microbubbles can irritate the display.")
 
     def _decompose_dead_animals(self, hours: float) -> None:
         water = self.state["water"]
@@ -3880,6 +4174,7 @@ class AquariumSimulation:
             return
 
         disease_rate = (immune_gap * 0.04 + max(0.0, chronic - 0.25) * 0.035 + water_pressure * 0.018 + pathogen * 0.025) / disease_resistance
+        disease_rate *= DISEASE_RATE_SCALE
         disease_rate *= clamp(1.0 - immune_memory * 0.28 - quarantine_bonus * 0.22, 0.42, 1.0)
         if self._chance(disease_rate, hours, f"disease_start_{animal['id']}"):
             disease, details = self._select_disease(animal, nitrogen_pressure, dirty_pressure, salinity_pressure, injury_pressure, acclimation_pressure)
@@ -4010,7 +4305,7 @@ class AquariumSimulation:
         animal["age_days"] += hours / 24
         fullness = clamp(float(animal.get("fullness", 0.0)), 0.0, 1.0)
         gut_load = clamp(float(animal.get("gut_load", 0.0)), 0.0, 1.0)
-        animal["hunger"] = clamp(animal["hunger"] + hours * 0.018 * (1.0 - fullness * 0.38), 0, 1)
+        animal["hunger"] = clamp(animal["hunger"] + hours * 0.010 * (1.0 - fullness * 0.38), 0, 1)
         animal["fullness"] = max(0.0, fullness - hours * 0.055)
         animal["gut_load"] = max(0.0, gut_load - hours * 0.030)
         food = self.state.get("food", default_food())
@@ -4036,7 +4331,7 @@ class AquariumSimulation:
             intake_rate = consumed / max(hours, 0.001)
             meal_strength = clamp(intake_rate / max(0.015, float(spec.get("bioload", 0.5)) * 0.18), 0.12, 1.8)
             nutrition = clamp(diet_match * 0.40 + digestibility * 0.18 + protein_fit * 0.14 + fiber_fit * 0.12 + vitamin * 0.10 + mineral * 0.06 - rich_penalty * 0.14, 0.05, 1.12)
-            animal["hunger"] = clamp(animal["hunger"] - hours * 0.055 * meal_strength * (0.55 + diet_match * 0.55), 0, 1)
+            animal["hunger"] = clamp(animal["hunger"] - hours * 0.16 * meal_strength * (0.55 + diet_match * 0.55), 0, 1)
             animal["energy"] = clamp(animal["energy"] + hours * 0.025 * meal_strength * nutrition, 0, 1)
             animal["body_condition"] = clamp(float(animal.get("body_condition", 0.9)) + hours * 0.0018 * min(1.0, meal_strength) * nutrition, 0, 1.15)
             animal["fullness"] = clamp(float(animal.get("fullness", 0.0)) + meal_strength * 0.18, 0, 1.0)
@@ -4112,7 +4407,7 @@ class AquariumSimulation:
         stress_target = max(temp_stress, ph_stress, hardness_stress, salinity_stress, system_stress, oxygen_stress, co2_stress, nitrogen_stress, volume_stress, length_stress, social_stress, welfare_stress)
         stress_target = clamp(stress_target * float(animal.get("stress_sensitivity", 1.0)), 0, 1)
         animal["acute_stress"] = clamp(animal["acute_stress"] + (stress_target - animal["acute_stress"]) * min(1, hours * 0.3), 0, 1)
-        animal["chronic_stress"] = clamp(animal["chronic_stress"] + (animal["acute_stress"] - 0.2) * hours * 0.012, 0, 1)
+        animal["chronic_stress"] = clamp(animal["chronic_stress"] + (animal["acute_stress"] - 0.2) * hours * 0.0025, 0, 1)
         animal["fear_memory"] = clamp(float(animal.get("fear_memory", 0.0)) + max(0.0, animal["acute_stress"] - 0.42) * hours * 0.02 - hours * 0.004 * float(animal.get("boldness", 0.5)), 0, 1)
         nutrition_deficit = max(0.0, 0.42 - float(animal.get("nutrition_reserve", 0.75)))
         vitamin_deficit = max(0.0, 0.38 - float(animal.get("vitamin_reserve", 0.72)))
@@ -4122,12 +4417,12 @@ class AquariumSimulation:
         underfed = max(0.0, animal["hunger"] - 0.7)
         diet_deficit = max(0.0, 0.48 - float(animal.get("last_diet_match", 0.7)))
         overfed_water = max(0.0, float(self.state.get("food", {}).get("daily_amount_ewma", 0.0)) - 0.65) * 0.018
-        animal["body_condition"] = clamp(float(animal.get("body_condition", 0.9)) - underfed * hours * 0.004 - diet_deficit * hours * 0.0014 - nutrition_deficit * hours * 0.0022 - animal["chronic_stress"] * hours * 0.0009, 0.0, 1.15)
+        animal["body_condition"] = clamp(float(animal.get("body_condition", 0.9)) - underfed * hours * 0.001 - diet_deficit * hours * 0.00045 - nutrition_deficit * hours * 0.00065 - animal["chronic_stress"] * hours * 0.00035, 0.0, 1.15)
         animal["gill_condition"] = clamp(float(animal.get("gill_condition", 0.95)) - (nitrogen_stress * 0.014 + oxygen_stress * 0.008 + co2_stress * 0.004) * hours + hours * 0.0006, 0.0, 1.0)
         dirty_pressure = clamp(water.get("bacterial_pressure", 0.0) + max(0.0, 240.0 - water.get("redox_mv", 310.0)) / 300.0 + water.get("dissolved_organics", 0.0) * 0.08, 0.0, 1.0)
-        animal["fin_condition"] = clamp(float(animal.get("fin_condition", 0.95)) - (float(animal.get("injury", 0.0)) * 0.010 + dirty_pressure) * hours * 0.35 + hours * 0.0007, 0.0, 1.0)
+        animal["fin_condition"] = clamp(float(animal.get("fin_condition", 0.95)) - (float(animal.get("injury", 0.0)) * 0.010 + dirty_pressure * 0.0012) * hours + hours * 0.0007, 0.0, 1.0)
         damage = max(0, nitrogen_stress - 0.35) * hours * 0.05 + max(0, oxygen_stress - 0.45) * hours * 0.06 + max(0, co2_stress - 0.55) * hours * 0.035
-        damage += float(welfare_risk.get("damage_per_hour", 0.0)) * hours
+        damage += float(welfare_risk.get("damage_per_hour", 0.0)) * hours * CHRONIC_DAMAGE_SCALE
         injury_pressure = float(welfare_risk.get("injury_per_hour", 0.0))
         if injury_pressure > 0:
             animal["injury"] = clamp(float(animal.get("injury", 0.0)) + injury_pressure * hours, 0, 1)
@@ -4137,7 +4432,7 @@ class AquariumSimulation:
         if animal.get("disease"):
             stage_multiplier = {"early": 0.72, "visible": 1.0, "severe": 1.55}.get(str(animal.get("disease_stage", "visible")), 1.0)
             treatment_relief = clamp(1.0 - float(self.state.get("disease_ecology", {}).get("treatment_strength", 0.0)) * 0.22, 0.62, 1.0)
-            disease_damage = (0.004 + animal["chronic_stress"] * 0.018 + max(0.0, 0.7 - animal["immune_condition"]) * 0.03) * hours * stage_multiplier * treatment_relief
+            disease_damage = (0.004 + animal["chronic_stress"] * 0.018 + max(0.0, 0.7 - animal["immune_condition"]) * 0.03) * hours * stage_multiplier * treatment_relief * CHRONIC_DAMAGE_SCALE
             damage += disease_damage / max(0.25, float(animal.get("disease_resistance", 1.0)))
         if animal["hunger"] > 0.9:
             damage += (animal["hunger"] - 0.9) * hours * 0.02
@@ -4152,7 +4447,10 @@ class AquariumSimulation:
         if animal.get("fin_condition", 1.0) < 0.35:
             damage += (0.35 - float(animal.get("fin_condition", 1.0))) * hours * 0.01
         damage += overfed_water * hours * max(0.0, animal["acute_stress"] - 0.3)
-        animal["health"] = clamp(animal["health"] - damage + (1 - stress_target) * hours * 0.0008, 0, 1)
+        settling_hours = max(0.0, float(animal.get("settling_hours_remaining", 0.0)) - hours)
+        animal["settling_hours_remaining"] = settling_hours
+        recovery = (1 - stress_target) * hours * (0.0012 if settling_hours > 0.0 else 0.0008)
+        animal["health"] = clamp(animal["health"] - damage + recovery, 0, 1)
         animal["energy"] = clamp(animal["energy"] - (0.006 + animal["acute_stress"] * 0.012) * hours, 0, 1)
         animal["spawn_cooldown_days"] = max(0.0, float(animal.get("spawn_cooldown_days", 30.0)) - hours / 24.0)
         breeding_target = 1.0 if stress_target < 0.16 and animal["hunger"] < 0.45 and animal["health"] > 0.78 and group >= max(1, int(spec.get("minimum_group", 1))) else 0.0
@@ -4356,6 +4654,26 @@ class AquariumSimulation:
         skimmer = self.state.get("equipment", {}).get("protein_skimmer", {})
         if water.get("system") == "saltwater" and skimmer.get("enabled", False) and float(skimmer.get("cup_fullness", 0.0)) > 0.88:
             self._record_once("skimmer_cup", "warning", "Skimmer cup needs emptying", "The protein skimmer is losing export efficiency.")
+        equipment = self.state.get("equipment", {})
+        filter_state = equipment.get("filter", {})
+        if float(filter_state.get("bypass_risk", 0.0)) > 0.62:
+            self._record_once("filter_bypass", "warning", "Filter is bypassing water", "Clogged or channeled media is letting dirty water pass around the filter bed instead of through it.")
+        if float(filter_state.get("seal_risk", 0.0)) > 0.55:
+            self._record_once("filter_seal_risk", "warning", "Filter seal risk is rising", "Impeller strain and long service intervals are increasing leak or flow interruption risk.")
+        heater = equipment.get("heater", {})
+        if bool(heater.get("enabled", True)) and float(heater.get("temperature_variance_c", 0.0)) > 0.85:
+            self._record_once("heater_variance", "warning", "Heater is causing temperature variance", "Aging, placement, cycling, or thermostat stickiness is making temperature less stable.")
+        light = equipment.get("light", {})
+        if bool(light.get("enabled", True)) and (float(light.get("lens_film", 0.0)) > 0.62 or float(light.get("spectrum_shift", 0.0)) > 0.72):
+            self._record_once("light_output_loss", "warning", "Light output is no longer clean", "Lamp age, spectrum shift, or lens film is reducing useful light and can change plant/coral growth.")
+        air = equipment.get("air_pump", {})
+        if bool(air.get("enabled", True)) and float(air.get("effective_output", air.get("output", 0.0))) < float(air.get("output", 0.0)) * 0.62:
+            self._record_once("air_effective_loss", "warning", "Air output is restricted", "The pump setting is higher than the real delivered aeration because of tubing, stone, or diaphragm wear.")
+        if water.get("system") == "saltwater" and skimmer.get("enabled", False) and float(skimmer.get("tuning_drift", 0.0)) > 0.62:
+            self._record_once("skimmer_tuning", "warning", "Skimmer tuning is unstable", "Foam production is inconsistent, lowering export and adding microbubble irritation.")
+        ato = equipment.get("auto_top_off", {})
+        if bool(ato.get("enabled", False)) and float(ato.get("sensor_film", 0.0)) > 0.62:
+            self._record_once("ato_sensor_warning", "warning", "ATO sensor needs cleaning", "Sensor film can let evaporation drift before top-off responds correctly.")
         if self.state["biology"].get("algae", 0.0) > 0.55:
             self._record_once("algae", "warning", "Algae pressure is high", "Reduce light, avoid direct sun, control phosphate/nitrate, and avoid overfeeding.")
         algae = self.state.get("algae_ecology", {})
