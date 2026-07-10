@@ -2191,8 +2191,11 @@ func _animate_animals(delta: float) -> void:
 		var target_distance := pos.distance_to(target)
 		# Hold a waypoint long enough to pass it smoothly. Refreshing as soon as a
 		# fish touches a nearby target caused repeated left/right corrections.
-		var can_refresh_target := routine not in ["rest", "hide", "hang_back"]
-		if can_refresh_target and (target_distance < 18.0 and target_age > 0.48 or target_age > 1.35):
+		var can_refresh_target := routine not in ["hide", "hang_back"]
+		var arrival_radius: float = 14.0 if routine == "rest" else 18.0
+		var minimum_hold: float = 1.35 if routine == "rest" else 0.48
+		var maximum_hold: float = 3.6 if routine == "rest" else 1.35
+		if can_refresh_target and (target_distance < arrival_radius and target_age > minimum_hold or target_age > maximum_hold):
 			var next_target := _routine_target(animal, spec, visual, school_contexts)
 			# Non-school routines need a real next leg to travel. A generated point
 			# that lands beside the fish is what made it rock back and forth in place.
@@ -2248,7 +2251,8 @@ func _animate_animals(delta: float) -> void:
 		if aim.length() > 1.0:
 			# Ease into a waypoint instead of overshooting it and immediately turning
 			# back. Resting fish stop steering once they have reached their shelter.
-			var arrival_speed: float = clamp(aim.length() / 72.0, 0.0, 1.0)
+			var arrival_distance: float = 48.0 if routine == "rest" else 72.0
+			var arrival_speed: float = clamp(aim.length() / arrival_distance, 0.0, 1.0)
 			if routine in ["rest", "hide", "hang_back"] and aim.length() < 24.0:
 				arrival_speed = 0.0
 			desired_velocity = aim.normalized() * speed * arrival_speed
@@ -2376,7 +2380,12 @@ func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, s
 	var sleep := inner.position + Vector2(float(animal.get("sleep_x", animal.get("home_x", 0.5))) * inner.size.x, float(animal.get("sleep_y", animal.get("home_y", 0.5))) * inner.size.y)
 	match routine:
 		"rest":
-			return Vector2(clamp(sleep.x, inner.position.x + 34, inner.end.x - 34), clamp(sleep.y, inner.position.y + 48, inner.end.y - 42))
+			# Sleep is a small, intentional circuit around a familiar refuge—not a
+			# frozen pose, and not jitter driven by the current.
+			var rest_step: int = int(floor(Time.get_ticks_msec() / 3600.0) + seed) % 6
+			var rest_angle: float = float(rest_step) * TAU / 6.0
+			var rest_offset := Vector2(cos(rest_angle) * 34.0, sin(rest_angle) * 18.0)
+			return Vector2(clamp(sleep.x + rest_offset.x, inner.position.x + 34, inner.end.x - 34), clamp(sleep.y + rest_offset.y, inner.position.y + 48, inner.end.y - 42))
 		"hide":
 			return Vector2(clamp(home.x, inner.position.x + 34, inner.end.x - 34), clamp(max(home.y, inner.end.y - _substrate_height() - 120), inner.position.y + 48, inner.end.y - 42))
 		"surface":
