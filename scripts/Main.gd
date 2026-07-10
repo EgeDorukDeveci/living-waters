@@ -2193,7 +2193,15 @@ func _animate_animals(delta: float) -> void:
 		# fish touches a nearby target caused repeated left/right corrections.
 		var can_refresh_target := routine not in ["rest", "hide", "hang_back"]
 		if can_refresh_target and (target_distance < 18.0 and target_age > 0.48 or target_age > 1.35):
-			visual["target"] = _routine_target(animal, spec, visual, school_contexts)
+			var next_target := _routine_target(animal, spec, visual, school_contexts)
+			# Non-school routines need a real next leg to travel. A generated point
+			# that lands beside the fish is what made it rock back and forth in place.
+			if routine != "school" and next_target.distance_to(pos) < 58.0:
+				var travel_direction: Vector2 = visual.get("velocity", Vector2.ZERO) as Vector2
+				if travel_direction.length() < 4.0:
+					travel_direction = Vector2(1.0 if seed % 2 == 0 else -1.0, sin(seed * 0.73) * 0.34)
+				next_target = _clamped_tank_point(pos + travel_direction.normalized() * 94.0)
+			visual["target"] = next_target
 			target = visual["target"]
 			target_age = 0.0
 		var feed_strength := _active_action_strength(["feed"])
@@ -2244,7 +2252,15 @@ func _animate_animals(delta: float) -> void:
 				arrival_speed = 0.0
 			desired_velocity = aim.normalized() * speed * arrival_speed
 		if routine == "school":
-			desired_velocity += _school_steering(animal, pos, animals, school_contexts) * speed
+			# Formation steering is deliberately weaker than shared forward travel;
+			# otherwise separation can cancel the school direction and trap fish in
+			# tiny left/right corrections around their formation slot.
+			var school_context: Dictionary = school_contexts.get(str(animal.get("species_id", "")), {})
+			var school_anchor: Vector2 = school_context.get("anchor", target) as Vector2
+			var cruise: Vector2 = school_anchor - pos
+			if cruise.length() > 10.0:
+				desired_velocity += cruise.normalized() * speed * 0.46
+			desired_velocity += _school_steering(animal, pos, animals, school_contexts) * speed * 0.30
 		var current := _water_current_at(pos)
 		if routine in ["rest", "hide", "hang_back"]:
 			current *= 0.55
