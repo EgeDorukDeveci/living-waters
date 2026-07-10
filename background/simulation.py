@@ -2269,11 +2269,11 @@ class AquariumSimulation:
         ready_count = sum(1 for key in readiness_items if bool(safety.get(key, False)))
         safety["readiness_score"] = int(round(ready_count / len(readiness_items) * 100.0))
         if not safety.get("drip_loops", False) or not safety.get("gfci_protected", False):
-            issues.append({"severity": "warning", "title": "Electrical safeguards incomplete", "details": "Use drip loops and a GFCI/RCD-protected outlet around aquarium equipment."})
+            issues.append({"severity": "warning", "title": "Electrical safeguards incomplete", "details": "Use drip loops and a GFCI/RCD-protected outlet around aquarium equipment.", "timeline": False})
         if not safety.get("battery_air_pump", False):
-            issues.append({"severity": "warning", "title": "No outage aeration plan", "details": "A battery air pump protects oxygen during a power outage."})
+            issues.append({"severity": "warning", "title": "No outage aeration plan", "details": "A battery air pump protects oxygen during a power outage.", "timeline": False})
         if not safety.get("intake_guard", False) and any(a.get("alive", True) and (a.get("age_days", 999) < 90 or a.get("species_id") in {"cherry_shrimp", "cleaner_shrimp"}) for a in self.state.get("animals", [])):
-            issues.append({"severity": "warning", "title": "Filter intake needs a guard", "details": "Shrimp and juvenile fish need a sponge or mesh intake guard."})
+            issues.append({"severity": "warning", "title": "Filter intake needs a guard", "details": "Shrimp and juvenile fish need a sponge or mesh intake guard.", "timeline": False})
         planning["issues"] = issues
         planning["risk_score"] = min(100, sum(45 if i["severity"] == "critical" else 18 for i in issues))
         return planning
@@ -4684,6 +4684,8 @@ class AquariumSimulation:
         if not self.state.get("cycle", {}).get("ready_for_animals", True):
             self._record_once("cycle_not_ready", "warning", "Cycle is not ready", "Wait for ammonia and nitrite to reach zero before adding animals.")
         for issue in self.state.get("planning", {}).get("issues", [])[:3]:
+            if not issue.get("timeline", True):
+                continue
             self._record_once(f"planning_{issue.get('title', 'issue')}", issue.get("severity", "warning"), issue.get("title", "Planning issue"), issue.get("details", "Check tank placement and support."))
         for issue in self.state.get("maintenance", {}).get("issues", [])[:3]:
             self._record_once(f"maintenance_{issue.get('title', 'issue')}", issue.get("severity", "warning"), issue.get("title", "Maintenance issue"), issue.get("details", "Maintenance is overdue."))
