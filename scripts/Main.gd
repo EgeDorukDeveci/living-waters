@@ -2158,7 +2158,7 @@ func _animate_animals(delta: float) -> void:
 	if aquarium.size.x <= 0:
 		return
 	var animals: Array = state.get("animals", [])
-	var school_centers := _school_centers(animals)
+	var school_contexts := _school_contexts(animals)
 	for animal in animals:
 		var id: String = str(animal.get("id", ""))
 		if not animal_visuals.has(id):
@@ -2171,8 +2171,9 @@ func _animate_animals(delta: float) -> void:
 		var pos: Vector2 = visual["pos"]
 		var target: Vector2 = visual["target"]
 		var routine := str(animal.get("routine", "explore"))
+		var intent := str(animal.get("behavior_intent", ""))
 		if pos.distance_to(target) < 24.0:
-			visual["target"] = _routine_target(animal, spec, visual, school_centers)
+			visual["target"] = _routine_target(animal, spec, visual, school_contexts)
 			target = visual["target"]
 		var feed_strength := _active_action_strength(["feed"])
 		if feed_strength > 0.05 and not (routine in ["hide", "rest"]):
@@ -2200,10 +2201,18 @@ func _animate_animals(delta: float) -> void:
 			speed *= 1.45
 		elif routine == "school":
 			speed *= lerp(0.78, 1.02, clamp(float(animal.get("school_cohesion", 0.55)), 0.0, 1.0))
+		if intent == "pausing nearby":
+			speed *= 0.58
+		elif intent == "inspecting current":
+			speed *= 0.76
+		elif intent == "scouting" or intent == "leading":
+			speed *= 1.10
 		var aim: Vector2 = target - pos
 		var desired_velocity := Vector2.ZERO
 		if aim.length() > 1.0:
 			desired_velocity = aim.normalized() * speed
+		if routine == "school":
+			desired_velocity += _school_steering(animal, pos, animals, school_contexts) * speed
 		var current := _water_current_at(pos)
 		if routine in ["rest", "hide", "hang_back"]:
 			current *= 0.55
@@ -2224,7 +2233,7 @@ func _animate_animals(delta: float) -> void:
 		var next: Vector2 = _clamped_tank_point(unbounded_next)
 		if next.distance_to(unbounded_next) > 0.5:
 			velocity = Vector2(-velocity.x * 0.36, velocity.y * 0.72)
-			visual["target"] = _routine_target(animal, spec, visual, school_centers)
+			visual["target"] = _routine_target(animal, spec, visual, school_contexts)
 		var facing: float = float(visual.get("facing", 1.0))
 		if abs(velocity.x) > 0.35:
 			facing = 1.0 if velocity.x >= 0.0 else -1.0
@@ -2239,14 +2248,15 @@ func _animate_animals(delta: float) -> void:
 		visual["speed_ratio"] = clamp(velocity.length() / 82.0, 0.0, 1.8)
 		animal_visuals[id] = visual
 
-func _school_centers(animals: Array) -> Dictionary:
+func _school_contexts(animals: Array) -> Dictionary:
 	var accum := {}
 	var counts := {}
+	var zones := {}
 	for animal in animals:
 		if not bool(animal.get("alive", true)):
 			continue
 		var spec = species.get(animal.get("species_id", ""), {})
-		if str(spec.get("social", "")) != "schooling":
+		if not _is_schooling_social(str(spec.get("social", ""))):
 			continue
 		var id := str(animal.get("id", ""))
 		if not animal_visuals.has(id):
@@ -2254,12 +2264,48 @@ func _school_centers(animals: Array) -> Dictionary:
 		var species_id := str(animal.get("species_id", ""))
 		accum[species_id] = accum.get(species_id, Vector2.ZERO) + animal_visuals[id].get("pos", Vector2.ZERO)
 		counts[species_id] = int(counts.get(species_id, 0)) + 1
-	var centers := {}
+		zones[species_id] = str(spec.get("swim_zone", "middle"))
+	var contexts := {}
 	for key in accum.keys():
-		centers[key] = accum[key] / max(1, int(counts.get(key, 1)))
-	return centers
+		var species_id := str(key)
+		var center: Vector2 = accum[key] / max(1, int(counts.get(key, 1)))
+		var anchor := _school_anchor(species_id, str(zones.get(species_id, "middle")))
+		contexts[species_id] = {"center": center, "anchor": anchor, "count": int(counts.get(key, 1))}
+	return contexts
 
-func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, school_centers: Dictionary) -> Vector2:
+func _school_anchor(species_id: String, zone: String) -> Vector2:
+	var species_seed: int = abs(species_id.hash()) % 100000
+	return _moving_target(species_seed, zone)
+
+func _is_schooling_social(social: String) -> bool:
+	return social.contains("school") or social.contains("shoal") or social == "loose_group"
+
+func _school_steering(animal: Dictionary, pos: Vector2, animals: Array, contexts: Dictionary) -> Vector2:
+	var species_id := str(animal.get("species_id", ""))
+	var cohesion: float = clamp(float(animal.get("school_cohesion", 0.55)), 0.0, 1.0)
+	var spacing: float = lerp(52.0, 30.0, cohesion) * clamp(float(animal.get("school_spacing", 1.0)), 0.72, 1.30)
+	var steering := Vector2.ZERO
+	for other in animals:
+		var other_id := str(other.get("id", ""))
+		if other_id == str(animal.get("id", "")) or not animal_visuals.has(other_id):
+			continue
+		var other_spec: Dictionary = species.get(str(other.get("species_id", "")), {})
+		if not _is_schooling_social(str(other_spec.get("social", ""))):
+			continue
+		var other_pos: Vector2 = animal_visuals[other_id].get("pos", Vector2.ZERO)
+		var delta: Vector2 = pos - other_pos
+		var distance: float = max(1.0, delta.length())
+		if str(other.get("species_id", "")) == species_id:
+			if distance < spacing:
+				steering += delta.normalized() * (1.0 - distance / spacing) * 0.78
+		elif distance < 108.0:
+			steering += delta.normalized() * (1.0 - distance / 108.0) * 0.52
+	var context: Dictionary = contexts.get(species_id, {})
+	var anchor: Vector2 = context.get("anchor", pos) as Vector2
+	steering += (anchor - pos).normalized() * 0.22
+	return steering.limit_length(1.0)
+
+func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, school_contexts: Dictionary) -> Vector2:
 	var inner := _tank_inner()
 	var seed: int = int(visual.get("seed", 1))
 	var zone := str(spec.get("swim_zone", "middle"))
@@ -2276,11 +2322,27 @@ func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, s
 		"forage":
 			return Vector2(inner.position.x + 50.0 + fposmod(seed * 71.0 + Time.get_ticks_msec() / 24.0, inner.size.x - 100.0), inner.end.y - _substrate_height() - 22.0 - fposmod(seed * 11.0, 34.0))
 		"school":
-			var center: Vector2 = school_centers.get(str(animal.get("species_id", "")), _moving_target(seed, zone)) as Vector2
+			var species_id := str(animal.get("species_id", ""))
+			var context: Dictionary = school_contexts.get(species_id, {})
+			var center: Vector2 = context.get("center", _moving_target(seed, zone)) as Vector2
+			var anchor: Vector2 = context.get("anchor", _school_anchor(species_id, zone)) as Vector2
 			var cohesion: float = clamp(float(animal.get("school_cohesion", 0.55)), 0.0, 1.0)
-			var spread: float = lerp(72.0, 28.0, cohesion)
-			var offset: Vector2 = Vector2(sin(seed) * spread, cos(seed * 0.7) * spread * 0.45)
-			return Vector2(clamp(center.x + offset.x, inner.position.x + 52, inner.end.x - 52), clamp(center.y + offset.y, inner.position.y + 54, inner.end.y - _substrate_height() - 38))
+			var school_center := center.lerp(anchor, 0.58)
+			var spread: float = lerp(76.0, 26.0, cohesion) * clamp(float(animal.get("school_spacing", 1.0)), 0.72, 1.30)
+			var heading := (anchor - center).normalized()
+			if heading.length() < 0.05:
+				heading = Vector2.RIGHT
+			var side := Vector2(-heading.y, heading.x)
+			var phase := float(seed % 97) * 0.41 + Time.get_ticks_msec() / 1700.0
+			var offset: Vector2 = side * sin(phase) * spread + heading * cos(phase * 1.37) * spread * 0.32
+			var intent := str(animal.get("behavior_intent", "following"))
+			if intent == "scouting":
+				offset += side * sign(sin(phase * 1.8)) * spread * 1.15 + heading * spread * 0.56
+			elif intent == "regrouping":
+				offset *= 0.28
+			elif intent == "leading":
+				offset += heading * spread * 0.54
+			return Vector2(clamp(school_center.x + offset.x, inner.position.x + 52, inner.end.x - 52), clamp(school_center.y + offset.y, inner.position.y + 54, inner.end.y - _substrate_height() - 38))
 		"flee":
 			return Vector2(inner.position.x + 42.0 + fposmod(seed * 91.0, inner.size.x - 84.0), inner.position.y + inner.size.y * 0.72)
 		"display", "patrol":
@@ -4094,8 +4156,15 @@ func _draw_behavior_marks(animal: Dictionary, pos: Vector2, facing: float) -> vo
 	var cohesion: float = clamp(float(animal.get("school_cohesion", 0.0)), 0.0, 1.0)
 	var territory: float = clamp(float(animal.get("territory_pressure", 0.0)), 0.0, 1.0)
 	var confidence: float = clamp(float(animal.get("confidence", 0.5)), 0.0, 1.0)
+	var intent := str(animal.get("behavior_intent", ""))
 	if routine == "school" and cohesion > 0.42:
 		draw_arc(pos + Vector2(0, 2), 24.0, PI * 0.08, PI * 0.92, 18, Color(0.68, 0.92, 1.0, 0.08 + cohesion * 0.12), 1.1, true)
+	if routine == "school" and intent == "regrouping":
+		var pulse: float = 0.5 + sin(Time.get_ticks_msec() / 180.0 + float(animal.get("position_seed", 0))) * 0.22
+		draw_arc(pos, 31.0 + pulse * 6.0, PI * 1.08, PI * 1.82, 14, Color(0.72, 0.94, 1.0, 0.22), 1.3, true)
+	if routine == "school" and intent == "scouting":
+		draw_line(pos + Vector2(20.0 * facing, -14.0), pos + Vector2(34.0 * facing, -14.0), Color(0.92, 0.82, 0.48, 0.20), 1.2, true)
+		draw_line(pos + Vector2(34.0 * facing, -14.0), pos + Vector2(28.0 * facing, -18.0), Color(0.92, 0.82, 0.48, 0.20), 1.2, true)
 	if routine == "hide" or fear > 0.58 or confidence < 0.24:
 		var alpha: float = 0.08 + max(fear, 1.0 - confidence) * 0.16
 		draw_circle(pos + Vector2(-8.0 * facing, 2.0), 18.0, Color(0.10, 0.16, 0.14, alpha))

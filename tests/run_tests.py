@@ -893,6 +893,46 @@ def test_schooling_fish_build_cohesion_from_group_and_open_water() -> None:
     assert any("tight school" in " ".join(fish.get("behavior_notes", [])) for fish in state["animals"])
 
 
+def test_schooling_fish_keep_individual_group_intents() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["animals"] = []
+    sim = AquariumSimulation(species, state)
+    for index in range(8):
+        fish = animal(species, "neon_tetra", f"Neon {index}", 240 + index)
+        fish["school_cohesion"] = 0.82
+        fish["sociability"] = 0.9
+        fish["confidence"] = 0.9 if index == 0 else 0.45
+        fish["boldness"] = 0.95 if index == 0 else 0.34
+        fish["feeding_rank"] = 0.95 if index == 0 else 0.35
+        fish["curiosity"] = 0.15
+        fish["intent_hours_remaining"] = 0.0
+        state["animals"].append(fish)
+    for fish in state["animals"]:
+        sim._update_behavior_memory(fish, species["neon_tetra"], 8, {}, False, 0.1)
+    intents = {str(fish["behavior_intent"]) for fish in state["animals"]}
+    assert "leading" in intents
+    assert "following" in intents
+    assert all(0.72 <= float(fish["school_spacing"]) <= 1.30 for fish in state["animals"])
+
+
+def test_shoaling_species_use_the_same_group_brain() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    state["animals"] = [animal(species, "peppered_cory", f"Cory {index}", 290 + index) for index in range(6)]
+    sim = AquariumSimulation(species, state)
+    groups = sim._groups(state["animals"])
+    welfare = {"animal_risks": {}}
+    for fish in state["animals"]:
+        fish["school_cohesion"] = 0.78
+        fish["intent_hours_remaining"] = 0.0
+        fish["hunger"] = 0.1
+        fish["acute_stress"] = 0.02
+        sim._update_animal(fish, groups, welfare, 0.0, 0.1)
+    assert any(fish["routine"] == "school" for fish in state["animals"])
+    assert all(fish["behavior_intent"] in {"leading", "following", "scouting", "regrouping"} for fish in state["animals"])
+
+
 def test_territorial_fish_remember_pressure_from_cramped_cover() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = clear_state(species, "Territory Test", "freshwater", 24)
@@ -1558,6 +1598,8 @@ def main() -> int:
         test_mineral_dosing_replenishes_reef_reserves,
         test_animal_personality_fields_drive_routines,
         test_schooling_fish_build_cohesion_from_group_and_open_water,
+        test_schooling_fish_keep_individual_group_intents,
+        test_shoaling_species_use_the_same_group_brain,
         test_territorial_fish_remember_pressure_from_cramped_cover,
         test_tiny_life_supports_natural_foraging,
         test_saltwater_switch_species_and_reefscape_rules,

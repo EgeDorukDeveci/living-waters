@@ -885,6 +885,10 @@ def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
         "activity_drive": rng.uniform(0.32, 0.68),
         "rest_quality": rng.uniform(0.58, 0.92),
         "school_cohesion": rng.uniform(0.48, 0.82) if "school" in str(spec.get("social", "")) or "shoal" in str(spec.get("social", "")) else 0.0,
+        "school_spacing": rng.uniform(0.78, 1.22),
+        "school_role": "follower",
+        "behavior_intent": "settling",
+        "intent_hours_remaining": rng.uniform(0.12, 0.45),
         "territory_pressure": rng.uniform(0.05, 0.32) * float(spec.get("territoriality", 0.0)),
         "feeding_opportunity": rng.uniform(0.42, 0.88),
         "comfort_zone": "",
@@ -1244,6 +1248,10 @@ class AquariumSimulation:
             animal.setdefault("activity_drive", 0.5)
             animal.setdefault("rest_quality", 0.75)
             animal.setdefault("school_cohesion", 0.0)
+            animal.setdefault("school_spacing", 1.0)
+            animal.setdefault("school_role", "follower")
+            animal.setdefault("behavior_intent", "settling")
+            animal.setdefault("intent_hours_remaining", 0.2)
             animal.setdefault("territory_pressure", 0.0)
             animal.setdefault("feeding_opportunity", 0.65)
             animal.setdefault("comfort_zone", "")
@@ -4264,6 +4272,26 @@ class AquariumSimulation:
         if is_schooling:
             cohesion_target = clamp(group_ratio * 0.45 + sociability * 0.23 + open_swimming * 0.15 + flow_match * 0.10 + (1.0 - stress) * 0.15 - float(animal.get("fear_memory", 0.0)) * 0.24, 0.0, 1.0)
             animal["school_cohesion"] = clamp(float(animal.get("school_cohesion", 0.4)) + (cohesion_target - float(animal.get("school_cohesion", 0.4))) * min(1.0, hours * 0.06), 0.0, 1.0)
+            intent_remaining = max(0.0, float(animal.get("intent_hours_remaining", 0.0)) - hours)
+            if intent_remaining <= 0.0:
+                lead_drive = boldness * 0.48 + float(animal.get("feeding_rank", 0.6)) * 0.22 + float(animal.get("confidence", 0.5)) * 0.30
+                if group < minimum or float(animal["school_cohesion"]) < 0.42:
+                    animal["behavior_intent"] = "regrouping"
+                    animal["school_role"] = "follower"
+                    intent_remaining = self._rng(f"regroup_{animal['id']}").uniform(0.10, 0.30)
+                elif lead_drive > 0.78:
+                    animal["behavior_intent"] = "leading"
+                    animal["school_role"] = "leader"
+                    intent_remaining = self._rng(f"lead_{animal['id']}").uniform(0.20, 0.55)
+                elif float(animal.get("curiosity", 0.5)) > 0.72 and self._rng(f"scout_{animal['id']}").random() < 0.18:
+                    animal["behavior_intent"] = "scouting"
+                    animal["school_role"] = "scout"
+                    intent_remaining = self._rng(f"scout_duration_{animal['id']}").uniform(0.08, 0.20)
+                else:
+                    animal["behavior_intent"] = "following"
+                    animal["school_role"] = "follower"
+                    intent_remaining = self._rng(f"follow_{animal['id']}").uniform(0.18, 0.65)
+            animal["intent_hours_remaining"] = intent_remaining
             if group < minimum:
                 notes.append("searching for missing schoolmates")
             elif animal["school_cohesion"] > 0.68:
@@ -4272,6 +4300,20 @@ class AquariumSimulation:
                 notes.append("school is scattered")
         else:
             animal["school_cohesion"] = clamp(float(animal.get("school_cohesion", 0.0)) - hours * 0.025, 0.0, 1.0)
+            intent_remaining = max(0.0, float(animal.get("intent_hours_remaining", 0.0)) - hours)
+            if intent_remaining <= 0.0:
+                roll = self._rng(f"solo_intent_{animal['id']}").random()
+                if stress > 0.42 or float(animal.get("fear_memory", 0.0)) > 0.48:
+                    animal["behavior_intent"] = "checking cover"
+                elif hunger > 0.56 and roll < 0.56:
+                    animal["behavior_intent"] = "foraging pass"
+                elif float(animal.get("curiosity", 0.5)) > 0.62 and roll < 0.56:
+                    animal["behavior_intent"] = "inspecting current"
+                elif roll < 0.24:
+                    animal["behavior_intent"] = "pausing nearby"
+                else:
+                    animal["behavior_intent"] = "exploring"
+                animal["intent_hours_remaining"] = self._rng(f"solo_duration_{animal['id']}").uniform(0.12, 0.48)
 
         territory_target = territoriality * clamp((1.0 - hiding) * 0.32 + max(0, group - preferred) * 0.22 + stress * 0.18 + float(animal.get("breeding_condition", 0.0)) * 0.28, 0.0, 1.25)
         animal["territory_pressure"] = clamp(float(animal.get("territory_pressure", 0.0)) + (territory_target - float(animal.get("territory_pressure", 0.0))) * min(1.0, hours * 0.055), 0.0, 1.0)
@@ -4460,6 +4502,7 @@ class AquariumSimulation:
         if resting:
             animal["energy"] = clamp(animal["energy"] + hours * 0.018, 0, 1)
         behavior_notes = self._update_behavior_memory(animal, spec, group, welfare_risk, resting, hours)
+        schooling_social = any(word in str(spec.get("social", "")) for word in ("school", "shoal")) or str(spec.get("social", "")) == "loose_group"
 
         if animal.get("disease"):
             stage = str(animal.get("disease_stage", "visible"))
@@ -4533,10 +4576,19 @@ class AquariumSimulation:
             else:
                 animal["behavior"] = "searching for food"
                 animal["routine"] = "forage"
-        elif spec["social"] == "schooling" and float(animal.get("school_cohesion", 0.0)) > 0.58:
+        elif schooling_social and str(animal.get("behavior_intent", "following")) == "regrouping":
+            animal["behavior"] = "circling back toward its own school"
+            animal["routine"] = "school"
+        elif schooling_social and str(animal.get("behavior_intent", "following")) == "scouting":
+            animal["behavior"] = "briefly scouting beyond the school edge"
+            animal["routine"] = "school"
+        elif schooling_social and str(animal.get("behavior_intent", "following")) == "leading":
+            animal["behavior"] = "guiding its school through open water"
+            animal["routine"] = "school"
+        elif schooling_social and float(animal.get("school_cohesion", 0.0)) > 0.58:
             animal["behavior"] = "holding formation with the school"
             animal["routine"] = "school"
-        elif spec["social"] == "schooling" and float(animal.get("school_cohesion", 0.0)) < 0.30:
+        elif schooling_social and float(animal.get("school_cohesion", 0.0)) < 0.30:
             animal["behavior"] = "school is loose and watchful"
             animal["routine"] = "scan"
         elif float(animal.get("confidence", 0.5)) < 0.28:
@@ -4554,9 +4606,18 @@ class AquariumSimulation:
         elif spec["swim_zone"] == "bottom":
             animal["behavior"] = "foraging over the substrate"
             animal["routine"] = "forage"
-        elif spec["social"] == "schooling":
+        elif schooling_social:
             animal["behavior"] = "schooling"
             animal["routine"] = "school"
+        elif str(animal.get("behavior_intent", "")) == "foraging pass":
+            animal["behavior"] = "making a short foraging pass"
+            animal["routine"] = "forage"
+        elif str(animal.get("behavior_intent", "")) == "checking cover":
+            animal["behavior"] = "checking familiar cover"
+            animal["routine"] = "hide"
+        elif str(animal.get("behavior_intent", "")) == "inspecting current":
+            animal["behavior"] = "testing the gentle current"
+            animal["routine"] = "inspect"
         elif float(animal.get("curiosity", 0.5)) > 0.72 and animal["acute_stress"] < 0.16:
             animal["behavior"] = "curiously inspecting the scape"
             animal["routine"] = "inspect"
