@@ -266,7 +266,14 @@ def now_iso() -> str:
 
 def load_species(path: Path) -> dict[str, dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return {item["id"]: item for item in payload["species"]}
+    result = {item["id"]: item for item in payload["species"]}
+    behavior_path = path.with_name("behavior_profiles_v1.json")
+    if behavior_path.exists():
+        behavior_payload = json.loads(behavior_path.read_text(encoding="utf-8"))
+        for species_id, profile in behavior_payload.get("profiles", {}).items():
+            if species_id in result:
+                result[species_id]["behavior_profile"] = profile
+    return result
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -848,6 +855,7 @@ def days_since(value: str, fallback: float = 0.0) -> float:
 
 def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
     rng = random.Random(seed + 182)
+    profile = spec.get("behavior_profile", {})
     return {
         "id": uuid.uuid4().hex[:12],
         "species_id": spec["id"],
@@ -914,6 +922,12 @@ def make_animal(spec: dict[str, Any], name: str, seed: int) -> dict[str, Any]:
         "home_y": rng.uniform(0.18, 0.82),
         "sleep_x": rng.uniform(0.10, 0.90),
         "sleep_y": rng.uniform(0.58, 0.86) if spec.get("swim_zone") == "bottom" else rng.uniform(0.22, 0.72),
+        "activity_cycle": str(profile.get("cycle", "diurnal")),
+        "movement_style": str(profile.get("movement", "general_roam")),
+        "forage_style": str(profile.get("forage", "general_pick")),
+        "preferred_rest_sites": list(profile.get("rest_sites", ["plant_thicket"])),
+        "preferred_shelter": str(profile.get("shelter", "vegetation")),
+        "home_range": float(profile.get("range", 0.65)),
         "routine": "explore",
         "social_satisfaction": 1.0,
         "injury": 0.0,
@@ -1223,6 +1237,7 @@ class AquariumSimulation:
                 event("info", "Starter animals removed", "The tank now starts empty so you can choose and acclimate every animal yourself."),
             )
         for animal in self.state.get("animals", []):
+            spec = self.species.get(animal.get("species_id", ""), {})
             animal.setdefault("acclimated", True)
             animal.setdefault("acclimation_minutes", self.species.get(animal.get("species_id", ""), {}).get("acclimation_minutes", 30))
             animal.setdefault("decomposition_hours", 0.0)
@@ -1257,6 +1272,13 @@ class AquariumSimulation:
             animal.setdefault("behavior_trigger", "settling in")
             animal.setdefault("behavior_history", [])
             animal.setdefault("decision_count", 0)
+            profile = spec.get("behavior_profile", {})
+            animal.setdefault("activity_cycle", str(profile.get("cycle", "diurnal")))
+            animal.setdefault("movement_style", str(profile.get("movement", "general_roam")))
+            animal.setdefault("forage_style", str(profile.get("forage", "general_pick")))
+            animal.setdefault("preferred_rest_sites", list(profile.get("rest_sites", ["plant_thicket"])))
+            animal.setdefault("preferred_shelter", str(profile.get("shelter", "vegetation")))
+            animal.setdefault("home_range", float(profile.get("range", 0.65)))
             animal.setdefault("intent_hours_remaining", 0.2)
             animal.setdefault("territory_pressure", 0.0)
             animal.setdefault("feeding_opportunity", 0.65)
@@ -4359,6 +4381,8 @@ class AquariumSimulation:
         territory = clamp(float(animal.get("territory_pressure", 0.0)), 0.0, 1.0)
         feeding_opportunity = clamp(float(animal.get("feeding_opportunity", 0.65)), 0.0, 1.0)
         cleanup_role = CLEANUP_ROLES.get(str(animal.get("species_id", "")), {})
+        movement_style = str(animal.get("movement_style", spec.get("behavior_profile", {}).get("movement", "general_roam")))
+        forage_style = str(animal.get("forage_style", spec.get("behavior_profile", {}).get("forage", "general_pick")))
         oxygen_low = float(water.get("oxygen_mg_l", 7.0)) < float(spec.get("oxygen_min_mg_l", 5.0)) + 0.45
         current_heavy = flow > 0.82 and str(animal.get("species_id", "")) in {"betta_splendens", "fancy_guppy"}
         cover_needed = "cave" in social or "shy" in social or zone == "bottom"
@@ -4399,6 +4423,22 @@ class AquariumSimulation:
                 candidates.append(("checking cover", 0.65 + (1.0 - confidence) * 1.2 + hiding * 0.45, "cover preference", 0.12 + fear * 0.18))
             if flow > 0.30 and not current_heavy:
                 candidates.append(("current riding", flow * (0.55 + boldness), "comfortable water movement", 0.10 + flow * 0.18))
+            if "perch" in movement_style:
+                candidates.append(("perching", 2.1 + (1.0 - hunger), "species habit of watching from a solid perch", 0.18 + confidence * 0.22))
+            if movement_style in {"cave_dash", "cave_hover_dash"}:
+                candidates.append(("cave watch", 2.0 + (1.0 - fear), "cave-oriented shelter and ambush habit", 0.16 + confidence * 0.18))
+            if movement_style == "host_orbit":
+                candidates.append(("host orbit", 3.2, "strong attachment to a host refuge", 0.22 + confidence * 0.20))
+            if movement_style == "burrow_watch":
+                candidates.append(("burrow watch", 3.4, "burrow-guarding habit", 0.22 + confidence * 0.18))
+            if movement_style in {"hover_group", "hover_patrol", "hover_browse"}:
+                candidates.append(("hovering", 1.7 + confidence, "species-typical station holding", 0.16 + confidence * 0.20))
+            if movement_style == "dart_and_pause":
+                candidates.append(("dart and pause", 1.9 + curiosity, "species-typical burst movement", 0.10 + curiosity * 0.14))
+            if "graze" in forage_style or "graze" in movement_style:
+                candidates.append(("grazing", 1.8 + hunger + float(cleanup_role.get("biofilm", 0.0)), "species-specific grazing strategy", 0.18 + hunger * 0.18))
+            if "substrate" in forage_style:
+                candidates.append(("sifting substrate", 1.8 + hunger, "species-specific bottom foraging", 0.15 + hunger * 0.16))
             candidates.extend([
                 ("inspecting current", max(0.08, curiosity - 0.28) * 1.15, "curiosity", 0.10 + curiosity * 0.17),
                 ("exploring", 0.65 + curiosity + open_swimming * 0.55, "open space and curiosity", 0.14 + curiosity * 0.24),
@@ -4580,7 +4620,15 @@ class AquariumSimulation:
         breeding_target = 1.0 if stress_target < 0.16 and animal["hunger"] < 0.45 and animal["health"] > 0.78 and group >= max(1, int(spec.get("minimum_group", 1))) else 0.0
         animal["breeding_condition"] = clamp(float(animal.get("breeding_condition", 0.0)) + (breeding_target - float(animal.get("breeding_condition", 0.0))) * min(1.0, hours * 0.035), 0, 1)
         local_hour = (datetime.now().hour + datetime.now().minute / 60.0 + float(animal.get("circadian_offset", 0.0))) % 24.0
-        resting = local_hour < 6.0 or local_hour > 21.5
+        activity_cycle = str(animal.get("activity_cycle", spec.get("behavior_profile", {}).get("cycle", "diurnal")))
+        if activity_cycle == "nocturnal":
+            resting = 7.5 < local_hour < 18.5
+        elif activity_cycle == "crepuscular":
+            resting = local_hour < 4.5 or 10.0 < local_hour < 16.0 or local_hour > 23.0
+        elif activity_cycle == "cathemeral":
+            resting = 2.5 < local_hour < 4.5
+        else:
+            resting = local_hour < 6.0 or local_hour > 21.5
         if resting:
             animal["energy"] = clamp(animal["energy"] + hours * 0.018, 0, 1)
         behavior_notes = self._update_behavior_memory(animal, spec, group, welfare_risk, resting, hours)
@@ -4649,7 +4697,9 @@ class AquariumSimulation:
                 animal["behavior"] = "restless and failing to settle"
                 animal["routine"] = "hide"
             else:
-                animal["behavior"] = "resting near a familiar sleep spot"
+                rest_sites = [str(site).replace("_", " ") for site in animal.get("preferred_rest_sites", [])]
+                rest_site = rest_sites[int(animal.get("decision_count", 0)) % len(rest_sites)] if rest_sites else "familiar cover"
+                animal["behavior"] = f"resting at {rest_site}"
                 animal["routine"] = "rest"
         elif animal["hunger"] > 0.72:
             if float(animal.get("feeding_opportunity", 0.65)) < 0.38:
@@ -4724,6 +4774,24 @@ class AquariumSimulation:
         elif str(animal.get("behavior_intent", "")) == "resting nearby":
             animal["behavior"] = "pausing at a familiar resting spot"
             animal["routine"] = "rest"
+        elif str(animal.get("behavior_intent", "")) == "perching":
+            animal["behavior"] = "perching on a familiar surface"
+            animal["routine"] = "perch"
+        elif str(animal.get("behavior_intent", "")) == "cave watch":
+            animal["behavior"] = "watching from a cave entrance"
+            animal["routine"] = "cave_watch"
+        elif str(animal.get("behavior_intent", "")) == "host orbit":
+            animal["behavior"] = "circling its host refuge"
+            animal["routine"] = "host"
+        elif str(animal.get("behavior_intent", "")) == "burrow watch":
+            animal["behavior"] = "guarding the mouth of its burrow"
+            animal["routine"] = "burrow"
+        elif str(animal.get("behavior_intent", "")) == "hovering":
+            animal["behavior"] = "holding position and watching"
+            animal["routine"] = "hover"
+        elif str(animal.get("behavior_intent", "")) == "dart and pause":
+            animal["behavior"] = "making a quick dash, then pausing"
+            animal["routine"] = "dart"
         elif float(animal.get("curiosity", 0.5)) > 0.72 and animal["acute_stress"] < 0.16:
             animal["behavior"] = "curiously inspecting the scape"
             animal["routine"] = "inspect"

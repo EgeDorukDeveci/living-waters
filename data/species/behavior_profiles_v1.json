@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "research_basis": [
+    "https://pmc.ncbi.nlm.nih.gov/articles/PMC11704571/",
+    "https://pmc.ncbi.nlm.nih.gov/articles/PMC10936361/",
+    "https://onlinelibrary.wiley.com/doi/10.1111/j.1095-8649.1997.tb01507.x",
+    "https://animaldiversity.org/accounts/Amphiprion_ocellaris/",
+    "https://www.fishbase.se/summary/gramma-loreto",
+    "https://www.fishbase.se/summary/Pterapogon_kauderni.html"
+  ],
+  "profiles": {
+    "neon_tetra": {"cycle":"diurnal","movement":"tight_school_cruise","forage":"midwater_pick","rest_sites":["plant_thicket","wood_shadow"],"rest_zone":"middle","shelter":"vegetation","range":0.82},
+    "betta_splendens": {"cycle":"diurnal","movement":"hover_patrol","forage":"surface_ambush","rest_sites":["broad_leaf","wood_top","rock_top","surface_cover","substrate"],"rest_zone":"upper","shelter":"dense_vegetation","range":0.48},
+    "zebra_danio": {"cycle":"diurnal","movement":"fast_surface_laps","forage":"surface_pick","rest_sites":["plant_thicket","open_water"],"rest_zone":"upper","shelter":"marginal_vegetation","range":1.0},
+    "peppered_cory": {"cycle":"crepuscular","movement":"bottom_shoal","forage":"substrate_sift","rest_sites":["substrate","wood_shadow","plant_thicket"],"rest_zone":"bottom","shelter":"bottom_cover","range":0.68},
+    "cherry_shrimp": {"cycle":"cathemeral","movement":"graze_crawl","forage":"biofilm_graze","rest_sites":["plant_thicket","wood_shadow","rock_crevice"],"rest_zone":"bottom","shelter":"fine_cover","range":0.24},
+    "harlequin_rasbora": {"cycle":"diurnal","movement":"coordinated_school","forage":"midwater_pick","rest_sites":["plant_thicket","wood_shadow"],"rest_zone":"middle","shelter":"vegetation_edge","range":0.76},
+    "fancy_guppy": {"cycle":"diurnal","movement":"loose_surface_roam","forage":"surface_pick","rest_sites":["plant_thicket","surface_cover"],"rest_zone":"upper","shelter":"vegetation","range":0.82},
+    "honey_gourami": {"cycle":"diurnal","movement":"hover_browse","forage":"surface_browse","rest_sites":["broad_leaf","plant_thicket","surface_cover"],"rest_zone":"upper","shelter":"dense_vegetation","range":0.48},
+    "kuhli_loach": {"cycle":"nocturnal","movement":"serpentine_bottom","forage":"substrate_probe","rest_sites":["cave","wood_shadow","rock_crevice","substrate"],"rest_zone":"bottom","shelter":"crevice","range":0.58},
+    "ember_tetra": {"cycle":"diurnal","movement":"gentle_school","forage":"midwater_pick","rest_sites":["plant_thicket","wood_shadow"],"rest_zone":"middle","shelter":"dense_vegetation","range":0.66},
+    "otocinclus": {"cycle":"crepuscular","movement":"surface_to_surface_graze","forage":"biofilm_graze","rest_sites":["broad_leaf","wood_top","rock_top"],"rest_zone":"bottom","shelter":"grazing_surface","range":0.44},
+    "celestial_pearl_danio": {"cycle":"diurnal","movement":"dart_and_pause","forage":"midwater_pick","rest_sites":["plant_thicket","rock_crevice"],"rest_zone":"middle","shelter":"dense_vegetation","range":0.52},
+    "cardinal_tetra": {"cycle":"diurnal","movement":"tight_school_cruise","forage":"midwater_pick","rest_sites":["plant_thicket","wood_shadow"],"rest_zone":"middle","shelter":"dim_vegetation","range":0.82},
+    "rummy_nose_tetra": {"cycle":"diurnal","movement":"long_school_laps","forage":"midwater_pick","rest_sites":["plant_thicket","wood_shadow"],"rest_zone":"middle","shelter":"vegetation_edge","range":0.96},
+    "black_neon_tetra": {"cycle":"diurnal","movement":"school_cruise","forage":"midwater_pick","rest_sites":["plant_thicket","open_water"],"rest_zone":"middle","shelter":"vegetation_edge","range":0.84},
+    "white_cloud_minnow": {"cycle":"diurnal","movement":"fast_surface_laps","forage":"surface_pick","rest_sites":["plant_thicket","open_water"],"rest_zone":"upper","shelter":"marginal_vegetation","range":1.0},
+    "platy": {"cycle":"diurnal","movement":"loose_browse","forage":"surface_browse","rest_sites":["plant_thicket","surface_cover"],"rest_zone":"middle","shelter":"vegetation","range":0.76},
+    "bristlenose_pleco": {"cycle":"nocturnal","movement":"graze_and_shelter","forage":"surface_graze","rest_sites":["cave","wood_shadow","rock_crevice"],"rest_zone":"bottom","shelter":"cave","range":0.44},
+    "german_blue_ram": {"cycle":"diurnal","movement":"bottom_territory_patrol","forage":"substrate_pick","rest_sites":["cave","rock_crevice","plant_thicket"],"rest_zone":"bottom","shelter":"structured_bottom","range":0.46},
+    "dwarf_chain_loach": {"cycle":"crepuscular","movement":"active_bottom_group","forage":"substrate_probe","rest_sites":["cave","wood_shadow","rock_crevice"],"rest_zone":"bottom","shelter":"crevice","range":0.72},
+    "ocellaris_clownfish": {"cycle":"diurnal","movement":"host_orbit","forage":"plankton_pick","rest_sites":["coral_host","rock_crevice"],"rest_zone":"middle","shelter":"host_coral","range":0.34},
+    "royal_gramma": {"cycle":"diurnal","movement":"cave_dash","forage":"plankton_dash","rest_sites":["cave","rock_overhang"],"rest_zone":"bottom","shelter":"cave","range":0.32},
+    "banggai_cardinalfish": {"cycle":"nocturnal","movement":"hover_group","forage":"night_plankton","rest_sites":["coral_host","rock_crevice","plant_thicket"],"rest_zone":"middle","shelter":"spined_cover","range":0.38},
+    "blue_green_chromis": {"cycle":"diurnal","movement":"reef_school_cruise","forage":"plankton_pick","rest_sites":["coral_host","rock_crevice"],"rest_zone":"upper","shelter":"reef_branches","range":0.9},
+    "yellow_watchman_goby": {"cycle":"diurnal","movement":"burrow_watch","forage":"burrow_ambush","rest_sites":["burrow","rock_crevice","substrate"],"rest_zone":"bottom","shelter":"burrow","range":0.2},
+    "firefish_goby": {"cycle":"diurnal","movement":"cave_hover_dash","forage":"plankton_pick","rest_sites":["cave","rock_crevice"],"rest_zone":"bottom","shelter":"bolt_hole","range":0.42},
+    "tailspot_blenny": {"cycle":"diurnal","movement":"perch_and_dash","forage":"surface_graze","rest_sites":["rock_top","cave","coral_host"],"rest_zone":"bottom","shelter":"rock_hole","range":0.3},
+    "pajama_cardinalfish": {"cycle":"nocturnal","movement":"hover_group","forage":"night_plankton","rest_sites":["coral_host","rock_shadow"],"rest_zone":"middle","shelter":"reef_cover","range":0.44},
+    "yellow_clown_goby": {"cycle":"diurnal","movement":"coral_perch","forage":"short_ambush","rest_sites":["coral_host","rock_top"],"rest_zone":"middle","shelter":"branching_coral","range":0.22},
+    "cleaner_shrimp": {"cycle":"crepuscular","movement":"cleaner_station","forage":"station_pick","rest_sites":["cave","rock_crevice","coral_host"],"rest_zone":"bottom","shelter":"cleaner_station","range":0.22}
+  }
+}

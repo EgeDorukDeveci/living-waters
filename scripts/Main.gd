@@ -49,6 +49,7 @@ var aquarium_index: Dictionary = {}
 var animal_visuals: Dictionary = {}
 var fish_textures: Dictionary = {}
 var scape_textures: Dictionary = {}
+var journal_sketch_textures: Dictionary = {}
 var time_accum := 0.0
 var opening_screen := true
 var opening_cards: Array[Dictionary] = []
@@ -82,8 +83,13 @@ var research_label: Label
 var notebook_right_label: Label
 var notebook_left_page_label: Label
 var notebook_right_page_label: Label
+var notebook_left_sketch: TextureRect
+var notebook_right_sketch: TextureRect
+var notebook_left_page: PanelContainer
+var notebook_right_page: PanelContainer
 var notebook_prev_button: Button
 var notebook_next_button: Button
+var notebook_index_select: OptionButton
 var notebook_panel: PanelContainer
 var notebook_button: Button
 var scape_label: Label
@@ -111,7 +117,11 @@ var synced_food_type := ""
 var notebook_open := false
 var notebook_amount := 0.0
 var notebook_pages: Array = []
+var notebook_page_titles: Array[String] = []
+var notebook_page_sketches: Array[String] = []
 var notebook_page_index := 0
+var notebook_turn_amount := 0.0
+var notebook_turn_direction := 1
 
 func _ready() -> void:
 	root_dir = _project_root()
@@ -481,9 +491,15 @@ func _load_json(path: String) -> Variant:
 func _load_species(path: String) -> Dictionary:
 	var payload = _load_json(path)
 	var result := {}
+	var behavior_payload = _load_json(path.get_base_dir().path_join("behavior_profiles_v1.json"))
+	var profiles: Dictionary = behavior_payload.get("profiles", {}) if typeof(behavior_payload) == TYPE_DICTIONARY else {}
 	if typeof(payload) == TYPE_DICTIONARY:
 		for item in payload.get("species", []):
-				result[item["id"]] = item
+			var enriched: Dictionary = item.duplicate(true)
+			var species_id := str(enriched.get("id", ""))
+			if profiles.has(species_id):
+				enriched["behavior_profile"] = profiles[species_id]
+			result[species_id] = enriched
 	return result
 
 func _load_sprite_assets() -> void:
@@ -497,6 +513,18 @@ func _load_sprite_assets() -> void:
 		var texture := _load_png_texture("res://assets/sprites/fish/%s.png" % id)
 		if texture:
 			fish_textures[id] = texture
+		var journal_texture := _load_png_texture("res://assets/journal_sketches/fish_%s.png" % id)
+		if journal_texture:
+			journal_sketch_textures["fish_" + str(id)] = journal_texture
+	for id in [
+		"cycle", "water_change", "temperature", "hardscape", "plants", "algae", "coral", "feeding", "equipment",
+		"system_notes", "survival_time", "maintenance_chemistry", "stability_memory", "substrate", "plant_memory",
+		"coral_memory", "fish_routines", "cleanup_crews", "redox_organics", "disease_stress", "tank_maturity",
+		"maintenance_actions", "care_residue", "observations", "sources", "agenda", "compatibility"
+	]:
+		var chapter_texture := _load_png_texture("res://assets/journal_sketches/%s.png" % id)
+		if chapter_texture:
+			journal_sketch_textures[id] = chapter_texture
 	for id in [
 		"river_stone", "moss_stone", "dragon_stone", "branch_driftwood", "root_driftwood",
 		"slate_stack", "lava_rock", "manzanita_branch",
@@ -1209,6 +1237,8 @@ func _build_notebook_overlay() -> void:
 	outer.add_child(spread)
 	var left_page := _notebook_page()
 	var right_page := _notebook_page()
+	notebook_left_page = left_page
+	notebook_right_page = right_page
 	spread.add_child(left_page)
 	var spine := PanelContainer.new()
 	spine.custom_minimum_size = Vector2(24, 0)
@@ -1218,6 +1248,8 @@ func _build_notebook_overlay() -> void:
 	spread.add_child(right_page)
 	notebook_left_page_label = left_page.get_node("PageBox/PageNumber") as Label
 	notebook_right_page_label = right_page.get_node("PageBox/PageNumber") as Label
+	notebook_left_sketch = left_page.get_node("PageBox/PageSketch") as TextureRect
+	notebook_right_sketch = right_page.get_node("PageBox/PageSketch") as TextureRect
 	research_label = left_page.get_node("PageBox/PageScroll/PageText") as Label
 	notebook_right_label = right_page.get_node("PageBox/PageScroll/PageText") as Label
 
@@ -1231,6 +1263,11 @@ func _build_notebook_overlay() -> void:
 	_style_button(notebook_prev_button)
 	notebook_prev_button.pressed.connect(func(): _turn_notebook(-2))
 	controls.add_child(notebook_prev_button)
+	notebook_index_select = OptionButton.new()
+	notebook_index_select.custom_minimum_size = Vector2(260, 34)
+	_style_field(notebook_index_select, Vector2(260, 34))
+	notebook_index_select.item_selected.connect(func(index): _jump_notebook_to(index))
+	controls.add_child(notebook_index_select)
 	var done := Button.new()
 	done.text = "Done"
 	done.custom_minimum_size = Vector2(176, 36)
@@ -1261,6 +1298,13 @@ func _notebook_page() -> PanelContainer:
 	page_number.name = "PageNumber"
 	page_number.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	page_box.add_child(page_number)
+	var sketch := TextureRect.new()
+	sketch.name = "PageSketch"
+	sketch.custom_minimum_size = Vector2(0, 124)
+	sketch.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	sketch.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	sketch.modulate = Color(0.25, 0.20, 0.14, 0.90)
+	page_box.add_child(sketch)
 	var scroll := ScrollContainer.new()
 	scroll.name = "PageScroll"
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -1408,6 +1452,24 @@ func _update_notebook_animation(delta: float) -> void:
 	notebook_panel.modulate.a = lerp(0.0, 1.0, eased)
 	notebook_panel.scale = Vector2(lerp(0.965, 1.0, eased), lerp(0.92, 1.0, eased))
 	notebook_panel.visible = notebook_amount > 0.02 or notebook_open
+	if notebook_turn_amount > 0.0:
+		notebook_turn_amount = move_toward(notebook_turn_amount, 0.0, delta / 0.24)
+		var turn_progress := 1.0 - notebook_turn_amount
+		var turn_eased := 1.0 - pow(1.0 - turn_progress, 3.0)
+		var turning_page := notebook_right_page if notebook_turn_direction > 0 else notebook_left_page
+		var resting_page := notebook_left_page if notebook_turn_direction > 0 else notebook_right_page
+		if turning_page:
+			turning_page.pivot_offset = Vector2(0.0 if notebook_turn_direction > 0 else turning_page.size.x, turning_page.size.y * 0.5)
+			turning_page.scale = Vector2(lerp(0.84, 1.0, turn_eased), lerp(0.985, 1.0, turn_eased))
+			turning_page.modulate.a = lerp(0.42, 1.0, turn_eased)
+		if resting_page:
+			resting_page.scale = Vector2(lerp(0.985, 1.0, turn_eased), 1.0)
+			resting_page.modulate.a = 1.0
+	elif notebook_left_page and notebook_right_page:
+		notebook_left_page.scale = Vector2.ONE
+		notebook_right_page.scale = Vector2.ONE
+		notebook_left_page.modulate.a = 1.0
+		notebook_right_page.modulate.a = 1.0
 
 func _active_aquarium_id() -> String:
 	if aquarium_index.is_empty():
@@ -1868,44 +1930,228 @@ func _refresh_research_card() -> void:
 	pages.append("\n".join(event_lines))
 	if spec.has("sources"):
 		pages.append("SOURCE BOOKMARKS\n%s" % _source_summary(spec.get("sources", [])))
-	_set_notebook_entries(pages)
+
+	var page_titles: Array[String] = []
+	var page_sketches: Array[String] = []
+	for page in pages:
+		var page_title := str(page).get_slice("\n", 0).strip_edges()
+		page_titles.append(page_title.capitalize())
+		page_sketches.append(_journal_sketch_key(page_title, id))
+
+	var all_species_ids: Array = species.keys()
+	all_species_ids.sort()
+	var freshwater_names: Array[String] = []
+	var saltwater_names: Array[String] = []
+	for species_id_value in all_species_ids:
+		var agenda_spec: Dictionary = species.get(species_id_value, {})
+		var agenda_name := str(agenda_spec.get("common_name", species_id_value))
+		if str(agenda_spec.get("water_type", "freshwater")) == "saltwater":
+			saltwater_names.append(agenda_name)
+		else:
+			freshwater_names.append(agenda_name)
+	var agenda_page := "KEEPER'S FIELD GUIDE AGENDA\nEvery animal in the Living Waters library is recorded here, whether or not it is stocked or compatible with the active aquarium. Use the page menu below to jump straight to a species.\n\nFRESHWATER (%d)\n%s\n\nMARINE (%d)\n%s\n\nThe stocking picker remains filtered for safety; this journal does not." % [freshwater_names.size(), "  ·  ".join(freshwater_names), saltwater_names.size(), "  ·  ".join(saltwater_names)]
+	pages.insert(0, agenda_page)
+	page_titles.insert(0, "Keeper's field guide agenda")
+	page_sketches.insert(0, "agenda")
+	for species_id_value in all_species_ids:
+		var guide_id := str(species_id_value)
+		var guide_spec: Dictionary = species.get(guide_id, {})
+		pages.append(_species_agenda_entry(guide_id, guide_spec, aquarium, water))
+		page_titles.append("Species · %s" % str(guide_spec.get("common_name", guide_id)))
+		page_sketches.append("fish_" + guide_id)
+	_set_notebook_entries(pages, page_titles, page_sketches)
 
 func _set_notebook_pages(left: String, right: String) -> void:
 	_set_notebook_entries([left, right])
 
-func _set_notebook_entries(pages: Array) -> void:
+func _set_notebook_entries(pages: Array, titles: Array = [], sketches: Array = []) -> void:
 	notebook_pages = pages.duplicate()
 	if notebook_pages.is_empty():
 		notebook_pages = ["No journal pages available."]
+	var next_titles: Array[String] = []
+	var next_sketches: Array[String] = []
+	for index in range(notebook_pages.size()):
+		var derived_title := str(notebook_pages[index]).get_slice("\n", 0).strip_edges().capitalize()
+		next_titles.append(str(titles[index]) if index < titles.size() else derived_title)
+		next_sketches.append(str(sketches[index]) if index < sketches.size() else "cycle")
+	var rebuild_index := next_titles != notebook_page_titles
+	notebook_page_titles = next_titles
+	notebook_page_sketches = next_sketches
 	if notebook_page_index >= notebook_pages.size():
 		notebook_page_index = max(0, notebook_pages.size() - 1)
 	if notebook_page_index % 2 != 0:
 		notebook_page_index -= 1
-	_render_notebook_pages()
+	if rebuild_index:
+		_refresh_notebook_index()
+	_render_notebook_pages(false)
 
 func _turn_notebook(delta: int) -> void:
 	if notebook_pages.is_empty():
 		return
-	notebook_page_index = clamp(notebook_page_index + delta, 0, max(0, notebook_pages.size() - 1))
-	if notebook_page_index % 2 != 0:
-		notebook_page_index -= 1
-	_render_notebook_pages()
+	var next_index: int = clampi(notebook_page_index + delta, 0, max(0, notebook_pages.size() - 1))
+	if next_index % 2 != 0:
+		next_index -= 1
+	if next_index == notebook_page_index:
+		return
+	notebook_turn_direction = 1 if next_index > notebook_page_index else -1
+	notebook_page_index = next_index
+	notebook_turn_amount = 1.0
+	_render_notebook_pages(true)
 
-func _render_notebook_pages() -> void:
+func _jump_notebook_to(item_index: int) -> void:
+	if notebook_pages.is_empty():
+		return
+	if not notebook_index_select or item_index < 0 or item_index >= notebook_index_select.item_count:
+		return
+	var selected_page := int(notebook_index_select.get_item_metadata(item_index))
+	var next_index: int = clampi(selected_page - (selected_page % 2), 0, max(0, notebook_pages.size() - 1))
+	if next_index == notebook_page_index:
+		_render_notebook_pages(false)
+		return
+	notebook_turn_direction = 1 if next_index > notebook_page_index else -1
+	notebook_page_index = next_index
+	notebook_turn_amount = 1.0
+	_render_notebook_pages(true)
+
+func _refresh_notebook_index() -> void:
+	if not notebook_index_select:
+		return
+	notebook_index_select.clear()
+	for index in range(notebook_page_titles.size()):
+		notebook_index_select.add_item("%02d · %s" % [index + 1, notebook_page_titles[index]])
+		notebook_index_select.set_item_metadata(index, index)
+
+func _render_notebook_pages(reset_scroll: bool = false) -> void:
 	var left_index := notebook_page_index
 	var right_index := notebook_page_index + 1
 	if research_label:
 		research_label.text = str(notebook_pages[left_index]) if left_index < notebook_pages.size() else ""
 	if notebook_right_label:
 		notebook_right_label.text = str(notebook_pages[right_index]) if right_index < notebook_pages.size() else ""
+	if notebook_left_sketch:
+		var left_key := notebook_page_sketches[left_index] if left_index < notebook_page_sketches.size() else "cycle"
+		notebook_left_sketch.texture = journal_sketch_textures.get(left_key, null)
+		notebook_left_sketch.visible = notebook_left_sketch.texture != null
+	if notebook_right_sketch:
+		var right_key := notebook_page_sketches[right_index] if right_index < notebook_page_sketches.size() else "cycle"
+		notebook_right_sketch.texture = journal_sketch_textures.get(right_key, null) if right_index < notebook_pages.size() else null
+		notebook_right_sketch.visible = notebook_right_sketch.texture != null
 	if notebook_left_page_label:
-		notebook_left_page_label.text = "Page %d of %d" % [left_index + 1, notebook_pages.size()]
+		notebook_left_page_label.text = "Page %d of %d  ·  %s" % [left_index + 1, notebook_pages.size(), notebook_page_titles[left_index]]
 	if notebook_right_page_label:
-		notebook_right_page_label.text = "Page %d of %d" % [right_index + 1, notebook_pages.size()] if right_index < notebook_pages.size() else ""
+		notebook_right_page_label.text = "Page %d of %d  ·  %s" % [right_index + 1, notebook_pages.size(), notebook_page_titles[right_index]] if right_index < notebook_pages.size() else ""
 	if notebook_prev_button:
 		notebook_prev_button.disabled = left_index <= 0
 	if notebook_next_button:
 		notebook_next_button.disabled = right_index >= notebook_pages.size() - 1
+	if notebook_index_select:
+		var target_page: int = mini(left_index, notebook_index_select.item_count - 1)
+		if target_page >= 0:
+			notebook_index_select.select(target_page)
+	if reset_scroll:
+		var left_scroll: ScrollContainer = research_label.get_parent() as ScrollContainer if research_label else null
+		var right_scroll: ScrollContainer = notebook_right_label.get_parent() as ScrollContainer if notebook_right_label else null
+		if left_scroll:
+			left_scroll.scroll_vertical = 0
+		if right_scroll:
+			right_scroll.scroll_vertical = 0
+
+func _journal_sketch_key(title: String, selected_species_id: String) -> String:
+	var upper := title.to_upper()
+	if "FIELD NOTE" in upper:
+		return "fish_" + selected_species_id
+	if "AQUARIUM SYSTEM NOTES" in upper:
+		return "system_notes"
+	if "COMPATIBILITY" in upper:
+		return "compatibility"
+	if "REAL TIME" in upper:
+		return "survival_time"
+	if "MAINTENANCE CHEMISTRY" in upper:
+		return "maintenance_chemistry"
+	if "STABILITY MEMORY" in upper:
+		return "stability_memory"
+	if "WATER CHANGE" in upper:
+		return "water_change"
+	if "WOOD" in upper or "ROCK" in upper:
+		return "hardscape"
+	if "SUBSTRATE" in upper:
+		return "substrate"
+	if "PLANT MEMORY" in upper:
+		return "plant_memory"
+	if "PLANTS" in upper:
+		return "plants"
+	if "ALGAE" in upper:
+		return "algae"
+	if "CORAL POLYP MEMORY" in upper:
+		return "coral_memory"
+	if "CORAL" in upper or "REEF" in upper:
+		return "coral"
+	if "FEED" in upper:
+		return "feeding"
+	if "FISH ROUTINES" in upper:
+		return "fish_routines"
+	if "CLEANUP" in upper:
+		return "cleanup_crews"
+	if "EQUIPMENT" in upper:
+		return "equipment"
+	if "GAS" in upper or "LIGHT" in upper or "TEMPERATURE" in upper:
+		return "temperature"
+	if "REDOX" in upper:
+		return "redox_organics"
+	if "DISEASE" in upper:
+		return "disease_stress"
+	if "TANK MATURITY" in upper:
+		return "tank_maturity"
+	if "MAINTENANCE ACTIONS" in upper:
+		return "maintenance_actions"
+	if "CARE RESIDUE" in upper:
+		return "care_residue"
+	if "CURRENT OBSERVATIONS" in upper:
+		return "observations"
+	if "SOURCE" in upper:
+		return "sources"
+	return "cycle"
+
+func _species_agenda_entry(species_id: String, spec: Dictionary, aquarium: Dictionary, water: Dictionary) -> String:
+	var name := str(spec.get("common_name", species_id))
+	var system := str(spec.get("water_type", "freshwater"))
+	var ideal_temp: Array = spec.get("temperature_c", {}).get("ideal", [0.0, 0.0])
+	var tolerated_temp: Array = spec.get("temperature_c", {}).get("tolerated", ideal_temp)
+	var ideal_ph: Array = spec.get("ph", {}).get("ideal", [0.0, 0.0])
+	var tolerated_ph: Array = spec.get("ph", {}).get("tolerated", ideal_ph)
+	var ideal_gh: Array = spec.get("gh_dgh", {}).get("ideal", [0.0, 0.0])
+	var min_litres := float(spec.get("minimum_litres", 0.0))
+	var min_length := float(spec.get("minimum_tank_length_cm", 0.0))
+	var current_litres := float(aquarium.get("effective_litres", 0.0))
+	var current_length := float(aquarium.get("length_cm", 0.0))
+	var same_system := str(water.get("system", "freshwater")) == system
+	var physical_fit := current_litres >= min_litres and current_length >= min_length
+	var current_fit := "reference only — active tank uses a different water system"
+	if same_system:
+		current_fit = "physical minimum met; compare chemistry and companions" if physical_fit else "active tank is below the minimum volume or swimming length"
+	var lines: Array[String] = [
+		"SPECIES PROFILE — %s" % name.to_upper(),
+		str(spec.get("scientific_name", "Scientific name unavailable")),
+		"",
+		"%s · adult %.1f cm · about %.0f years · %s swimmer" % [system.capitalize(), float(spec.get("adult_cm", 0.0)), float(spec.get("lifespan_years", 0.0)), str(spec.get("swim_zone", "middle"))],
+		"Home: at least %.0f L usable water and %.0f cm tank length. Group minimum %d; preferred %d." % [min_litres, min_length, int(spec.get("minimum_group", 1)), int(spec.get("preferred_group", spec.get("minimum_group", 1)))],
+		"Social style: %s. Activity %.0f%%, territoriality %.0f%%, fin-nipping tendency %.0f%%." % [str(spec.get("social", "community")).replace("_", " "), float(spec.get("activity", 0.0)) * 100.0, float(spec.get("territoriality", 0.0)) * 100.0, float(spec.get("fin_nipping", 0.0)) * 100.0],
+		"",
+		"IDEAL WATER",
+		"Temperature %.1f–%.1f C (tolerated %.1f–%.1f), pH %.1f–%.1f (tolerated %.1f–%.1f), GH %.0f–%.0f dGH." % [float(ideal_temp[0]), float(ideal_temp[1]), float(tolerated_temp[0]), float(tolerated_temp[1]), float(ideal_ph[0]), float(ideal_ph[1]), float(tolerated_ph[0]), float(tolerated_ph[1]), float(ideal_gh[0]), float(ideal_gh[1])],
+		"Oxygen at least %.1f mg/L; nitrate warning near %.0f mg/L." % [float(spec.get("oxygen_min_mg_l", 5.0)), float(spec.get("nitrate_warning_mg_l", 20.0))],
+	]
+	if spec.has("salinity_ppt"):
+		var salinity: Array = spec.get("salinity_ppt", {}).get("ideal", [34.0, 36.0])
+		lines.append("Salinity %.1f–%.1f ppt." % [float(salinity[0]), float(salinity[1])])
+	lines.append("")
+	lines.append("DIET · %s" % ", ".join(spec.get("diet", [])).replace("_", " "))
+	if spec.has("care_notes"):
+		lines.append("Keeper note: %s" % str(spec.get("care_notes", "")))
+	lines.append("Active-aquarium comparison: %s." % current_fit)
+	if spec.has("sources"):
+		lines.append("Research trail: %s" % _source_summary(spec.get("sources", [])))
+	return "\n".join(lines)
 
 func _compatibility_hint(species_id: String, spec: Dictionary) -> String:
 	var system := str(spec.get("water_type", "freshwater"))
@@ -2188,6 +2434,8 @@ func _animate_animals(delta: float) -> void:
 		var target_age: float = float(visual.get("target_age", 0.0)) + delta
 		var routine := str(animal.get("routine", "explore"))
 		var intent := str(animal.get("behavior_intent", ""))
+		var behavior_profile: Dictionary = spec.get("behavior_profile", {})
+		var movement_style := str(behavior_profile.get("movement", "general_roam"))
 		var target_distance := pos.distance_to(target)
 		# Hold a waypoint long enough to pass it smoothly. Refreshing as soon as a
 		# fish touches a nearby target caused repeated left/right corrections.
@@ -2235,6 +2483,14 @@ func _animate_animals(delta: float) -> void:
 			speed *= 1.45
 		elif routine == "school":
 			speed *= lerp(0.78, 1.02, clamp(float(animal.get("school_cohesion", 0.55)), 0.0, 1.0))
+		if movement_style in ["fast_surface_laps", "long_school_laps", "reef_school_cruise"]:
+			speed *= 1.16
+		elif movement_style in ["hover_patrol", "hover_browse", "hover_group", "cleaner_station"]:
+			speed *= 0.76
+		elif movement_style in ["burrow_watch", "coral_perch", "perch_and_dash"]:
+			speed *= 0.68
+		elif movement_style in ["serpentine_bottom", "graze_and_shelter", "graze_crawl"]:
+			speed *= 0.84
 		if intent == "pausing nearby":
 			speed *= 0.58
 		elif intent == "inspecting current":
@@ -2384,8 +2640,10 @@ func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, s
 			# frozen pose, and not jitter driven by the current.
 			var rest_step: int = int(floor(Time.get_ticks_msec() / 3600.0) + seed) % 6
 			var rest_angle: float = float(rest_step) * TAU / 6.0
-			var rest_offset := Vector2(cos(rest_angle) * 34.0, sin(rest_angle) * 18.0)
-			return Vector2(clamp(sleep.x + rest_offset.x, inner.position.x + 34, inner.end.x - 34), clamp(sleep.y + rest_offset.y, inner.position.y + 48, inner.end.y - 42))
+			var rest_base := _species_habitat_target(animal, spec, seed, rest_step, sleep, true)
+			var rest_radius: float = 12.0 if str(spec.get("behavior_profile", {}).get("movement", "")) in ["coral_perch", "burrow_watch", "perch_and_dash"] else 24.0
+			var rest_offset := Vector2(cos(rest_angle) * rest_radius, sin(rest_angle) * rest_radius * 0.48)
+			return Vector2(clamp(rest_base.x + rest_offset.x, inner.position.x + 34, inner.end.x - 34), clamp(rest_base.y + rest_offset.y, inner.position.y + 48, inner.end.y - 42))
 		"hide":
 			return Vector2(clamp(home.x, inner.position.x + 34, inner.end.x - 34), clamp(max(home.y, inner.end.y - _substrate_height() - 120), inner.position.y + 48, inner.end.y - 42))
 		"surface":
@@ -2402,6 +2660,19 @@ func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, s
 			return _moving_target(seed + int(Time.get_ticks_msec() / 1300), zone)
 		"territory":
 			return Vector2(clamp(home.x + sin(Time.get_ticks_msec() / 700.0 + seed) * 72.0, inner.position.x + 44, inner.end.x - 44), clamp(home.y + cos(Time.get_ticks_msec() / 830.0 + seed) * 38.0, inner.position.y + 54, inner.end.y - _substrate_height() - 38))
+		"perch":
+			return _species_habitat_target(animal, spec, seed, int(Time.get_ticks_msec() / 4200), home, false)
+		"cave_watch":
+			return _species_habitat_target(animal, spec, seed, int(Time.get_ticks_msec() / 3600), home, false)
+		"host":
+			var host := _species_habitat_target(animal, spec, seed, 0, home, false)
+			return host + Vector2(cos(Time.get_ticks_msec() / 900.0 + seed) * 34.0, sin(Time.get_ticks_msec() / 1100.0 + seed) * 22.0)
+		"burrow":
+			return _species_habitat_target(animal, spec, seed, 0, home, false)
+		"hover":
+			return home + Vector2(sin(Time.get_ticks_msec() / 1500.0 + seed) * 42.0, cos(Time.get_ticks_msec() / 1850.0 + seed) * 24.0)
+		"dart":
+			return _moving_target(seed + int(Time.get_ticks_msec() / 620), zone)
 		"school":
 			var species_id := str(animal.get("species_id", ""))
 			var context: Dictionary = school_contexts.get(species_id, {})
@@ -2436,6 +2707,66 @@ func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, s
 			var curiosity := float(animal.get("curiosity", 0.5))
 			return Vector2(inner.position.x + 52.0 + fposmod(seed * 43.0 + Time.get_ticks_msec() / lerp(34.0, 15.0, curiosity), inner.size.x - 104.0), _zone_y(zone, fposmod(sin(Time.get_ticks_msec() / 1100.0 + seed) * 0.5 + 0.5, 1.0)))
 	return _moving_target(seed, zone)
+
+func _species_habitat_target(animal: Dictionary, spec: Dictionary, seed: int, step: int, fallback: Vector2, resting: bool) -> Vector2:
+	var profile: Dictionary = spec.get("behavior_profile", {})
+	var sites: Array = profile.get("rest_sites", [])
+	var inner := _tank_inner()
+	var candidates: Array[Vector2] = []
+	var scape: Dictionary = state.get("aquarium", {}).get("scape", {})
+	var objects: Array = scape.get("objects", []) if typeof(scape) == TYPE_DICTIONARY else []
+	for value in objects:
+		if typeof(value) != TYPE_DICTIONARY:
+			continue
+		var obj: Dictionary = value
+		var category := str(obj.get("category", ""))
+		var item_type := str(obj.get("type", ""))
+		var matched_site := _matching_rest_site(sites, category, item_type)
+		if matched_site == "":
+			continue
+		var point := _object_pos(obj, fallback)
+		var draw_size := _scape_object_draw_size(category, item_type) * clamp(float(obj.get("scale", 1.0)), 0.35, 2.4)
+		if matched_site in ["broad_leaf", "wood_top", "rock_top", "coral_host"]:
+			point.y -= draw_size.y * (0.34 if matched_site == "broad_leaf" else 0.46)
+		elif matched_site in ["cave", "rock_crevice", "rock_overhang", "burrow"]:
+			point += Vector2(draw_size.x * 0.18, draw_size.y * 0.12)
+		candidates.append(_clamped_tank_point(point))
+	# Legacy quantity-based scapes have no object coordinates, but still provide
+	# real resting habitat in the rendered tank.
+	for site_value in sites:
+		var site := str(site_value)
+		if site in ["wood_top", "wood_shadow", "cave"] and not _scape_items("wood").is_empty():
+			candidates.append(Vector2(inner.position.x + inner.size.x * 0.48, inner.end.y - _substrate_height() - (92.0 if site == "wood_top" else 48.0)))
+		elif site in ["rock_top", "rock_crevice", "rock_overhang", "burrow"] and not _scape_items("rocks").is_empty():
+			candidates.append(Vector2(inner.position.x + inner.size.x * 0.43, inner.end.y - _substrate_height() - (64.0 if site == "rock_top" else 28.0)))
+		elif site == "coral_host" and not _scape_items("corals").is_empty():
+			candidates.append(Vector2(inner.position.x + inner.size.x * 0.52, inner.end.y - _substrate_height() - 76.0))
+		elif site in ["broad_leaf", "plant_thicket"] and not _scape_items("plants").is_empty():
+			candidates.append(Vector2(inner.position.x + inner.size.x * (0.22 if seed % 2 == 0 else 0.78), inner.end.y - _substrate_height() - (108.0 if site == "broad_leaf" else 72.0)))
+		elif site == "surface_cover":
+			candidates.append(Vector2(inner.position.x + inner.size.x * (0.24 + float(seed % 5) * 0.13), inner.position.y + 62.0))
+		elif site == "substrate":
+			candidates.append(Vector2(fallback.x, inner.end.y - _substrate_height() - 18.0))
+		elif site == "open_water" and not resting:
+			candidates.append(_moving_target(seed, str(profile.get("rest_zone", spec.get("swim_zone", "middle")))))
+	if candidates.is_empty():
+		return fallback
+	return candidates[posmod(seed + step, candidates.size())]
+
+func _matching_rest_site(sites: Array, category: String, item_type: String) -> String:
+	for value in sites:
+		var site := str(value)
+		if site == "broad_leaf" and category == "plants" and item_type in ["anubias", "amazon_sword", "java_fern", "cryptocoryne_wendtii"]:
+			return site
+		if site in ["wood_top", "wood_shadow"] and category == "wood":
+			return site
+		if site in ["rock_top", "rock_crevice", "rock_overhang", "cave", "burrow"] and category == "rocks":
+			return site
+		if site == "coral_host" and category == "corals":
+			return site
+		if site == "plant_thicket" and category == "plants":
+			return site
+	return ""
 
 func _aquarium_rect() -> Rect2:
 	var right_edge := size.x - PANEL_WIDTH - EDGE * 2.0
