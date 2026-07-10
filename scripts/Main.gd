@@ -2244,6 +2244,7 @@ func _animate_animals(delta: float) -> void:
 			speed *= 0.46
 		var aim: Vector2 = target - pos
 		var desired_velocity := Vector2.ZERO
+		var settled: bool = routine in ["rest", "hide", "hang_back"] and aim.length() < 24.0
 		if aim.length() > 1.0:
 			# Ease into a waypoint instead of overshooting it and immediately turning
 			# back. Resting fish stop steering once they have reached their shelter.
@@ -2262,8 +2263,17 @@ func _animate_animals(delta: float) -> void:
 				desired_velocity += cruise.normalized() * speed * 0.46
 			desired_velocity += _school_steering(animal, pos, animals, school_contexts) * speed * 0.30
 		var current := _water_current_at(pos)
-		if routine in ["rest", "hide", "hang_back"]:
+		if settled:
+			# A resting fish has reached its shelter. Let it be still rather than
+			# continuously drifting off its sleep point and correcting back again.
+			current = Vector2.ZERO
+		elif routine in ["rest", "hide", "hang_back"]:
 			current *= 0.55
+		# Current is visual texture, not propulsion. With the old unbounded filter
+		# return, a slow or cautious fish could have its travel vector cancelled and
+		# physically shimmy left/right forever instead of reaching its waypoint.
+		var current_share: float = 0.46 if intent == "current riding" else 0.18 if routine in ["rest", "hide", "hang_back"] else 0.28
+		current = current.limit_length(max(1.4, speed * current_share))
 		var lateral := Vector2(-desired_velocity.y, desired_velocity.x).normalized()
 		var glide: float = sin(Time.get_ticks_msec() / 1000.0 * (0.88 + activity * 0.36) + seed * 0.71)
 		desired_velocity += current + lateral * glide * speed * lerp(0.028, 0.075, activity)
@@ -2271,6 +2281,8 @@ func _animate_animals(delta: float) -> void:
 		if velocity.length() < 0.01:
 			velocity = desired_velocity
 		var response: float = lerp(2.6, 5.6, activity)
+		if settled:
+			response = 9.0
 		if routine in ["flee", "pace"] or disturbance > 0.05:
 			response *= 1.38
 		velocity = velocity.lerp(desired_velocity, clamp(response * delta, 0.0, 1.0))
