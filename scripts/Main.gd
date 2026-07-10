@@ -2157,6 +2157,7 @@ func _sync_animals() -> void:
 			"phase": float(seed % 628) / 100.0,
 			"pos": start_pos,
 			"target": start_target,
+			"target_age": 0.0,
 			"velocity": start_direction * start_speed,
 			"facing": 1.0 if start_direction.x >= 0.0 else -1.0,
 			"bank": 0.0,
@@ -2184,15 +2185,22 @@ func _animate_animals(delta: float) -> void:
 		var activity := float(spec.get("activity", 0.5))
 		var pos: Vector2 = visual["pos"]
 		var target: Vector2 = visual["target"]
+		var target_age: float = float(visual.get("target_age", 0.0)) + delta
 		var routine := str(animal.get("routine", "explore"))
 		var intent := str(animal.get("behavior_intent", ""))
-		if pos.distance_to(target) < 24.0:
+		var target_distance := pos.distance_to(target)
+		# Hold a waypoint long enough to pass it smoothly. Refreshing as soon as a
+		# fish touches a nearby target caused repeated left/right corrections.
+		var can_refresh_target := routine not in ["rest", "hide", "hang_back"]
+		if can_refresh_target and (target_distance < 18.0 and target_age > 0.48 or target_age > 1.35):
 			visual["target"] = _routine_target(animal, spec, visual, school_contexts)
 			target = visual["target"]
+			target_age = 0.0
 		var feed_strength := _active_action_strength(["feed"])
 		if feed_strength > 0.05 and not (routine in ["hide", "rest"]):
 			target = _feeding_target_for_zone(zone, seed)
 			visual["target"] = target
+			target_age = 0.0
 		var disturbance := _active_action_strength(DISTURBING_ACTIONS)
 		if disturbance > 0.05:
 			var source := _active_action_point(DISTURBING_ACTIONS, Vector2(0.52, 0.55))
@@ -2201,6 +2209,7 @@ func _animate_animals(delta: float) -> void:
 				away = Vector2(1.0 if seed % 2 == 0 else -1.0, 0.35)
 			target = _clamped_tank_point(source + away.normalized() * lerp(96.0, 230.0, disturbance) + Vector2(0, 32.0 * disturbance))
 			visual["target"] = target
+			target_age = 0.0
 		var speed: float = lerp(18.0, 58.0, activity)
 		speed *= lerp(0.62, 1.18, clamp(float(animal.get("activity_drive", 0.55)), 0.0, 1.0))
 		speed *= lerp(0.78, 1.08, clamp(float(animal.get("confidence", 0.55)), 0.0, 1.0))
@@ -2228,7 +2237,12 @@ func _animate_animals(delta: float) -> void:
 		var aim: Vector2 = target - pos
 		var desired_velocity := Vector2.ZERO
 		if aim.length() > 1.0:
-			desired_velocity = aim.normalized() * speed
+			# Ease into a waypoint instead of overshooting it and immediately turning
+			# back. Resting fish stop steering once they have reached their shelter.
+			var arrival_speed: float = clamp(aim.length() / 72.0, 0.0, 1.0)
+			if routine in ["rest", "hide", "hang_back"] and aim.length() < 24.0:
+				arrival_speed = 0.0
+			desired_velocity = aim.normalized() * speed * arrival_speed
 		if routine == "school":
 			desired_velocity += _school_steering(animal, pos, animals, school_contexts) * speed
 		var current := _water_current_at(pos)
@@ -2252,6 +2266,7 @@ func _animate_animals(delta: float) -> void:
 		if next.distance_to(unbounded_next) > 0.5:
 			velocity = Vector2(-velocity.x * 0.36, velocity.y * 0.72)
 			visual["target"] = _routine_target(animal, spec, visual, school_contexts)
+			target_age = 0.0
 		var facing: float = float(visual.get("facing", 1.0))
 		if abs(velocity.x) > 0.35:
 			facing = 1.0 if velocity.x >= 0.0 else -1.0
@@ -2260,6 +2275,7 @@ func _animate_animals(delta: float) -> void:
 		visual["facing"] = facing
 		visual["pos"] = next
 		visual["velocity"] = velocity
+		visual["target_age"] = target_age
 		visual["bank"] = lerp(previous_bank, heading, clamp(delta * 7.0, 0.0, 1.0))
 		visual["turn_energy"] = clamp(abs(heading - previous_bank) * 6.5, 0.0, 1.0)
 		visual["phase"] = float(visual["phase"]) + delta * (1.5 + activity * 1.8 + velocity.length() * 0.022)
