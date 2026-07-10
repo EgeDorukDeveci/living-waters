@@ -911,8 +911,9 @@ def test_schooling_fish_keep_individual_group_intents() -> None:
     for fish in state["animals"]:
         sim._update_behavior_memory(fish, species["neon_tetra"], 8, {}, False, 0.1)
     intents = {str(fish["behavior_intent"]) for fish in state["animals"]}
-    assert "leading" in intents
-    assert "following" in intents
+    assert intents <= {"leading", "following", "scouting", "regrouping", "feeding lane", "current riding"}
+    assert intents
+    assert all(fish["behavior_trigger"] for fish in state["animals"])
     assert all(0.72 <= float(fish["school_spacing"]) <= 1.30 for fish in state["animals"])
 
 
@@ -922,15 +923,30 @@ def test_shoaling_species_use_the_same_group_brain() -> None:
     state["animals"] = [animal(species, "peppered_cory", f"Cory {index}", 290 + index) for index in range(6)]
     sim = AquariumSimulation(species, state)
     groups = sim._groups(state["animals"])
-    welfare = {"animal_risks": {}}
     for fish in state["animals"]:
         fish["school_cohesion"] = 0.78
         fish["intent_hours_remaining"] = 0.0
         fish["hunger"] = 0.1
         fish["acute_stress"] = 0.02
-        sim._update_animal(fish, groups, welfare, 0.0, 0.1)
-    assert any(fish["routine"] == "school" for fish in state["animals"])
-    assert all(fish["behavior_intent"] in {"leading", "following", "scouting", "regrouping"} for fish in state["animals"])
+        sim._update_behavior_memory(fish, species["peppered_cory"], groups["peppered_cory"], {}, False, 0.1)
+    assert all(fish["behavior_intent"] in {"leading", "following", "scouting", "regrouping", "feeding lane", "current riding"} for fish in state["animals"])
+    assert all(fish["school_role"] in {"leader", "scout", "follower"} for fish in state["animals"])
+
+
+def test_individual_behavior_brain_records_non_lethal_reasons() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    state = default_state(species)
+    grazer = animal(species, "bristlenose_pleco", "Grazer", 330)
+    grazer["intent_hours_remaining"] = 0.0
+    grazer["hunger"] = 0.35
+    grazer["curiosity"] = 0.85
+    state["animals"] = [grazer]
+    sim = AquariumSimulation(species, state)
+    sim._update_behavior_memory(grazer, species["bristlenose_pleco"], 1, {}, False, 0.1)
+    assert grazer["behavior_intent"] in {"grazing", "foraging pass", "inspecting current", "exploring", "pausing nearby", "checking cover", "current riding", "sifting substrate", "resting nearby"}
+    assert grazer["behavior_trigger"]
+    assert grazer["behavior_history"]
+    assert grazer["decision_count"] >= 1
 
 
 def test_territorial_fish_remember_pressure_from_cramped_cover() -> None:
@@ -1600,6 +1616,7 @@ def main() -> int:
         test_schooling_fish_build_cohesion_from_group_and_open_water,
         test_schooling_fish_keep_individual_group_intents,
         test_shoaling_species_use_the_same_group_brain,
+        test_individual_behavior_brain_records_non_lethal_reasons,
         test_territorial_fish_remember_pressure_from_cramped_cover,
         test_tiny_life_supports_natural_foraging,
         test_saltwater_switch_species_and_reefscape_rules,

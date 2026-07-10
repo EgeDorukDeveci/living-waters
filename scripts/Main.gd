@@ -1784,15 +1784,17 @@ func _refresh_research_card() -> void:
 	for animal in state.get("animals", []):
 		if not bool(animal.get("alive", true)):
 			continue
-		behavior_samples.append("%s: %s, confidence %.0f%%, school %.0f%%, territory %.0f%%, rest %.0f%%" % [
+		behavior_samples.append("%s: %s\n  intent: %s because %s - confidence %.0f%%, school %.0f%%, territory %.0f%%, rest %.0f%%" % [
 			str(animal.get("name", "animal")),
 			str(animal.get("behavior", "observing")),
+			str(animal.get("behavior_intent", "settling")),
+			str(animal.get("behavior_trigger", "current conditions")),
 			float(animal.get("confidence", 0.0)) * 100.0,
 			float(animal.get("school_cohesion", 0.0)) * 100.0,
 			float(animal.get("territory_pressure", 0.0)) * 100.0,
 			float(animal.get("rest_quality", 0.0)) * 100.0
 		])
-	pages.append("FISH ROUTINES AND PERSONALITY\nFish are not just water-test meters. Each animal carries confidence, fear memory, feeding opportunity, rest quality, school cohesion, territory pressure, and a preferred comfort zone.\n\nSchooling fish tighten formation when the group is large, calm, and given open water. Shy or outcompeted animals hang back. Territorial animals guard a favorite area when cover is poor, space is tight, or breeding condition rises. Night rest improves with cover and stable water, and worsens with stress or cloudy water.\n\nCurrent observations:\n%s" % ("\n".join(behavior_samples.slice(0, 8)) if behavior_samples.size() > 0 else "No animals in this aquarium yet."))
+	pages.append("FISH ROUTINES AND PERSONALITY\nFish are not just water-test meters. Each animal keeps confidence, fear memory, feeding opportunity, rest quality, school cohesion, territory pressure, a decision timer, and a short memory of recent choices.\n\nThe rule-based behavior brain weighs health, stress, hunger, water flow, light phase, cover, open space, social group, feeding rank, species role, curiosity, boldness, and current conditions. It then chooses a short-lived intent such as regrouping, following, scouting, grazing, sifting, current riding, cover checking, surface patrol, territory patrol, resting, or exploration. These choices are bounded and non-lethal: emergencies and welfare still come from the simulation itself, not random behavior.\n\nCurrent observations:\n%s" % ("\n".join(behavior_samples.slice(0, 8)) if behavior_samples.size() > 0 else "No animals in this aquarium yet."))
 	pages.append("CLEANUP CREWS\nShrimp, otocinclus, plecos, blennies, and cleaner shrimp do useful work, but they are not magic filters. They graze algae, biofilm, detritus, and leftovers, then turn some of that into ordinary animal waste.\n\nThey work best when healthy and hungry. Stress, bad water, wrong salinity, or poor group sizes reduce grazing.\n\nCurrent grazing pressure %.0f%%, recent cleanup export %.3f, metabolic load %.2f." % [
 		float(biology.get("grazing_pressure", 0.0)) * 100.0,
 		float(biology.get("cleanup_export", 0.0)),
@@ -2207,6 +2209,10 @@ func _animate_animals(delta: float) -> void:
 			speed *= 0.76
 		elif intent == "scouting" or intent == "leading":
 			speed *= 1.10
+		elif intent == "current riding":
+			speed *= 0.88
+		elif intent == "conserving energy":
+			speed *= 0.46
 		var aim: Vector2 = target - pos
 		var desired_velocity := Vector2.ZERO
 		if aim.length() > 1.0:
@@ -2321,6 +2327,16 @@ func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, s
 			return Vector2(inner.position.x + 60.0 + fposmod(seed * 37.0 + Time.get_ticks_msec() / 20.0, inner.size.x - 120.0), inner.position.y + 46.0)
 		"forage":
 			return Vector2(inner.position.x + 50.0 + fposmod(seed * 71.0 + Time.get_ticks_msec() / 24.0, inner.size.x - 100.0), inner.end.y - _substrate_height() - 22.0 - fposmod(seed * 11.0, 34.0))
+		"graze":
+			return Vector2(inner.position.x + 54.0 + fposmod(seed * 47.0 + Time.get_ticks_msec() / 36.0, inner.size.x - 108.0), inner.end.y - _substrate_height() - 42.0 - fposmod(seed * 13.0, 56.0))
+		"sift":
+			return Vector2(inner.position.x + 48.0 + fposmod(seed * 59.0 + Time.get_ticks_msec() / 28.0, inner.size.x - 96.0), inner.end.y - _substrate_height() - 18.0 - fposmod(seed * 7.0, 20.0))
+		"surface_patrol":
+			return Vector2(inner.position.x + 56.0 + fposmod(seed * 53.0 + Time.get_ticks_msec() / 22.0, inner.size.x - 112.0), inner.position.y + 58.0 + fposmod(seed * 5.0, 34.0))
+		"current":
+			return _moving_target(seed + int(Time.get_ticks_msec() / 1300), zone)
+		"territory":
+			return Vector2(clamp(home.x + sin(Time.get_ticks_msec() / 700.0 + seed) * 72.0, inner.position.x + 44, inner.end.x - 44), clamp(home.y + cos(Time.get_ticks_msec() / 830.0 + seed) * 38.0, inner.position.y + 54, inner.end.y - _substrate_height() - 38))
 		"school":
 			var species_id := str(animal.get("species_id", ""))
 			var context: Dictionary = school_contexts.get(species_id, {})
@@ -2342,6 +2358,10 @@ func _routine_target(animal: Dictionary, spec: Dictionary, visual: Dictionary, s
 				offset *= 0.28
 			elif intent == "leading":
 				offset += heading * spread * 0.54
+			elif intent == "feeding lane":
+				offset += heading * spread * 0.34 + Vector2(0, spread * 0.22)
+			elif intent == "current riding":
+				offset += heading * spread * 0.20
 			return Vector2(clamp(school_center.x + offset.x, inner.position.x + 52, inner.end.x - 52), clamp(school_center.y + offset.y, inner.position.y + 54, inner.end.y - _substrate_height() - 38))
 		"flee":
 			return Vector2(inner.position.x + 42.0 + fposmod(seed * 91.0, inner.size.x - 84.0), inner.position.y + inner.size.y * 0.72)
@@ -4165,6 +4185,14 @@ func _draw_behavior_marks(animal: Dictionary, pos: Vector2, facing: float) -> vo
 	if routine == "school" and intent == "scouting":
 		draw_line(pos + Vector2(20.0 * facing, -14.0), pos + Vector2(34.0 * facing, -14.0), Color(0.92, 0.82, 0.48, 0.20), 1.2, true)
 		draw_line(pos + Vector2(34.0 * facing, -14.0), pos + Vector2(28.0 * facing, -18.0), Color(0.92, 0.82, 0.48, 0.20), 1.2, true)
+	if intent == "grazing" or intent == "sifting substrate":
+		for i in range(3):
+			var speck := pos + Vector2((-18.0 + i * 10.0) * facing, 18.0 + sin(Time.get_ticks_msec() / 220.0 + i) * 3.0)
+			draw_circle(speck, 1.4, Color(0.70, 0.56, 0.30, 0.14))
+	if intent == "current riding":
+		draw_arc(pos + Vector2(-16.0 * facing, 2.0), 20.0, -0.55, 0.55, 10, Color(0.72, 0.94, 1.0, 0.14), 1.0, true)
+	if intent == "conserving energy":
+		draw_circle(pos + Vector2(-8.0 * facing, 2.0), 19.0, Color(0.28, 0.40, 0.46, 0.08))
 	if routine == "hide" or fear > 0.58 or confidence < 0.24:
 		var alpha: float = 0.08 + max(fear, 1.0 - confidence) * 0.16
 		draw_circle(pos + Vector2(-8.0 * facing, 2.0), 18.0, Color(0.10, 0.16, 0.14, alpha))
