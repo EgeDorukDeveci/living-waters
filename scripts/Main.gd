@@ -631,10 +631,15 @@ func _add_tab(tabs: TabContainer, title: String) -> VBoxContainer:
 	scroll.name = title
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.follow_focus = true
+	scroll.clip_contents = true
 	tabs.add_child(scroll)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 10)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	scroll.add_child(box)
 	return box
 
@@ -661,7 +666,10 @@ func _build_ui() -> void:
 	var scroll := ScrollContainer.new()
 	scroll.name = "SideScroll"
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.clip_contents = true
 	side_panel.add_child(scroll)
 
 	panel = VBoxContainer.new()
@@ -670,6 +678,8 @@ func _build_ui() -> void:
 	panel.offset_top = 14
 	panel.offset_right = -16
 	panel.offset_bottom = -14
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	scroll.add_child(panel)
 
 	var header := VBoxContainer.new()
@@ -681,7 +691,9 @@ func _build_ui() -> void:
 
 	var tabs := TabContainer.new()
 	keeper_tabs = tabs
-	tabs.custom_minimum_size = Vector2(356, 640)
+	tabs.custom_minimum_size = Vector2(356, 0)
+	tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	tabs.tab_alignment = TabBar.ALIGNMENT_CENTER
 	panel.add_child(tabs)
 
@@ -1268,16 +1280,16 @@ func _layout_ui() -> void:
 	if side_panel:
 		side_panel.position = Vector2(size.x - PANEL_WIDTH - EDGE, TOP_BAR)
 		side_panel.size = Vector2(PANEL_WIDTH, max(560.0, size.y - TOP_BAR - EDGE))
+		var side_scroll := side_panel.get_node_or_null("SideScroll") as ScrollContainer
+		if side_scroll:
+			side_scroll.size = side_panel.size
+		if keeper_tabs:
+			keeper_tabs.custom_minimum_size = Vector2(PANEL_WIDTH - 32.0, max(430.0, side_panel.size.y - 126.0))
 	if notebook_panel:
 		var margin := Vector2(max(38.0, size.x * 0.055), max(34.0, size.y * 0.055))
 		notebook_panel.position = margin
 		notebook_panel.size = Vector2(max(640.0, size.x - margin.x * 2.0), max(430.0, size.y - margin.y * 2.0))
 		notebook_panel.pivot_offset = notebook_panel.size * 0.5
-		var scroll := side_panel.get_node_or_null("SideScroll") as ScrollContainer
-		if scroll:
-			scroll.size = side_panel.size
-		if keeper_tabs:
-			keeper_tabs.custom_minimum_size = Vector2(PANEL_WIDTH - 32.0, max(430.0, side_panel.size.y - 126.0))
 
 func _add_substrate_choice(label: String, id: String) -> void:
 	if not substrate_select:
