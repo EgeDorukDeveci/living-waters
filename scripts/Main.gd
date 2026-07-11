@@ -50,16 +50,19 @@ var animal_visuals: Dictionary = {}
 var fish_textures: Dictionary = {}
 var scape_textures: Dictionary = {}
 var journal_sketch_textures: Dictionary = {}
+var opening_background_texture: Texture2D
 var time_accum := 0.0
 var opening_screen := true
+var opening_shelf_view := false
 var opening_cards: Array[Dictionary] = []
 var opening_enter_rect := Rect2()
+var opening_shelf_rect := Rect2()
+var opening_back_rect := Rect2()
 
 var side_panel: PanelContainer
 var panel: VBoxContainer
 var keeper_tabs: TabContainer
 var animal_list: ItemList
-var aquarium_select: OptionButton
 var tank_name_edit: LineEdit
 var tank_litres_spin: SpinBox
 var tank_system_select: OptionButton
@@ -90,6 +93,7 @@ var notebook_next_button: Button
 var notebook_index_select: OptionButton
 var notebook_panel: PanelContainer
 var notebook_button: Button
+var aquarium_shelf_button: Button
 var scape_label: Label
 var scape_selection_label: Label
 var scape_scale_spin: SpinBox
@@ -143,12 +147,15 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		_layout_ui()
 
-func _set_opening_mode(enabled: bool) -> void:
+func _set_opening_mode(enabled: bool, shelf_view: bool = false) -> void:
 	opening_screen = enabled
+	opening_shelf_view = shelf_view if enabled else false
 	if title_label:
 		title_label.visible = not enabled
 	if status_label:
 		status_label.visible = not enabled
+	if aquarium_shelf_button:
+		aquarium_shelf_button.visible = not enabled
 	if side_panel:
 		side_panel.visible = not enabled
 	if notebook_panel:
@@ -156,14 +163,24 @@ func _set_opening_mode(enabled: bool) -> void:
 	queue_redraw()
 
 func _handle_opening_click(mouse: Vector2) -> void:
-	for card in opening_cards:
-		var rect: Rect2 = card.get("rect", Rect2())
-		if rect.has_point(mouse):
-			var aquarium_id := str(card.get("id", ""))
-			if aquarium_id != "":
-				_write_command({"action": "select_aquarium", "aquarium_id": aquarium_id})
-			_set_opening_mode(false)
+	if opening_shelf_view:
+		for card in opening_cards:
+			var rect: Rect2 = card.get("rect", Rect2())
+			if rect.has_point(mouse):
+				var aquarium_id := str(card.get("id", ""))
+				if aquarium_id != "":
+					_write_command({"action": "select_aquarium", "aquarium_id": aquarium_id})
+					_set_opening_mode(false)
+					return
+		if opening_back_rect.has_point(mouse):
+			_set_opening_mode(true)
 			return
+		if opening_enter_rect.has_point(mouse):
+			_set_opening_mode(false)
+		return
+	if opening_shelf_rect.has_point(mouse):
+		_set_opening_mode(true, true)
+		return
 	if opening_enter_rect.has_point(mouse):
 		_set_opening_mode(false)
 
@@ -172,11 +189,24 @@ func _gui_input(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			_handle_opening_click(event.position)
 		elif event is InputEventKey and event.pressed and event.keycode in [KEY_ENTER, KEY_SPACE, KEY_ESCAPE]:
-			_set_opening_mode(false)
+			if opening_shelf_view:
+				_set_opening_mode(true)
+			else:
+				_set_opening_mode(false)
 		return
 	if notebook_open and event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		_toggle_notebook(false)
 		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_ESCAPE:
+			_clear_scape_editor()
+			return
+		if event.keycode in [KEY_DELETE, KEY_BACKSPACE] and selected_scape_object_id != "":
+			_remove_selected_scape()
+			return
+		if event.ctrl_pressed and event.keycode == KEY_D and selected_scape_object_id != "":
+			_duplicate_selected_scape()
+			return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		var mouse: Vector2 = event.position
 		var inner := _tank_inner()
@@ -225,8 +255,9 @@ func _gui_input(event: InputEvent) -> void:
 		for key in place_transform:
 			place_command[key] = place_transform[key]
 		_write_command(place_command)
+		selected_scape_tool = {}
 		if tool_label:
-			tool_label.text = "Placed %s. Select it to keep shaping the composition." % str(selected_scape_tool.get("label", "piece"))
+			tool_label.text = "Placed %s. Select it on the canvas to keep shaping the composition." % str(place_command.get("type", "piece")).replace("_", " ")
 
 func _client_position_valid(category: String, item_type: String, normalized: Vector2, quiet: bool = false) -> bool:
 	if category == "":
@@ -331,35 +362,59 @@ func _draw() -> void:
 	_draw_front_glass()
 
 func _draw_opening_screen() -> void:
+	if opening_shelf_view:
+		_draw_opening_shelf()
+	else:
+		_draw_opening_welcome()
+
+func _draw_opening_backdrop() -> void:
+	if opening_background_texture:
+		draw_texture_rect(opening_background_texture, Rect2(Vector2.ZERO, size), false, Color(0.82, 0.88, 0.84, 0.92))
+	else:
+		draw_rect(Rect2(Vector2.ZERO, size), Color("#0a1111"), true)
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.05, 0.05, 0.42), true)
+
+func _draw_opening_welcome() -> void:
 	opening_cards.clear()
 	opening_enter_rect = Rect2()
+	opening_shelf_rect = Rect2()
+	opening_back_rect = Rect2()
 	var font := get_theme_default_font()
-	draw_rect(Rect2(Vector2.ZERO, size), Color("#090e0f"), true)
-	for i in range(18):
-		var ratio := float(i) / 17.0
-		var band := Rect2(0, size.y * ratio, size.x, size.y / 17.0 + 2.0)
-		draw_rect(band, Color("#182120").lerp(Color("#070909"), ratio), true)
-	var rack := Rect2(Vector2(max(54.0, size.x * 0.08), max(112.0, size.y * 0.16)), Vector2(min(1040.0, size.x * 0.74), max(420.0, size.y * 0.62)))
-	rack.position.x = (size.x - rack.size.x) * 0.5
-	_draw_opening_room_details(rack)
-	draw_string(font, Vector2(rack.position.x, 58), "Living Waters", HORIZONTAL_ALIGNMENT_LEFT, -1, 36, Color("#efe8dc"))
-	draw_string(font, Vector2(rack.position.x, 88), "Choose a tank. The room keeps running after you leave.", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#a5bbb4"))
-	draw_rect(Rect2(rack.position.x - 34, rack.position.y - 28, rack.size.x + 68, rack.size.y + 72), Color(0.015, 0.018, 0.017, 0.50), true)
-	var post_color := Color("#121719")
-	var shelf := Color("#312923")
-	for x in [rack.position.x - 18.0, rack.end.x + 8.0]:
-		draw_rect(Rect2(x, rack.position.y - 40.0, 14.0, rack.size.y + 92.0), post_color, true)
-	for row in range(2):
-		var shelf_y := rack.position.y + float(row + 1) * (rack.size.y / 2.0)
-		draw_rect(Rect2(rack.position.x - 38, shelf_y + 18.0, rack.size.x + 76, 18), shelf, true)
-		draw_rect(Rect2(rack.position.x - 38, shelf_y + 16.0, rack.size.x + 76, 2), Color("#8a7661"), true)
-	for row in range(2):
-		var light_y := rack.position.y + row * (rack.size.y / 2.0) + 5.0
-		draw_rect(Rect2(rack.position.x + 22, light_y, rack.size.x - 44, 5), Color(0.76, 0.90, 0.93, 0.42), true)
+	_draw_opening_backdrop()
+	var panel_rect := Rect2(Vector2(44, 42), Vector2(min(430.0, size.x * 0.38), size.y - 84.0))
+	draw_rect(panel_rect, Color(0.025, 0.055, 0.055, 0.88), true)
+	draw_rect(panel_rect, Color(0.72, 0.82, 0.76, 0.30), false, 1.0)
+	draw_string(font, panel_rect.position + Vector2(28, 54), "LIVING WATERS", HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color("#f1eadf"))
+	draw_string(font, panel_rect.position + Vector2(30, 84), "A living aquarium, kept with intention.", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("#b8cbc2"))
+	draw_line(panel_rect.position + Vector2(30, 112), panel_rect.position + Vector2(panel_rect.size.x - 30, 112), Color("#b69d64"), 1.0, true)
+	draw_string(font, panel_rect.position + Vector2(30, 156), "The room remembers your care: water chemistry,", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#e1e3d8"))
+	draw_string(font, panel_rect.position + Vector2(30, 178), "plant growth, fish routines, and the small changes", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#e1e3d8"))
+	draw_string(font, panel_rect.position + Vector2(30, 200), "that make a tank settle over time.", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#e1e3d8"))
+	draw_string(font, panel_rect.position + Vector2(30, 254), "Start with a clear view of the active aquarium,", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#9db1aa"))
+	draw_string(font, panel_rect.position + Vector2(30, 274), "or open the shelf to switch between tanks.", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#9db1aa"))
+	opening_enter_rect = Rect2(panel_rect.position + Vector2(28, panel_rect.size.y - 126), Vector2(panel_rect.size.x - 56, 42))
+	_draw_opening_button(opening_enter_rect, "Continue to aquarium", true)
+	opening_shelf_rect = Rect2(panel_rect.position + Vector2(28, panel_rect.size.y - 72), Vector2(panel_rect.size.x - 56, 38))
+	_draw_opening_button(opening_shelf_rect, "Open aquarium shelf", false)
+	draw_string(font, Vector2(44, size.y - 18), "Enter to continue  ·  Esc to close", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.82, 0.88, 0.84, 0.70))
+
+func _draw_opening_shelf() -> void:
+	opening_cards.clear()
+	opening_enter_rect = Rect2()
+	opening_shelf_rect = Rect2()
+	opening_back_rect = Rect2()
+	var font := get_theme_default_font()
+	_draw_opening_backdrop()
+	var shelf_rect := Rect2(Vector2(34, 30), Vector2(min(800.0, size.x * 0.62), size.y - 60.0))
+	draw_rect(shelf_rect, Color(0.025, 0.055, 0.055, 0.86), true)
+	draw_rect(shelf_rect, Color(0.72, 0.82, 0.76, 0.30), false, 1.0)
+	draw_string(font, shelf_rect.position + Vector2(26, 42), "AQUARIUM SHELF", HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color("#f1eadf"))
+	draw_string(font, shelf_rect.position + Vector2(28, 68), "Choose a living system to enter. The background caretaker keeps each one moving.", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#b8cbc2"))
+	var rack := Rect2(shelf_rect.position + Vector2(22, 96), Vector2(shelf_rect.size.x - 44, shelf_rect.size.y - 166))
 	var items: Array = aquarium_index.get("aquariums", [])
-	var cols := 2 if size.x < 1050.0 else 3
+	var cols := 2 if size.x < 1100.0 else 3
 	var rows := 2
-	var gap := 26.0
+	var gap := 18.0
 	var card_w := (rack.size.x - gap * float(cols - 1)) / float(cols)
 	var card_h := (rack.size.y - gap * float(rows - 1)) / float(rows)
 	for index in range(cols * rows):
@@ -370,11 +425,19 @@ func _draw_opening_screen() -> void:
 		if index < items.size() and typeof(items[index]) == TYPE_DICTIONARY:
 			item = items[index]
 		_draw_opening_tank_card(rect, item, index)
-	opening_enter_rect = Rect2(Vector2(size.x - 258.0, size.y - 82.0), Vector2(200.0, 42.0))
-	draw_rect(opening_enter_rect, Color("#d6be70"), true)
-	draw_rect(opening_enter_rect, Color("#f3df9b"), false, 1.4)
-	draw_string(font, opening_enter_rect.position + Vector2(30, 27), "Enter aquarium", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#101514"))
-	draw_string(font, Vector2(rack.position.x, size.y - 48), "Empty glass spaces are intentional: create new tanks inside the Tank tab.", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#839892"))
+	opening_back_rect = Rect2(shelf_rect.position + Vector2(24, shelf_rect.size.y - 50), Vector2(124, 34))
+	_draw_opening_button(opening_back_rect, "Back", false)
+	opening_enter_rect = Rect2(shelf_rect.end - Vector2(202, 50), Vector2(178, 34))
+	_draw_opening_button(opening_enter_rect, "Enter aquarium", true)
+	draw_string(font, Vector2(shelf_rect.position.x, size.y - 14), "Click a tank card to select it  ·  Empty cards become new tanks in Tank", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.82, 0.88, 0.84, 0.70))
+
+func _draw_opening_button(rect: Rect2, label: String, primary: bool) -> void:
+	var fill := Color("#d6be70") if primary else Color(0.08, 0.14, 0.14, 0.92)
+	var border := Color("#f3df9b") if primary else Color(0.55, 0.65, 0.60, 0.55)
+	var ink := Color("#101514") if primary else Color("#e1e3d8")
+	draw_rect(rect, fill, true)
+	draw_rect(rect, border, false, 1.2)
+	draw_string(get_theme_default_font(), rect.position + Vector2(18, rect.size.y * 0.65), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, ink)
 
 func _draw_opening_room_details(rack: Rect2) -> void:
 	draw_rect(Rect2(0, rack.end.y + 64, size.x, size.y - rack.end.y), Color("#0b0c0c"), true)
@@ -496,6 +559,7 @@ func _load_species(path: String) -> Dictionary:
 	return result
 
 func _load_sprite_assets() -> void:
+	opening_background_texture = _load_png_texture("res://assets/opening_room.png")
 	var fish_ids := species.keys()
 	if fish_ids.is_empty():
 		fish_ids = [
@@ -553,7 +617,6 @@ func _load_state() -> void:
 		aquarium_index = state["aquarium_tabs"]
 	_sync_animals()
 	_refresh_ui()
-	_refresh_aquarium_options()
 	_refresh_species_options()
 
 func _load_aquarium_index() -> void:
@@ -709,6 +772,12 @@ func _build_ui() -> void:
 	header.add_child(_make_label("Keeper tray", 18, Color("#f1ebe0")))
 	summary_label = _make_label("The aquarium keeps living in the background.", 12, Color("#a9beb9"), true)
 	header.add_child(summary_label)
+	aquarium_shelf_button = Button.new()
+	aquarium_shelf_button.text = "Aquarium shelf"
+	aquarium_shelf_button.custom_minimum_size = Vector2(322, 34)
+	_style_button(aquarium_shelf_button, "primary")
+	aquarium_shelf_button.pressed.connect(func(): _set_opening_mode(true, true))
+	header.add_child(aquarium_shelf_button)
 
 	var tabs := TabContainer.new()
 	keeper_tabs = tabs
@@ -719,12 +788,6 @@ func _build_ui() -> void:
 	panel.add_child(tabs)
 
 	var tank_tab := _add_tab(tabs, "Tank")
-	var aquarium_box := _make_section(tank_tab, "Aquarium shelf", "Switch tanks here. Creation stays separated from daily care so accidents are harder.")
-	aquarium_select = OptionButton.new()
-	_style_field(aquarium_select, Vector2(322, 32))
-	aquarium_select.item_selected.connect(func(index): _select_aquarium(index))
-	aquarium_box.add_child(aquarium_select)
-
 	var create_box := _make_section(tank_tab, "Start clear", "A new tank begins empty, uncycled, and unfinished on purpose.")
 	tank_name_edit = LineEdit.new()
 	tank_name_edit.placeholder_text = "Tank name"
@@ -917,7 +980,8 @@ func _build_ui() -> void:
 	change.pressed.connect(func(): _write_command(_water_change_command()))
 	water_box.add_child(change)
 
-	var equipment_box := _make_section(care_tab, "Equipment bench", "Tune the visible devices inside the tank, then refresh carbon and phosphate media when it clogs.")
+	var equipment_tab := _add_tab(tabs, "Equipment")
+	var equipment_box := _make_section(equipment_tab, "Equipment bench", "Tune the visible devices inside the tank, then refresh carbon and phosphate media when it clogs.")
 	var equipment_grid := GridContainer.new()
 	equipment_grid.columns = 2
 	equipment_grid.add_theme_constant_override("h_separation", 8)
@@ -1103,6 +1167,43 @@ func _build_ui() -> void:
 	_style_button(remove_scape, "danger")
 	remove_scape.pressed.connect(func(): _remove_selected_scape())
 	transform_actions.add_child(remove_scape)
+	var select_mode := Button.new()
+	select_mode.text = "Select / move a piece"
+	select_mode.custom_minimum_size = Vector2(322, 34)
+	_style_button(select_mode, "ghost")
+	select_mode.pressed.connect(func():
+		selected_scape_tool = {}
+		selected_animal_tool = {}
+		if tool_label:
+			tool_label.text = "Selection mode active. Click a piece, then click empty water to move it."
+	)
+	transform_box.add_child(select_mode)
+	var nudge_row := HBoxContainer.new()
+	nudge_row.add_theme_constant_override("separation", 6)
+	transform_box.add_child(nudge_row)
+	for item in [["←", Vector2(-0.015, 0.0)], ["→", Vector2(0.015, 0.0)], ["↑", Vector2(0.0, -0.015)], ["↓", Vector2(0.0, 0.015)]]:
+		var nudge := Button.new()
+		nudge.text = str(item[0])
+		nudge.custom_minimum_size = Vector2(75, 32)
+		_style_button(nudge)
+		var delta: Vector2 = item[1]
+		nudge.pressed.connect(func(): _nudge_selected_scape(delta))
+		nudge_row.add_child(nudge)
+	var rotate_row := HBoxContainer.new()
+	rotate_row.add_theme_constant_override("separation", 8)
+	transform_box.add_child(rotate_row)
+	var rotate_left := Button.new()
+	rotate_left.text = "Rotate -15°"
+	rotate_left.custom_minimum_size = Vector2(154, 32)
+	_style_button(rotate_left)
+	rotate_left.pressed.connect(func(): _rotate_selected_scape(-15.0))
+	rotate_row.add_child(rotate_left)
+	var rotate_right := Button.new()
+	rotate_right.text = "Rotate +15°"
+	rotate_right.custom_minimum_size = Vector2(154, 32)
+	_style_button(rotate_right)
+	rotate_right.pressed.connect(func(): _rotate_selected_scape(15.0))
+	rotate_row.add_child(rotate_right)
 
 	var hardscape_box := _make_section(scape_tab, "Hardscape library")
 	var hardscape_grid := GridContainer.new()
@@ -1446,32 +1547,6 @@ func _active_aquarium_id() -> String:
 	if aquarium_index.is_empty():
 		return ""
 	return str(aquarium_index.get("active_id", ""))
-
-func _refresh_aquarium_options() -> void:
-	if not aquarium_select:
-		return
-	var active_id := _active_aquarium_id()
-	var selected_id := ""
-	if aquarium_select.item_count > 0 and aquarium_select.selected >= 0:
-		selected_id = str(aquarium_select.get_item_metadata(aquarium_select.selected))
-	aquarium_select.clear()
-	for item in aquarium_index.get("aquariums", []):
-		var id := str(item.get("id", ""))
-		var label := "%s - %.0fL %s" % [
-			str(item.get("name", "Aquarium")),
-			float(item.get("gross_litres", 0.0)),
-			str(item.get("system", "freshwater"))
-		]
-		aquarium_select.add_item(label)
-		aquarium_select.set_item_metadata(aquarium_select.item_count - 1, id)
-		if id == active_id or (active_id == "" and id == selected_id):
-			aquarium_select.select(aquarium_select.item_count - 1)
-
-func _select_aquarium(index: int) -> void:
-	if index < 0 or index >= aquarium_select.item_count:
-		return
-	var id := str(aquarium_select.get_item_metadata(index))
-	_write_command({"action": "select_aquarium", "aquarium_id": id})
 
 func _create_clear_aquarium() -> void:
 	var name := tank_name_edit.text.strip_edges() if tank_name_edit else "Clear Aquarium"
@@ -2376,6 +2451,28 @@ func _remove_selected_scape() -> void:
 		return
 	_write_command(_scape_object_action_command("remove_scape_item", selected_scape_object_id))
 	_clear_scape_editor()
+
+func _nudge_selected_scape(delta: Vector2) -> void:
+	if selected_scape_object_id == "":
+		if tool_label:
+			tool_label.text = "Select a piece before nudging it."
+		return
+	var command := _scape_object_action_command("move_scape_item", selected_scape_object_id)
+	var next := Vector2(float(command.get("x", 0.5)), float(command.get("y", 0.76))) + delta
+	if not _client_position_valid(str(command.get("category", "")), str(command.get("type", "")), next.clamp(Vector2.ZERO, Vector2.ONE), true):
+		return
+	command["x"] = clamp(next.x, 0.02, 0.98)
+	command["y"] = clamp(next.y, 0.02, 0.98)
+	_write_command(command)
+
+func _rotate_selected_scape(delta: float) -> void:
+	if selected_scape_object_id == "":
+		if tool_label:
+			tool_label.text = "Select a piece before rotating it."
+		return
+	var command := _scape_object_action_command("move_scape_item", selected_scape_object_id)
+	command["rotation"] = fposmod(float(command.get("rotation", 0.0)) + delta + 180.0, 360.0) - 180.0
+	_write_command(command)
 
 func _write_command(command: Dictionary) -> void:
 	var action := str(command.get("action", "command"))
@@ -3344,6 +3441,8 @@ func _hit_scape_object(mouse: Vector2) -> String:
 	if typeof(scape) != TYPE_DICTIONARY:
 		return ""
 	var objects: Array = scape.get("objects", [])
+	var best_id := ""
+	var best_score := INF
 	for layer in [2, 1, 0]:
 		for index in range(objects.size() - 1, -1, -1):
 			var obj: Dictionary = objects[index]
@@ -3354,9 +3453,12 @@ func _hit_scape_object(mouse: Vector2) -> String:
 			var draw_size: Vector2 = _scape_object_draw_size(category, item_type) * clamp(float(obj.get("scale", 1.0)), 0.35, 2.4)
 			var pos: Vector2 = _object_pos(obj, Vector2.ZERO)
 			var local: Vector2 = (mouse - pos).rotated(-deg_to_rad(float(obj.get("rotation", 0.0))))
-			if abs(local.x) <= draw_size.x * 0.5 + 8.0 and abs(local.y) <= draw_size.y * 0.5 + 8.0:
-				return str(obj.get("id", ""))
-	return ""
+			var half_size := draw_size * 0.5 + Vector2(16.0, 16.0)
+			var score := pow(local.x / max(1.0, half_size.x), 2.0) + pow(local.y / max(1.0, half_size.y), 2.0)
+			if score <= 1.0 and score < best_score:
+				best_score = score
+				best_id = str(obj.get("id", ""))
+	return best_id
 
 func _rock_color(kind: String) -> Color:
 	match kind:
@@ -3460,19 +3562,42 @@ func _draw_scape_sprite(item_type: String, pos: Vector2, draw_size: Vector2, fli
 	var living := PLANT_SCAPE_TYPES.has(item_type) or CORAL_SCAPE_TYPES.has(item_type)
 	var t := Time.get_ticks_msec() / 1000.0
 	var rotation := rotation_offset
+	var draw_pos := pos
 	var x_scale := -1.0 if flip else 1.0
 	var y_scale := 1.0
 	if living:
 		var coral := CORAL_SCAPE_TYPES.has(item_type)
-		var current_strength: float = clamp(_water_current_at(pos).length() / 16.0, 0.0, 1.0)
+		var current: Vector2 = _water_current_at(pos)
+		var current_strength: float = clamp(current.length() / 16.0, 0.0, 1.0)
 		var sway := sin(t * (0.82 if coral else 1.08) + pos.x * 0.018 + pos.y * 0.011)
-		rotation += sway * (0.016 if coral else 0.024) * lerp(0.70, 1.55, current_strength)
+		if coral:
+			rotation += sway * 0.016 * lerp(0.70, 1.55, current_strength)
+		else:
+			var stiffness: float = _plant_stiffness(item_type)
+			var flow_bend: float = clamp(current.x / 15.0, -1.0, 1.0) * (0.028 + current_strength * 0.042) * stiffness
+			rotation += flow_bend + sway * 0.018 * stiffness
+			draw_pos += Vector2(current.x * (0.16 + stiffness * 0.22), sin(t * 0.72 + pos.x * 0.012) * current_strength * stiffness * 1.8)
 		x_scale *= 1.0 + sin(t * 1.35 + pos.y * 0.017) * (0.007 if coral else 0.012) * lerp(0.70, 1.40, current_strength)
 		y_scale = 1.0 + cos(t * 1.10 + pos.x * 0.013) * (0.010 if coral else 0.016) * lerp(0.70, 1.35, current_strength)
-	draw_set_transform(pos, rotation, Vector2(x_scale, y_scale))
+	draw_set_transform(draw_pos, rotation, Vector2(x_scale, y_scale))
 	draw_texture_rect(texture, Rect2(-draw_size * 0.5, draw_size), false, modulate)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	return true
+
+func _plant_stiffness(item_type: String) -> float:
+	match item_type:
+		"red_root_floaters":
+			return 1.35
+		"vallisneria", "hornwort":
+			return 1.20
+		"dwarf_hairgrass":
+			return 0.92
+		"java_moss", "anubias", "java_fern", "cryptocoryne_wendtii":
+			return 0.42
+		"amazon_sword":
+			return 0.68
+		_:
+			return 0.72
 
 func _draw_rock(pos: Vector2, radius: float, color: Color, seed: int) -> void:
 	var points := PackedVector2Array()
@@ -3570,7 +3695,8 @@ func _draw_vallisneria(seed: int, inner: Rect2, sand_top: float, health: float =
 	var base_x := inner.position.x + 34.0 + fposmod(seed * 73.0, inner.size.x - 68.0)
 	var height: float = (72.0 + float((seed * 29) % 96)) * lerp(0.48, 1.0, health)
 	var base := Vector2(base_x, sand_top + 8.0)
-	var sway := sin(Time.get_ticks_msec() / 1200.0 + seed) * 10.0
+	var flow: Vector2 = _water_current_at(base)
+	var sway := sin(Time.get_ticks_msec() / 1200.0 + seed) * (8.0 + flow.length() * 0.9)
 	for blade in range(max(1, int(ceil(4.0 * health)))):
 		var offset := float(blade - 1) * 4.0
 		var tip := base + Vector2(offset + sway * (0.45 + blade * 0.08), -height + blade * 13.0)
@@ -3583,7 +3709,8 @@ func _draw_rosette(seed: int, inner: Rect2, sand_top: float, color: Color, heigh
 	)
 	for leaf_index in range(7):
 		var angle := -PI * 0.95 + float(leaf_index) * PI * 0.32
-		var tip := base + Vector2(cos(angle) * height * 0.58, sin(angle) * height)
+		var flow: Vector2 = _water_current_at(base)
+		var tip := base + Vector2(cos(angle) * height * 0.58 + flow.x * 0.32, sin(angle) * height + flow.y * 0.12)
 		draw_line(base, tip, color.darkened(0.08), 3.0, true)
 		_draw_leaf(tip, 16.0, 7.0, color.lightened(float(leaf_index % 2) * 0.05))
 
@@ -3592,6 +3719,8 @@ func _draw_floaters(seed: int, inner: Rect2, health: float = 1.0) -> void:
 		inner.position.x + 28.0 + fposmod(seed * 67.0, inner.size.x - 56.0),
 		inner.position.y + 26.0 + fposmod(seed * 11.0, 28.0)
 	)
+	var flow: Vector2 = _water_current_at(base)
+	base += Vector2(flow.x * 0.55, sin(Time.get_ticks_msec() / 1400.0 + seed) * 2.5)
 	for leaf_index in range(max(1, int(ceil(4.0 * health)))):
 		var pos := base + Vector2(cos(leaf_index * TAU / 4.0) * 9.0, sin(leaf_index * TAU / 4.0) * 4.0)
 		_draw_leaf(pos, 12.0 * lerp(0.55, 1.0, health), 7.0 * lerp(0.55, 1.0, health), Color("#76b86a").lerp(Color("#8e7b4f"), 1.0 - health))
