@@ -850,6 +850,8 @@ func _build_ui() -> void:
 	maintenance_button.pressed.connect(func(): _write_command(COMMAND_WEEKLY_MAINTENANCE.duplicate()))
 	quick_row.add_child(maintenance_button)
 	food_select = OptionButton.new()
+	food_select.fit_to_longest_item = false
+	food_select.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_style_field(food_select, Vector2(322, 32))
 	for option in FOOD_OPTIONS:
 		food_select.add_item("%s - %s" % [str(option["label"]), str(option["hint"])])
