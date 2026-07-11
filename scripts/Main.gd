@@ -1281,8 +1281,8 @@ func _build_notebook_overlay() -> void:
 	spread.add_child(right_page)
 	notebook_left_page_label = left_page.get_node("PageBox/PageNumber") as Label
 	notebook_right_page_label = right_page.get_node("PageBox/PageNumber") as Label
-	notebook_left_sketch = left_page.get_node("PageBox/PageSketch") as TextureRect
-	notebook_right_sketch = right_page.get_node("PageBox/PageSketch") as TextureRect
+	notebook_left_sketch = left_page.get_node("PageBox/PageScroll/PageContent/PageSketch") as TextureRect
+	notebook_right_sketch = right_page.get_node("PageBox/PageScroll/PageContent/PageSketch") as TextureRect
 	research_label = left_page.get_node("PageBox/PageScroll/PageContent/PageText") as Label
 	notebook_right_label = right_page.get_node("PageBox/PageScroll/PageContent/PageText") as Label
 
