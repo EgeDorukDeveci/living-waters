@@ -949,6 +949,33 @@ def test_individual_behavior_brain_records_non_lethal_reasons() -> None:
     assert grazer["decision_count"] >= 1
 
 
+def test_every_species_has_a_researched_behavior_profile() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    required = {"cycle", "movement", "forage", "rest_sites", "rest_zone", "shelter", "range"}
+    assert len(species) == 30
+    for species_id, spec in species.items():
+        profile = spec.get("behavior_profile", {})
+        assert required <= set(profile), species_id
+        assert profile["cycle"] in {"diurnal", "nocturnal", "crepuscular", "cathemeral"}
+        assert profile["rest_sites"], species_id
+        assert 0.15 <= float(profile["range"]) <= 1.0
+
+
+def test_betta_and_nocturnal_species_use_distinct_rest_ecology() -> None:
+    species = load_species(ROOT / "data/species/freshwater_v1.json")
+    betta_profile = species["betta_splendens"]["behavior_profile"]
+    assert {"broad_leaf", "wood_top", "rock_top"} <= set(betta_profile["rest_sites"])
+    betta = animal(species, "betta_splendens", "Betta", 351)
+    kuhli = animal(species, "kuhli_loach", "Kuhli", 352)
+    state = default_state(species)
+    state["animals"] = [betta, kuhli]
+    sim = AquariumSimulation(species, state)
+    assert sim._species_is_resting(betta, species["betta_splendens"], 23.0)
+    assert not sim._species_is_resting(kuhli, species["kuhli_loach"], 23.0)
+    assert sim._species_is_resting(kuhli, species["kuhli_loach"], 12.0)
+    assert kuhli["movement_style"] == "serpentine_bottom"
+
+
 def test_territorial_fish_remember_pressure_from_cramped_cover() -> None:
     species = load_species(ROOT / "data/species/freshwater_v1.json")
     state = clear_state(species, "Territory Test", "freshwater", 24)
@@ -1617,6 +1644,8 @@ def main() -> int:
         test_schooling_fish_keep_individual_group_intents,
         test_shoaling_species_use_the_same_group_brain,
         test_individual_behavior_brain_records_non_lethal_reasons,
+        test_every_species_has_a_researched_behavior_profile,
+        test_betta_and_nocturnal_species_use_distinct_rest_ecology,
         test_territorial_fish_remember_pressure_from_cramped_cover,
         test_tiny_life_supports_natural_foraging,
         test_saltwater_switch_species_and_reefscape_rules,

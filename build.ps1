@@ -15,6 +15,7 @@ py -3 -m PyInstaller `
   --windowed `
   --name "LivingWatersBackground" `
   --add-data ".\data\species\freshwater_v1.json;data\species" `
+  --add-data ".\data\species\behavior_profiles_v1.json;data\species" `
   ".\background\living_waters_daemon.py"
 Copy-Item ".\dist\LivingWatersBackground.exe" ".\LivingWatersBackground.exe" -Force
 

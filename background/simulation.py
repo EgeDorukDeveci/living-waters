@@ -4462,6 +4462,16 @@ class AquariumSimulation:
             role = "scout"
         return intent, duration, trigger, role
 
+    def _species_is_resting(self, animal: dict[str, Any], spec: dict[str, Any], local_hour: float) -> bool:
+        activity_cycle = str(animal.get("activity_cycle", spec.get("behavior_profile", {}).get("cycle", "diurnal")))
+        if activity_cycle == "nocturnal":
+            return 7.5 < local_hour < 18.5
+        if activity_cycle == "crepuscular":
+            return local_hour < 4.5 or 10.0 < local_hour < 16.0 or local_hour > 23.0
+        if activity_cycle == "cathemeral":
+            return 2.5 < local_hour < 4.5
+        return local_hour < 6.0 or local_hour > 21.5
+
     def _update_animal(self, animal: dict[str, Any], groups: dict[str, int], welfare: dict[str, Any], consumed: float, hours: float) -> None:
         spec = self.species[animal["species_id"]]
         water = self.state["water"]
@@ -4620,15 +4630,7 @@ class AquariumSimulation:
         breeding_target = 1.0 if stress_target < 0.16 and animal["hunger"] < 0.45 and animal["health"] > 0.78 and group >= max(1, int(spec.get("minimum_group", 1))) else 0.0
         animal["breeding_condition"] = clamp(float(animal.get("breeding_condition", 0.0)) + (breeding_target - float(animal.get("breeding_condition", 0.0))) * min(1.0, hours * 0.035), 0, 1)
         local_hour = (datetime.now().hour + datetime.now().minute / 60.0 + float(animal.get("circadian_offset", 0.0))) % 24.0
-        activity_cycle = str(animal.get("activity_cycle", spec.get("behavior_profile", {}).get("cycle", "diurnal")))
-        if activity_cycle == "nocturnal":
-            resting = 7.5 < local_hour < 18.5
-        elif activity_cycle == "crepuscular":
-            resting = local_hour < 4.5 or 10.0 < local_hour < 16.0 or local_hour > 23.0
-        elif activity_cycle == "cathemeral":
-            resting = 2.5 < local_hour < 4.5
-        else:
-            resting = local_hour < 6.0 or local_hour > 21.5
+        resting = self._species_is_resting(animal, spec, local_hour)
         if resting:
             animal["energy"] = clamp(animal["energy"] + hours * 0.018, 0, 1)
         behavior_notes = self._update_behavior_memory(animal, spec, group, welfare_risk, resting, hours)
@@ -4735,9 +4737,6 @@ class AquariumSimulation:
         elif float(animal.get("breeding_condition", 0.0)) > 0.78:
             animal["behavior"] = "displaying breeding condition"
             animal["routine"] = "display"
-        elif spec["swim_zone"] == "bottom":
-            animal["behavior"] = "foraging over the substrate"
-            animal["routine"] = "forage"
         elif schooling_social:
             animal["behavior"] = "schooling"
             animal["routine"] = "school"
@@ -4792,6 +4791,9 @@ class AquariumSimulation:
         elif str(animal.get("behavior_intent", "")) == "dart and pause":
             animal["behavior"] = "making a quick dash, then pausing"
             animal["routine"] = "dart"
+        elif spec["swim_zone"] == "bottom":
+            animal["behavior"] = "foraging over the substrate"
+            animal["routine"] = "forage"
         elif float(animal.get("curiosity", 0.5)) > 0.72 and animal["acute_stress"] < 0.16:
             animal["behavior"] = "curiously inspecting the scape"
             animal["routine"] = "inspect"

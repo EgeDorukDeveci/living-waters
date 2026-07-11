@@ -2724,8 +2724,8 @@ func _species_habitat_target(animal: Dictionary, spec: Dictionary, seed: int, st
 		var matched_site := _matching_rest_site(sites, category, item_type)
 		if matched_site == "":
 			continue
-		var point := _object_pos(obj, fallback)
-		var draw_size := _scape_object_draw_size(category, item_type) * clamp(float(obj.get("scale", 1.0)), 0.35, 2.4)
+		var point: Vector2 = _object_pos(obj, fallback)
+		var draw_size: Vector2 = _scape_object_draw_size(category, item_type) * clamp(float(obj.get("scale", 1.0)), 0.35, 2.4)
 		if matched_site in ["broad_leaf", "wood_top", "rock_top", "coral_host"]:
 			point.y -= draw_size.y * (0.34 if matched_site == "broad_leaf" else 0.46)
 		elif matched_site in ["cave", "rock_crevice", "rock_overhang", "burrow"]:
