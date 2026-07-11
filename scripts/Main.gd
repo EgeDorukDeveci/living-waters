@@ -53,11 +53,8 @@ var journal_sketch_textures: Dictionary = {}
 var opening_background_texture: Texture2D
 var time_accum := 0.0
 var opening_screen := true
-var opening_shelf_view := false
 var opening_cards: Array[Dictionary] = []
 var opening_enter_rect := Rect2()
-var opening_shelf_rect := Rect2()
-var opening_back_rect := Rect2()
 
 var side_panel: PanelContainer
 var panel: VBoxContainer
@@ -147,9 +144,8 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_RESIZED:
 		_layout_ui()
 
-func _set_opening_mode(enabled: bool, shelf_view: bool = false) -> void:
+func _set_opening_mode(enabled: bool) -> void:
 	opening_screen = enabled
-	opening_shelf_view = shelf_view if enabled else false
 	if title_label:
 		title_label.visible = not enabled
 	if status_label:
@@ -163,24 +159,14 @@ func _set_opening_mode(enabled: bool, shelf_view: bool = false) -> void:
 	queue_redraw()
 
 func _handle_opening_click(mouse: Vector2) -> void:
-	if opening_shelf_view:
-		for card in opening_cards:
-			var rect: Rect2 = card.get("rect", Rect2())
-			if rect.has_point(mouse):
-				var aquarium_id := str(card.get("id", ""))
-				if aquarium_id != "":
-					_write_command({"action": "select_aquarium", "aquarium_id": aquarium_id})
-					_set_opening_mode(false)
-					return
-		if opening_back_rect.has_point(mouse):
-			_set_opening_mode(true)
-			return
-		if opening_enter_rect.has_point(mouse):
-			_set_opening_mode(false)
-		return
-	if opening_shelf_rect.has_point(mouse):
-		_set_opening_mode(true, true)
-		return
+	for card in opening_cards:
+		var rect: Rect2 = card.get("rect", Rect2())
+		if rect.has_point(mouse):
+			var aquarium_id := str(card.get("id", ""))
+			if aquarium_id != "":
+				_write_command({"action": "select_aquarium", "aquarium_id": aquarium_id})
+				_set_opening_mode(false)
+				return
 	if opening_enter_rect.has_point(mouse):
 		_set_opening_mode(false)
 
@@ -189,10 +175,7 @@ func _gui_input(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			_handle_opening_click(event.position)
 		elif event is InputEventKey and event.pressed and event.keycode in [KEY_ENTER, KEY_SPACE, KEY_ESCAPE]:
-			if opening_shelf_view:
-				_set_opening_mode(true)
-			else:
-				_set_opening_mode(false)
+			_set_opening_mode(false)
 		return
 	if notebook_open and event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		_toggle_notebook(false)
@@ -362,10 +345,7 @@ func _draw() -> void:
 	_draw_front_glass()
 
 func _draw_opening_screen() -> void:
-	if opening_shelf_view:
-		_draw_opening_shelf()
-	else:
-		_draw_opening_welcome()
+	_draw_opening_shelf()
 
 func _draw_opening_backdrop() -> void:
 	if opening_background_texture:
@@ -374,47 +354,27 @@ func _draw_opening_backdrop() -> void:
 		draw_rect(Rect2(Vector2.ZERO, size), Color("#0a1111"), true)
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.05, 0.05, 0.42), true)
 
-func _draw_opening_welcome() -> void:
-	opening_cards.clear()
-	opening_enter_rect = Rect2()
-	opening_shelf_rect = Rect2()
-	opening_back_rect = Rect2()
-	var font := get_theme_default_font()
-	_draw_opening_backdrop()
-	var panel_rect := Rect2(Vector2(44, 42), Vector2(min(430.0, size.x * 0.38), size.y - 84.0))
-	draw_rect(panel_rect, Color(0.025, 0.055, 0.055, 0.88), true)
-	draw_rect(panel_rect, Color(0.72, 0.82, 0.76, 0.30), false, 1.0)
-	draw_string(font, panel_rect.position + Vector2(28, 54), "LIVING WATERS", HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color("#f1eadf"))
-	draw_string(font, panel_rect.position + Vector2(30, 84), "A living aquarium, kept with intention.", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("#b8cbc2"))
-	draw_line(panel_rect.position + Vector2(30, 112), panel_rect.position + Vector2(panel_rect.size.x - 30, 112), Color("#b69d64"), 1.0, true)
-	draw_string(font, panel_rect.position + Vector2(30, 156), "The room remembers your care: water chemistry,", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#e1e3d8"))
-	draw_string(font, panel_rect.position + Vector2(30, 178), "plant growth, fish routines, and the small changes", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#e1e3d8"))
-	draw_string(font, panel_rect.position + Vector2(30, 200), "that make a tank settle over time.", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("#e1e3d8"))
-	draw_string(font, panel_rect.position + Vector2(30, 254), "Start with a clear view of the active aquarium,", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#9db1aa"))
-	draw_string(font, panel_rect.position + Vector2(30, 274), "or open the shelf to switch between tanks.", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#9db1aa"))
-	opening_enter_rect = Rect2(panel_rect.position + Vector2(28, panel_rect.size.y - 126), Vector2(panel_rect.size.x - 56, 42))
-	_draw_opening_button(opening_enter_rect, "Continue to aquarium", true)
-	opening_shelf_rect = Rect2(panel_rect.position + Vector2(28, panel_rect.size.y - 72), Vector2(panel_rect.size.x - 56, 38))
-	_draw_opening_button(opening_shelf_rect, "Open aquarium shelf", false)
-	draw_string(font, Vector2(44, size.y - 18), "Enter to continue  ·  Esc to close", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.82, 0.88, 0.84, 0.70))
-
 func _draw_opening_shelf() -> void:
 	opening_cards.clear()
 	opening_enter_rect = Rect2()
-	opening_shelf_rect = Rect2()
-	opening_back_rect = Rect2()
 	var font := get_theme_default_font()
 	_draw_opening_backdrop()
-	var shelf_rect := Rect2(Vector2(34, 30), Vector2(min(800.0, size.x * 0.62), size.y - 60.0))
-	draw_rect(shelf_rect, Color(0.025, 0.055, 0.055, 0.86), true)
-	draw_rect(shelf_rect, Color(0.72, 0.82, 0.76, 0.30), false, 1.0)
-	draw_string(font, shelf_rect.position + Vector2(26, 42), "AQUARIUM SHELF", HORIZONTAL_ALIGNMENT_LEFT, -1, 24, Color("#f1eadf"))
-	draw_string(font, shelf_rect.position + Vector2(28, 68), "Choose a living system to enter. The background caretaker keeps each one moving.", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("#b8cbc2"))
-	var rack := Rect2(shelf_rect.position + Vector2(22, 96), Vector2(shelf_rect.size.x - 44, shelf_rect.size.y - 166))
+	var shelf_rect := Rect2(Vector2(42, 32), size - Vector2(84, 94))
+	draw_rect(shelf_rect, Color(0.025, 0.055, 0.055, 0.84), true)
+	draw_rect(shelf_rect, Color(0.72, 0.82, 0.76, 0.38), false, 1.0)
+	draw_string(font, shelf_rect.position + Vector2(28, 42), "LIVING WATERS", HORIZONTAL_ALIGNMENT_LEFT, -1, 28, Color("#f1eadf"))
+	draw_string(font, shelf_rect.position + Vector2(30, 68), "Your aquariums, kept alive. Choose a tank to continue.", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("#b8cbc2"))
+	var active_label := "No aquarium selected"
+	for item in aquarium_index.get("aquariums", []):
+		if str(item.get("id", "")) == _active_aquarium_id():
+			active_label = "Active now · %s" % str(item.get("name", "Aquarium"))
+			break
+	draw_string(font, shelf_rect.position + Vector2(shelf_rect.size.x - 270, 42), active_label, HORIZONTAL_ALIGNMENT_RIGHT, 242, 12, Color("#d6be70"))
+	var rack := Rect2(shelf_rect.position + Vector2(28, 94), Vector2(shelf_rect.size.x - 56, shelf_rect.size.y - 156))
 	var items: Array = aquarium_index.get("aquariums", [])
-	var cols := 2 if size.x < 1100.0 else 3
-	var rows := 2
-	var gap := 18.0
+	var cols := 2 if size.x < 1050.0 else 3
+	var rows := maxi(2, ceili(float(maxi(items.size(), 1)) / float(cols)))
+	var gap := 20.0
 	var card_w := (rack.size.x - gap * float(cols - 1)) / float(cols)
 	var card_h := (rack.size.y - gap * float(rows - 1)) / float(rows)
 	for index in range(cols * rows):
@@ -425,11 +385,10 @@ func _draw_opening_shelf() -> void:
 		if index < items.size() and typeof(items[index]) == TYPE_DICTIONARY:
 			item = items[index]
 		_draw_opening_tank_card(rect, item, index)
-	opening_back_rect = Rect2(shelf_rect.position + Vector2(24, shelf_rect.size.y - 50), Vector2(124, 34))
-	_draw_opening_button(opening_back_rect, "Back", false)
-	opening_enter_rect = Rect2(shelf_rect.end - Vector2(202, 50), Vector2(178, 34))
-	_draw_opening_button(opening_enter_rect, "Enter aquarium", true)
-	draw_string(font, Vector2(shelf_rect.position.x, size.y - 14), "Click a tank card to select it  ·  Empty cards become new tanks in Tank", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.82, 0.88, 0.84, 0.70))
+	opening_enter_rect = Rect2(Vector2(size.x - 250, size.y - 70), Vector2(204, 38))
+	_draw_opening_button(opening_enter_rect, "Enter active aquarium", true)
+	draw_string(font, Vector2(42, size.y - 46), "Click any tank card to enter it. Empty cards are ready for a new setup in Tank.", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.82, 0.88, 0.84, 0.78))
+	draw_string(font, Vector2(42, size.y - 20), "The aquarium keeps running in the background while you are away.", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.64, 0.73, 0.69, 0.75))
 
 func _draw_opening_button(rect: Rect2, label: String, primary: bool) -> void:
 	var fill := Color("#d6be70") if primary else Color(0.08, 0.14, 0.14, 0.92)
@@ -776,7 +735,7 @@ func _build_ui() -> void:
 	aquarium_shelf_button.text = "Aquarium shelf"
 	aquarium_shelf_button.custom_minimum_size = Vector2(322, 34)
 	_style_button(aquarium_shelf_button, "primary")
-	aquarium_shelf_button.pressed.connect(func(): _set_opening_mode(true, true))
+	aquarium_shelf_button.pressed.connect(func(): _set_opening_mode(true))
 	header.add_child(aquarium_shelf_button)
 
 	var tabs := TabContainer.new()
@@ -1322,8 +1281,8 @@ func _build_notebook_overlay() -> void:
 	notebook_right_page_label = right_page.get_node("PageBox/PageNumber") as Label
 	notebook_left_sketch = left_page.get_node("PageBox/PageSketch") as TextureRect
 	notebook_right_sketch = right_page.get_node("PageBox/PageSketch") as TextureRect
-	research_label = left_page.get_node("PageBox/PageScroll/PageText") as Label
-	notebook_right_label = right_page.get_node("PageBox/PageScroll/PageText") as Label
+	research_label = left_page.get_node("PageBox/PageScroll/PageContent/PageText") as Label
+	notebook_right_label = right_page.get_node("PageBox/PageScroll/PageContent/PageText") as Label
 
 	var controls := HBoxContainer.new()
 	controls.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1377,18 +1336,27 @@ func _notebook_page() -> PanelContainer:
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	page_box.add_child(scroll)
+	var page_content := VBoxContainer.new()
+	page_content.name = "PageContent"
+	page_content.add_theme_constant_override("separation", 12)
+	page_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.add_child(page_content)
 	var text := _make_label("", 15, Color("#2d2418"), true)
 	text.name = "PageText"
 	text.add_theme_constant_override("line_spacing", 4)
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(text)
+	text.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	page_content.add_child(text)
 	var sketch := TextureRect.new()
 	sketch.name = "PageSketch"
-	sketch.custom_minimum_size = Vector2(0, 210)
+	sketch.custom_minimum_size = Vector2(0, 112)
+	sketch.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sketch.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	sketch.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	sketch.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	sketch.modulate = Color(0.25, 0.20, 0.14, 0.90)
-	page_box.add_child(sketch)
+	page_content.add_child(sketch)
 	return page
 
 func _layout_ui() -> void:
@@ -2114,11 +2082,11 @@ func _render_notebook_pages(reset_scroll: bool = false) -> void:
 	if notebook_left_sketch:
 		var left_key := notebook_page_sketches[left_index] if left_index < notebook_page_sketches.size() else "cycle"
 		notebook_left_sketch.texture = journal_sketch_textures.get(left_key, null)
-		notebook_left_sketch.visible = notebook_left_sketch.texture != null
+		_layout_notebook_sketch(notebook_left_sketch, str(notebook_pages[left_index]) if left_index < notebook_pages.size() else "")
 	if notebook_right_sketch:
 		var right_key := notebook_page_sketches[right_index] if right_index < notebook_page_sketches.size() else "cycle"
 		notebook_right_sketch.texture = journal_sketch_textures.get(right_key, null) if right_index < notebook_pages.size() else null
-		notebook_right_sketch.visible = notebook_right_sketch.texture != null
+		_layout_notebook_sketch(notebook_right_sketch, str(notebook_pages[right_index]) if right_index < notebook_pages.size() else "")
 	if notebook_left_page_label:
 		notebook_left_page_label.text = "Page %d of %d  ·  %s" % [left_index + 1, notebook_pages.size(), notebook_page_titles[left_index]]
 	if notebook_right_page_label:
@@ -2132,12 +2100,23 @@ func _render_notebook_pages(reset_scroll: bool = false) -> void:
 		if target_page >= 0:
 			notebook_index_select.select(target_page)
 	if reset_scroll:
-		var left_scroll: ScrollContainer = research_label.get_parent() as ScrollContainer if research_label else null
-		var right_scroll: ScrollContainer = notebook_right_label.get_parent() as ScrollContainer if notebook_right_label else null
+		var left_scroll: ScrollContainer = research_label.get_parent().get_parent() as ScrollContainer if research_label else null
+		var right_scroll: ScrollContainer = notebook_right_label.get_parent().get_parent() as ScrollContainer if notebook_right_label else null
 		if left_scroll:
 			left_scroll.scroll_vertical = 0
 		if right_scroll:
 			right_scroll.scroll_vertical = 0
+
+func _layout_notebook_sketch(sketch: TextureRect, page_text: String) -> void:
+	if sketch.texture == null:
+		sketch.visible = false
+		sketch.custom_minimum_size = Vector2.ZERO
+		return
+	sketch.visible = true
+	# Short entries get more of the remaining page, while dense entries keep
+	# a readable sketch without forcing the text itself out of view.
+	var preferred_height := clampf(300.0 - float(page_text.length()) * 0.16, 112.0, 292.0)
+	sketch.custom_minimum_size = Vector2(0, preferred_height)
 
 func _journal_sketch_key(title: String, selected_species_id: String) -> String:
 	var upper := title.to_upper()
