@@ -58,8 +58,6 @@ var opening_enter_rect := Rect2()
 var side_panel: PanelContainer
 var panel: VBoxContainer
 var keeper_tabs: TabContainer
-var water_labels: Dictionary = {}
-var event_list: ItemList
 var animal_list: ItemList
 var aquarium_select: OptionButton
 var tank_name_edit: LineEdit
@@ -98,11 +96,6 @@ var scape_scale_spin: SpinBox
 var scape_rotation_spin: SpinBox
 var scape_layer_select: OptionButton
 var scape_flip_check: CheckBox
-var filter_label: Label
-var cycle_label: Label
-var planning_label: Label
-var maintenance_label: Label
-var randomness_label: Label
 var tool_label: Label
 var title_label: Label
 var animal_ids: Array = []
@@ -1172,28 +1165,6 @@ func _build_ui() -> void:
 	clear_scape_button.pressed.connect(func(): _clear_scape_editor(); _write_command({"action": "clear_scape"}))
 	scape_actions.add_child(clear_scape_button)
 
-	var journal_tab := _add_tab(tabs, "Journal")
-	var readings_box := _make_section(journal_tab, "Readings", "The same information appears as sensors on the tank, but this gives exact values.")
-	water_labels.clear()
-	for key in ["temperature_c", "ph", "kh_dkh", "alkalinity_dkh", "calcium_mg_l", "magnesium_mg_l", "trace_elements", "silicate_mg_l", "tds_mg_l", "salinity_ppt", "water_level", "oxygen_mg_l", "co2_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l", "phosphate_mg_l", "chlorine_mg_l", "chloramine_mg_l", "surface_film", "detritus", "parasite_pressure", "bacterial_pressure"]:
-		var label := _make_label(key, 12, Color("#d8eee9"))
-		water_labels[key] = label
-		readings_box.add_child(label)
-	filter_label = _make_label("Filter: waiting for state", 12, Color("#a8c8bd"), true)
-	readings_box.add_child(filter_label)
-	cycle_label = _make_label("Cycle: waiting for state", 12, Color("#a8c8bd"), true)
-	readings_box.add_child(cycle_label)
-	planning_label = _make_label("Planning: waiting for state", 12, Color("#a8c8bd"), true)
-	readings_box.add_child(planning_label)
-	maintenance_label = _make_label("Maintenance: waiting for state", 12, Color("#a8c8bd"), true)
-	readings_box.add_child(maintenance_label)
-	randomness_label = _make_label("Variability: waiting for state", 12, Color("#f2d382"), true)
-	readings_box.add_child(randomness_label)
-	var event_box := _make_section(journal_tab, "Timeline")
-	event_list = ItemList.new()
-	event_list.custom_minimum_size = Vector2(322, 188)
-	event_box.add_child(event_list)
-
 	_build_notebook_overlay()
 	_refresh_species_options()
 	_layout_ui()
@@ -1298,13 +1269,6 @@ func _notebook_page() -> PanelContainer:
 	page_number.name = "PageNumber"
 	page_number.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	page_box.add_child(page_number)
-	var sketch := TextureRect.new()
-	sketch.name = "PageSketch"
-	sketch.custom_minimum_size = Vector2(0, 124)
-	sketch.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	sketch.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	sketch.modulate = Color(0.25, 0.20, 0.14, 0.90)
-	page_box.add_child(sketch)
 	var scroll := ScrollContainer.new()
 	scroll.name = "PageScroll"
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -1317,6 +1281,13 @@ func _notebook_page() -> PanelContainer:
 	text.add_theme_constant_override("line_spacing", 4)
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(text)
+	var sketch := TextureRect.new()
+	sketch.name = "PageSketch"
+	sketch.custom_minimum_size = Vector2(0, 210)
+	sketch.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	sketch.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	sketch.modulate = Color(0.25, 0.20, 0.14, 0.90)
+	page_box.add_child(sketch)
 	return page
 
 func _layout_ui() -> void:
@@ -1930,6 +1901,9 @@ func _refresh_research_card() -> void:
 	pages.append("\n".join(event_lines))
 	if spec.has("sources"):
 		pages.append("SOURCE BOOKMARKS\n%s" % _source_summary(spec.get("sources", [])))
+	var ledger_pages := _tank_ledger_pages()
+	pages.append(ledger_pages[0])
+	pages.append(ledger_pages[1])
 
 	var page_titles: Array[String] = []
 	var page_sketches: Array[String] = []
@@ -1960,6 +1934,40 @@ func _refresh_research_card() -> void:
 		page_titles.append("Species · %s" % str(guide_spec.get("common_name", guide_id)))
 		page_sketches.append("fish_" + guide_id)
 	_set_notebook_entries(pages, page_titles, page_sketches)
+
+func _tank_ledger_pages() -> Array[String]:
+	var water: Dictionary = state.get("water", {})
+	var equipment: Dictionary = state.get("equipment", {})
+	var filter: Dictionary = equipment.get("filter", {})
+	var media: Dictionary = filter.get("media", {})
+	var mechanical: Dictionary = media.get("mechanical", {})
+	var heater: Dictionary = equipment.get("heater", {})
+	var light: Dictionary = equipment.get("light", {})
+	var air: Dictionary = equipment.get("air_pump", {})
+	var skimmer: Dictionary = equipment.get("protein_skimmer", {})
+	var ato: Dictionary = equipment.get("auto_top_off", {})
+	var cycle: Dictionary = state.get("cycle", {})
+	var clock: Dictionary = state.get("clock", {})
+	var planning: Dictionary = state.get("planning", {})
+	var safety: Dictionary = state.get("safety", {})
+	var maintenance: Dictionary = state.get("maintenance", {})
+	var maintenance_ecology: Dictionary = state.get("maintenance_ecology", {})
+	var randomness: Dictionary = state.get("randomness", {})
+	var maturity: Dictionary = state.get("maturity", {})
+	var stability: Dictionary = state.get("stability", {})
+	var disease_ecology: Dictionary = state.get("disease_ecology", {})
+	var local_hour := float(clock.get("local_hour", 0.0))
+	var readings: Array[String] = ["TANK READINGS", "This is the live aquarium ledger formerly shown in the Journal tab. It follows the selected aquarium, not the selected species.", ""]
+	for key in ["temperature_c", "ph", "kh_dkh", "alkalinity_dkh", "calcium_mg_l", "magnesium_mg_l", "trace_elements", "silicate_mg_l", "tds_mg_l", "salinity_ppt", "water_level", "oxygen_mg_l", "co2_mg_l", "ammonia_mg_l", "nitrite_mg_l", "nitrate_mg_l", "phosphate_mg_l", "chlorine_mg_l", "chloramine_mg_l", "surface_film", "detritus", "parasite_pressure", "bacterial_pressure"]:
+		readings.append(_format_water(str(key), float(water.get(key, 0.0))))
+	readings.append("")
+	readings.append("Equipment: filter %.0f%% / clog %.0f%% / bypass %.0f%% / driver %s." % [float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0, float(mechanical.get("clog", 0.0)) * 100.0, float(filter.get("bypass_risk", 0.0)) * 100.0, str(filter.get("last_flow_driver", "balanced flow"))])
+	readings.append("Heater %.1f C, variance %.2f C, driver %s. Light %.1fh, PAR %.0f%%, lens film %.0f%%." % [float(heater.get("target_c", water.get("temperature_c", 24.0))), float(heater.get("temperature_variance_c", 0.0)), str(heater.get("last_heat_driver", "stable")), float(light.get("actual_hours_per_day", light.get("hours_per_day", 8.0))) if bool(light.get("enabled", true)) else 0.0, float(light.get("par_output", light.get("health", 1.0))) * 100.0, float(light.get("lens_film", 0.0)) * 100.0])
+	readings.append("Air %.0f%% delivered, airline clog %.0f%%. Skimmer %.0f%%, tuning drift %.0f%%. ATO %s, sensor film %.0f%%." % [float(air.get("effective_output", air.get("output", 0.0))) * 100.0 if bool(air.get("enabled", true)) else 0.0, float(air.get("airline_clog", 0.0)) * 100.0, float(skimmer.get("effective_output", skimmer.get("output", 0.0))) * 100.0 if bool(skimmer.get("enabled", false)) else 0.0, float(skimmer.get("tuning_drift", 0.0)) * 100.0, "on" if bool(ato.get("enabled", false)) else "off", float(ato.get("sensor_film", 0.0)) * 100.0])
+	var cycle_page: Array[String] = ["RECENT TIMELINE", "This is the live status and event history formerly shown in the Journal tab.", "", "Cycle: %s — animals %s — day %.0f — %s %.0f:%02d — %s." % [str(cycle.get("stage", "unknown")), "ready" if bool(cycle.get("ready_for_animals", false)) else "not ready", float(cycle.get("days_running", 0.0)), str(clock.get("day_phase", "day")), int(floor(local_hour)), int(fposmod(local_hour, 1.0) * 60.0), "lights on" if bool(clock.get("lights_on", false)) else "lights off"], "Planning: %.0f kg estimated, risk %d, safeguards %d%%." % [float(planning.get("estimated_total_weight_kg", 0.0)), int(planning.get("risk_score", 0)), int(safety.get("readiness_score", 0))], "Maintenance: %s. Care memory driver: %s." % ["ok" if maintenance.get("issues", []).is_empty() else str(maintenance.get("issues", [])[0].get("title", "attention needed")), str(maintenance_ecology.get("last_mismatch_driver", "settled"))], "Variability %.0f%%; stability %.0f%% (%s)." % [float(randomness.get("noise", 0.12)) * 100.0, float(stability.get("stability_score", 1.0)) * 100.0, str(stability.get("latest_swing", "stable"))], "Seasoned %.0f%%, mulm %.0f%%, old-tank risk %.0f%%, tiny life %.0f%%, pest snails %.0f%%." % [float(maturity.get("seasoning", 0.0)) * 100.0, float(maturity.get("mulm", 0.0)) * 100.0, float(maturity.get("old_tank_risk", 0.0)) * 100.0, (float(maturity.get("infusoria", 0.0)) * 0.42 + float(maturity.get("copepods", 0.0)) * 0.58) * 100.0, float(maturity.get("pest_snails", 0.0)) * 100.0], "Disease ecology: %s." % str(disease_ecology.get("outbreak_stage", "quiet")), "", "Recent events:"]
+	for item in state.get("events", []).slice(0, 12):
+		cycle_page.append("- %s: %s" % [str(item.get("severity", "info")).capitalize(), str(item.get("title", "Event"))])
+	return ["\n".join(readings), "\n".join(cycle_page)]
 
 func _set_notebook_pages(left: String, right: String) -> void:
 	_set_notebook_entries([left, right])
@@ -2058,6 +2066,10 @@ func _render_notebook_pages(reset_scroll: bool = false) -> void:
 
 func _journal_sketch_key(title: String, selected_species_id: String) -> String:
 	var upper := title.to_upper()
+	if "TANK READINGS" in upper:
+		return "system_notes"
+	if "RECENT TIMELINE" in upper:
+		return "observations"
 	if "FIELD NOTE" in upper:
 		return "fish_" + selected_species_id
 	if "AQUARIUM SYSTEM NOTES" in upper:
@@ -4793,112 +4805,6 @@ func _refresh_ui() -> void:
 			float(biology.get("grazing_pressure", 0.0)) * 100.0,
 			float(aquarium.get("maintenance_load", 0.0)) * 100.0
 		]
-	for key in water_labels.keys():
-		water_labels[key].text = _format_water(key, float(water.get(key, 0.0)))
-	if filter_label:
-		var equipment = state.get("equipment", {})
-		var filter = equipment.get("filter", {})
-		var media = filter.get("media", {})
-		var mechanical = media.get("mechanical", {})
-		var chemical = media.get("chemical", {})
-		var heater = equipment.get("heater", {})
-		var light = equipment.get("light", {})
-		var air = equipment.get("air_pump", {})
-		var skimmer = equipment.get("protein_skimmer", {})
-		var ato = equipment.get("auto_top_off", {})
-		var failure_bits := []
-		for item in [filter, heater, light, air]:
-			var mode := str(item.get("failure_mode", ""))
-			if mode != "":
-				failure_bits.append(mode)
-		filter_label.text = "Equipment: filter %.0f%% / clog %.0f%% / bypass %.0f%% / driver %s - heater %.1f C var %.2f / %s - light %.1fh PAR %.0f%% lens %.0f%% - air %.0f%% delivered / clog %.0f%% - skimmer %.0f%% drift %.0f%% - ATO %s sensor %.0f%%" % [
-			float(filter.get("effective_flow", filter.get("flow", 0.0))) * 100.0,
-			float(mechanical.get("clog", 0.0)) * 100.0,
-			float(filter.get("bypass_risk", 0.0)) * 100.0,
-			str(filter.get("last_flow_driver", "balanced flow")),
-			float(heater.get("target_c", water.get("temperature_c", 24.0))),
-			float(heater.get("temperature_variance_c", 0.0)),
-			str(heater.get("last_heat_driver", "stable")),
-			float(light.get("actual_hours_per_day", light.get("hours_per_day", 8.0))) if bool(light.get("enabled", true)) else 0.0,
-			float(light.get("par_output", light.get("health", 1.0))) * 100.0,
-			float(light.get("lens_film", 0.0)) * 100.0,
-			float(air.get("effective_output", air.get("output", 0.0))) * 100.0 if bool(air.get("enabled", true)) else 0.0,
-			float(air.get("airline_clog", 0.0)) * 100.0,
-			float(skimmer.get("effective_output", skimmer.get("output", 0.0))) * 100.0 if bool(skimmer.get("enabled", false)) else 0.0,
-			float(skimmer.get("tuning_drift", 0.0)) * 100.0,
-			"on" if bool(ato.get("enabled", false)) else "off",
-			float(ato.get("sensor_film", 0.0)) * 100.0
-		]
-		if failure_bits.size() > 0:
-			filter_label.text += " - wear: " + ", ".join(failure_bits)
-	if cycle_label:
-		var cycle = state.get("cycle", {})
-		var clock = state.get("clock", {})
-		var local_hour := float(clock.get("local_hour", 0.0))
-		cycle_label.text = "Cycle: %s - animals %s - day %.0f - %s %.0f:%02d %s" % [
-			str(cycle.get("stage", "unknown")),
-			"ready" if bool(cycle.get("ready_for_animals", false)) else "not ready",
-			float(cycle.get("days_running", 0.0)),
-			str(clock.get("day_phase", "day")),
-			int(floor(local_hour)),
-			int(fposmod(local_hour, 1.0) * 60.0),
-			"lights on" if bool(clock.get("lights_on", false)) else "lights off"
-		]
-	if planning_label:
-		var planning = state.get("planning", {})
-		var safety = state.get("safety", {})
-		var plan_issues: Array = planning.get("issues", [])
-		var plan_text := "Planning: %.0f kg estimated - risk %d - safeguards %d%%" % [
-			float(planning.get("estimated_total_weight_kg", 0.0)),
-			int(planning.get("risk_score", 0)),
-			int(safety.get("readiness_score", 0))
-		]
-		if plan_issues.size() > 0:
-			plan_text += " - %s" % plan_issues[0].get("title", "issue")
-		planning_label.text = plan_text
-	if maintenance_label:
-		var maintenance = state.get("maintenance", {})
-		var maintenance_ecology = state.get("maintenance_ecology", {})
-		var maint_issues: Array = maintenance.get("issues", [])
-		var care_pressure: float = clamp(
-			float(maintenance_ecology.get("source_mismatch_debt", 0.0)) * 0.42
-			+ float(maintenance_ecology.get("substrate_disturbance_debt", 0.0)) * 0.34
-			+ float(maintenance_ecology.get("biofilter_handling_debt", 0.0)) * 0.40
-			+ float(maintenance_ecology.get("change_frequency_debt", 0.0)) * 0.28
-			+ float(maintenance_ecology.get("chloramine_ammonia_debt", 0.0)) * 1.1,
-			0.0,
-			1.0
-		)
-		maintenance_label.text = "Maintenance: %s" % ("ok" if maint_issues.is_empty() else maint_issues[0].get("title", "attention needed"))
-		if care_pressure > 0.04:
-			maintenance_label.text += " - care memory %.0f%% (%s)" % [
-				care_pressure * 100.0,
-				str(maintenance_ecology.get("last_mismatch_driver", "settled"))
-			]
-	if randomness_label:
-		var randomness = state.get("randomness", {})
-		var nursery: Array = state.get("nursery", [])
-		var maturity = state.get("maturity", {})
-		var stability = state.get("stability", {})
-		var disease_ecology = state.get("disease_ecology", {})
-		randomness_label.text = "Variability: %.0f%% - stability %.0f%% (%s) - %s" % [
-			float(randomness.get("noise", 0.12)) * 100.0,
-			float(stability.get("stability_score", 1.0)) * 100.0,
-			str(stability.get("latest_swing", "stable")),
-			str(randomness.get("latest", "No recent ecosystem surprises."))
-		]
-		randomness_label.text += " - seasoned %.0f%% / mulm %.0f%% / old risk %.0f%%" % [
-			float(maturity.get("seasoning", 0.0)) * 100.0,
-			float(maturity.get("mulm", 0.0)) * 100.0,
-			float(maturity.get("old_tank_risk", 0.0)) * 100.0
-		]
-		randomness_label.text += " - tiny life %.0f%% / snails %.0f%%" % [
-			(float(maturity.get("infusoria", 0.0)) * 0.42 + float(maturity.get("copepods", 0.0)) * 0.58) * 100.0,
-			float(maturity.get("pest_snails", 0.0)) * 100.0
-		]
-		randomness_label.text += " - disease: %s" % str(disease_ecology.get("outbreak_stage", "quiet"))
-		if nursery.size() > 0:
-			randomness_label.text += " - nursery: %d brood(s)" % nursery.size()
 	_sync_food_controls()
 	_sync_equipment_controls()
 	animal_list.clear()
@@ -4938,9 +4844,6 @@ func _refresh_ui() -> void:
 			line = "%s - died: %s" % [animal.get("name", "animal"), animal.get("cause_of_death", "unknown")]
 		animal_list.add_item(line)
 		animal_ids.append(str(animal.get("id", "")))
-	event_list.clear()
-	for item in state.get("events", []).slice(0, 8):
-		event_list.add_item("%s  %s" % [item.get("severity", "info").capitalize(), item.get("title", "Event")])
 
 func _format_water(key: String, value: float) -> String:
 	match key:
