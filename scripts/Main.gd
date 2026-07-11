@@ -108,6 +108,8 @@ var action_effects: Array[Dictionary] = []
 var last_command_note := ""
 var last_command_until := 0.0
 var synced_food_type := ""
+var equipment_controls_dirty := false
+var equipment_controls_syncing := false
 var notebook_open := false
 var notebook_amount := 0.0
 var notebook_pages: Array = []
@@ -941,8 +943,7 @@ func _build_ui() -> void:
 	change.pressed.connect(func(): _write_command(_water_change_command()))
 	water_box.add_child(change)
 
-	var equipment_tab := _add_tab(tabs, "Equipment")
-	var equipment_box := _make_section(equipment_tab, "Equipment bench", "Tune the visible devices inside the tank, then refresh carbon and phosphate media when it clogs.")
+	var equipment_box := _make_section(care_tab, "Equipment", "Tune the visible devices alongside daily care. Changes stay in place until the caretaker confirms them.")
 	var equipment_grid := GridContainer.new()
 	equipment_grid.columns = 2
 	equipment_grid.add_theme_constant_override("h_separation", 8)
@@ -955,6 +956,7 @@ func _build_ui() -> void:
 	filter_flow_spin.value = 78
 	filter_flow_spin.suffix = "% flow"
 	_style_field(filter_flow_spin, Vector2(154, 32))
+	filter_flow_spin.value_changed.connect(func(_value): _mark_equipment_controls_dirty())
 	equipment_grid.add_child(filter_flow_spin)
 	heater_target_spin = SpinBox.new()
 	heater_target_spin.min_value = 16
@@ -963,6 +965,7 @@ func _build_ui() -> void:
 	heater_target_spin.value = 24
 	heater_target_spin.suffix = " C"
 	_style_field(heater_target_spin, Vector2(154, 32))
+	heater_target_spin.value_changed.connect(func(_value): _mark_equipment_controls_dirty())
 	equipment_grid.add_child(heater_target_spin)
 	light_hours_spin = SpinBox.new()
 	light_hours_spin.min_value = 0
@@ -971,6 +974,7 @@ func _build_ui() -> void:
 	light_hours_spin.value = 8
 	light_hours_spin.suffix = " h light"
 	_style_field(light_hours_spin, Vector2(154, 32))
+	light_hours_spin.value_changed.connect(func(_value): _mark_equipment_controls_dirty())
 	equipment_grid.add_child(light_hours_spin)
 	air_output_spin = SpinBox.new()
 	air_output_spin.min_value = 0
@@ -979,6 +983,7 @@ func _build_ui() -> void:
 	air_output_spin.value = 50
 	air_output_spin.suffix = "% air"
 	_style_field(air_output_spin, Vector2(154, 32))
+	air_output_spin.value_changed.connect(func(_value): _mark_equipment_controls_dirty())
 	equipment_grid.add_child(air_output_spin)
 	var equipment_actions := HBoxContainer.new()
 	equipment_actions.add_theme_constant_override("separation", 8)
@@ -1424,6 +1429,7 @@ func _feed_command() -> Dictionary:
 	return command
 
 func _apply_equipment() -> void:
+	equipment_controls_dirty = true
 	if filter_flow_spin:
 		_write_command({"action": "set_equipment", "equipment": "filter", "enabled": true, "value": float(filter_flow_spin.value) / 100.0})
 	if heater_target_spin:
@@ -1434,6 +1440,28 @@ func _apply_equipment() -> void:
 		_write_command({"action": "set_equipment", "equipment": "air_pump", "enabled": float(air_output_spin.value) > 0.0, "value": float(air_output_spin.value) / 100.0})
 	if tool_label:
 		tool_label.text = "Equipment adjustments queued. Watch oxygen, temperature, flow, algae, and plant/coral response."
+
+func _mark_equipment_controls_dirty() -> void:
+	if not equipment_controls_syncing:
+		equipment_controls_dirty = true
+
+func _equipment_control_values_match_state() -> bool:
+	var equipment: Dictionary = state.get("equipment", {})
+	var filter: Dictionary = equipment.get("filter", {})
+	var heater: Dictionary = equipment.get("heater", {})
+	var light: Dictionary = equipment.get("light", {})
+	var air: Dictionary = equipment.get("air_pump", {})
+	if filter_flow_spin and abs(float(filter.get("flow", 0.78)) * 100.0 - float(filter_flow_spin.value)) > 0.05:
+		return false
+	if heater_target_spin and abs(float(heater.get("target_c", state.get("water", {}).get("temperature_c", 24.0))) - float(heater_target_spin.value)) > 0.05:
+		return false
+	var state_light_hours := float(light.get("hours_per_day", 8.0)) if bool(light.get("enabled", true)) else 0.0
+	if light_hours_spin and abs(state_light_hours - float(light_hours_spin.value)) > 0.05:
+		return false
+	var state_air_output := float(air.get("output", 0.5)) * 100.0 if bool(air.get("enabled", true)) else 0.0
+	if air_output_spin and abs(state_air_output - float(air_output_spin.value)) > 0.05:
+		return false
+	return true
 
 func _sync_substrate_controls() -> void:
 	if not substrate_select:
@@ -1448,11 +1476,16 @@ func _sync_substrate_controls() -> void:
 		substrate_depth_spin.value = float(aquarium.get("substrate_depth_cm", 5.0))
 
 func _sync_equipment_controls() -> void:
+	if equipment_controls_dirty:
+		if not _equipment_control_values_match_state():
+			return
+		equipment_controls_dirty = false
 	var equipment = state.get("equipment", {})
 	var filter = equipment.get("filter", {})
 	var heater = equipment.get("heater", {})
 	var light = equipment.get("light", {})
 	var air = equipment.get("air_pump", {})
+	equipment_controls_syncing = true
 	if filter_flow_spin:
 		filter_flow_spin.value = float(filter.get("flow", 0.78)) * 100.0
 	if heater_target_spin:
@@ -1461,6 +1494,7 @@ func _sync_equipment_controls() -> void:
 		light_hours_spin.value = float(light.get("hours_per_day", 8.0)) if bool(light.get("enabled", true)) else 0.0
 	if air_output_spin:
 		air_output_spin.value = float(air.get("output", 0.5)) * 100.0 if bool(air.get("enabled", true)) else 0.0
+	equipment_controls_syncing = false
 
 func _sync_food_controls() -> void:
 	if not food_select:
